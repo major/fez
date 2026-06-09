@@ -1,0 +1,23 @@
+# Codecov configuration for fez.
+#
+# Enforces the two test-coverage gates as blocking PR checks:
+#   - project coverage >= 90%
+#   - patch (diff) coverage >= 95%
+#
+# Docstring coverage (100%) is enforced separately by the docs-coverage CI job.
+
+coverage:
+  status:
+    project:
+      default:
+        target: 90%
+        threshold: 0%
+    patch:
+      default:
+        target: 95%
+        threshold: 0%
+
+# Test-only code that should not count toward project coverage.
+ignore:
+  - "src/bin/fake_bridge.rs"
+  - "tests/"
