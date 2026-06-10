@@ -146,18 +146,6 @@ fn fake_resolve_items() -> Value {
     }
 }
 
-/// The superuser-negotiation behavior selected by `FEZ_FAKE_SUPERUSER`.
-///
-/// - unset / `ok`: passwordless escalation succeeds (the common path).
-/// - `challenge`: sudo needs a password; the fake sends an `authorize`
-///   control challenge instead of `superuser-init-done`.
-/// - `denied`: escalation "succeeds" at init time but every privileged
-///   channel open is closed with `access-denied` (mirrors a sudoers allow
-///   list that rejects the specific command).
-fn superuser_mode() -> String {
-    std::env::var("FEZ_FAKE_SUPERUSER").unwrap_or_else(|_| "ok".into())
-}
-
 /// The host's escalation mechanisms as modeled by `FEZ_FAKE_BRIDGES`.
 ///
 /// Real cockpit-bridge exposes a `cockpit.Superuser.Bridges` property (the
@@ -166,14 +154,19 @@ fn superuser_mode() -> String {
 /// can be driven deterministically.
 ///
 /// Grammar: comma-separated `name:outcome` pairs, outcome `ok` or `err`, e.g.
-/// `sudo:ok`, `sudo:err,polkit:ok`, or empty (no mechanisms). Order is
-/// preserved (it is the `Bridges` order fez iterates). A bare `name` with no
-/// `:outcome` defaults to `ok`. Unset means the same as empty: no mechanism,
-/// so privileged channels are denied.
+/// `sudo:ok`, `sudo:err,polkit:ok`. Order is preserved (it is the `Bridges`
+/// order fez iterates). A bare `name` with no `:outcome` defaults to `ok`.
+///
+/// Default (var unset) models a normal passwordless-sudo host (`[("sudo",
+/// true)]`), so the bulk of the integration tests escalate without ceremony.
+/// An explicitly empty value (`FEZ_FAKE_BRIDGES=""`) means the host advertises
+/// no mechanism, so privileged channels are denied: that is how the
+/// escalation-failure cases opt in.
 fn fake_bridges() -> Vec<(String, bool)> {
     let raw = match std::env::var("FEZ_FAKE_BRIDGES") {
         Ok(v) => v,
-        Err(_) => return Vec::new(),
+        // Unset: default to a passwordless-sudo host.
+        Err(_) => return vec![("sudo".to_string(), true)],
     };
     raw.split(',')
         .filter(|s| !s.is_empty())
@@ -218,33 +211,12 @@ fn main() -> io::Result<()> {
         if frame.channel.is_empty() {
             let ctrl: Value = serde_json::from_slice(&frame.payload).unwrap_or(Value::Null);
             let command = ctrl.get("command").and_then(Value::as_str);
-            // The client's `init` carries `superuser: {id: "sudo"}`, asking the
-            // bridge to start a root peer up front. Real cockpit-bridge always
-            // finishes that negotiation with `superuser-init-done` (success or
-            // failure), optionally preceded by an `authorize` challenge when
-            // sudo needs a password. FEZ_FAKE_SUPERUSER selects which path the
-            // fake takes so the integration tests can exercise each branch.
+            // The client's `init` carries `superuser: "none"`, so the bridge
+            // brings up no root peer at init and just completes the handshake.
+            // Escalation happens later, driven by the client via
+            // cockpit.Superuser.Start over the internal bus.
             if let Some("init") = command {
-                match superuser_mode().as_str() {
-                    // Sudo needs a password: send an authorize challenge. fez
-                    // refuses (it holds no password) and never sees init-done.
-                    "challenge" => {
-                        send_control(
-                            &mut stdout,
-                            &json!({
-                                "command":"authorize",
-                                "cookie":"1",
-                                "challenge":"X-Conversation fake [sudo] password for fedora:"
-                            }),
-                        );
-                    }
-                    // Passwordless success ("ok"/unset) and the downstream
-                    // "denied" case both complete the negotiation; "denied"
-                    // diverges later when a privileged channel is opened.
-                    _ => {
-                        send_control(&mut stdout, &json!({"command":"superuser-init-done"}));
-                    }
-                }
+                send_control(&mut stdout, &json!({"command":"superuser-init-done"}));
                 continue;
             }
             // close, done: ignore; only `open` needs a response.
@@ -261,12 +233,14 @@ fn main() -> io::Result<()> {
                 // cockpit.Superuser.Start has succeeded yet; under the legacy
                 // FEZ_FAKE_SUPERUSER model it means mode "denied".
                 let privileged = ctrl.get("superuser").and_then(Value::as_str) == Some("require");
-                let bridges_model = std::env::var_os("FEZ_FAKE_BRIDGES").is_some();
-                let deny_privileged = if bridges_model {
-                    !escalated
-                } else {
-                    superuser_mode() == "denied"
-                };
+                // FEZ_FAKE_DENY_PRIVILEGED models a host where escalation
+                // succeeds but the sudoers/polkit policy still rejects the
+                // specific privileged channel mid-operation: the bridge closes
+                // it with access-denied even after a successful Start.
+                let force_deny = std::env::var_os("FEZ_FAKE_DENY_PRIVILEGED").is_some();
+                // A privileged channel routes to root, which only exists after a
+                // successful cockpit.Superuser.Start (escalated).
+                let deny_privileged = !escalated || force_deny;
                 if privileged && deny_privileged {
                     send_control(
                         &mut stdout,
