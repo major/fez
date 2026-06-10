@@ -2,6 +2,7 @@ use crate::capability;
 use crate::cli::{Cli, TopCommand};
 use crate::envelope::Envelope;
 use serde_json::json;
+use std::io::Write;
 
 pub fn run(cli: Cli) -> i32 {
     let host = cli.host.clone().unwrap_or_else(|| "localhost".into());
@@ -54,7 +55,6 @@ pub fn run(cli: Cli) -> i32 {
             let man = clap_mangen::Man::new(cmd);
             let mut buf = Vec::new();
             man.render(&mut buf).expect("render man page");
-            use std::io::Write;
             std::io::stdout().write_all(&buf).expect("write man page");
             0
         }
