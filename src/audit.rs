@@ -31,37 +31,95 @@ pub struct AuditRecord {
 }
 
 impl AuditRecord {
-    /// Build a record, stamping it with the current Unix-millisecond time.
-    pub fn new(
-        actor: &str,
-        target_host: &str,
-        operation: &str,
-        unit: &str,
-        result: &str,
-        error: Option<String>,
-        correlation_id: &str,
-    ) -> Self {
-        let timestamp_unix_ms = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map(|d| d.as_millis())
-            .unwrap_or(0);
-        AuditRecord {
-            actor: actor.into(),
-            target_host: target_host.into(),
-            operation: operation.into(),
-            unit: unit.into(),
-            result: result.into(),
-            error,
-            correlation_id: correlation_id.into(),
-            timestamp_unix_ms,
-        }
-    }
-
     fn priority(&self) -> &'static str {
         match self.result.as_str() {
             "error" => "3",   // err
             "attempt" => "5", // notice
             _ => "6",         // info
+        }
+    }
+}
+
+/// The result of one mutation step, replacing a stringly-typed `result` plus a
+/// loosely-coupled `error`. The error payload exists only on [`Outcome::Error`],
+/// so a record can never claim success while carrying an error (or vice versa).
+#[derive(Clone, Debug)]
+pub enum Outcome {
+    /// The mutation is about to run (audited before any side effect).
+    Attempt,
+    /// The mutation completed successfully.
+    Ok,
+    /// The mutation failed; the payload is the error detail.
+    Error(String),
+}
+
+impl Outcome {
+    /// The wire `result` string (`"attempt"`, `"ok"`, or `"error"`).
+    fn result(&self) -> &'static str {
+        match self {
+            Outcome::Attempt => "attempt",
+            Outcome::Ok => "ok",
+            Outcome::Error(_) => "error",
+        }
+    }
+
+    /// The error detail, present only for [`Outcome::Error`].
+    fn into_error(self) -> Option<String> {
+        match self {
+            Outcome::Error(e) => Some(e),
+            _ => None,
+        }
+    }
+}
+
+/// The invocation-shared context for a sequence of audit records. One mutation
+/// produces several records (attempt, then ok/error) that agree on actor, host,
+/// operation, unit, and correlation id; capture those once here and stamp each
+/// [`Outcome`] via [`AuditContext::record`].
+#[derive(Clone, Debug)]
+pub struct AuditContext {
+    actor: String,
+    target_host: String,
+    operation: String,
+    unit: String,
+    correlation_id: String,
+}
+
+impl AuditContext {
+    /// Capture the fields shared by every record for one mutation invocation.
+    pub fn new(
+        actor: &str,
+        target_host: &str,
+        operation: &str,
+        unit: &str,
+        correlation_id: &str,
+    ) -> Self {
+        AuditContext {
+            actor: actor.into(),
+            target_host: target_host.into(),
+            operation: operation.into(),
+            unit: unit.into(),
+            correlation_id: correlation_id.into(),
+        }
+    }
+
+    /// Build a record for `outcome`, stamping the current Unix-millisecond time.
+    #[must_use]
+    pub fn record(&self, outcome: Outcome) -> AuditRecord {
+        let timestamp_unix_ms = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_millis())
+            .unwrap_or(0);
+        let result = outcome.result().to_string();
+        AuditRecord {
+            actor: self.actor.clone(),
+            target_host: self.target_host.clone(),
+            operation: self.operation.clone(),
+            unit: self.unit.clone(),
+            result,
+            error: outcome.into_error(),
+            correlation_id: self.correlation_id.clone(),
+            timestamp_unix_ms,
         }
     }
 }
@@ -186,16 +244,45 @@ pub fn sink_from_env() -> Box<dyn AuditSink> {
 mod tests {
     use super::*;
 
+    fn ctx() -> AuditContext {
+        AuditContext::new("alice", "localhost", "stop", "chronyd.service", "abc-1-0")
+    }
+
     fn rec(result: &str, error: Option<String>) -> AuditRecord {
-        AuditRecord::new(
-            "alice",
-            "localhost",
-            "stop",
-            "chronyd.service",
-            result,
-            error,
-            "abc-1-0",
-        )
+        let outcome = match (result, error) {
+            ("attempt", _) => Outcome::Attempt,
+            ("ok", _) => Outcome::Ok,
+            ("error", Some(e)) => Outcome::Error(e),
+            ("error", None) => Outcome::Error(String::new()),
+            (other, _) => panic!("unexpected result {other}"),
+        };
+        ctx().record(outcome)
+    }
+
+    #[test]
+    fn context_records_share_invocation_fields() {
+        let c = ctx();
+        let attempt = c.record(Outcome::Attempt);
+        let ok = c.record(Outcome::Ok);
+        assert_eq!(attempt.actor, "alice");
+        assert_eq!(attempt.target_host, "localhost");
+        assert_eq!(attempt.operation, "stop");
+        assert_eq!(attempt.unit, "chronyd.service");
+        assert_eq!(attempt.correlation_id, "abc-1-0");
+        // Same context produces records that agree on every shared field.
+        assert_eq!(attempt.operation, ok.operation);
+        assert_eq!(attempt.correlation_id, ok.correlation_id);
+    }
+
+    #[test]
+    fn outcome_maps_to_result_and_error() {
+        assert_eq!(ctx().record(Outcome::Attempt).result, "attempt");
+        assert_eq!(ctx().record(Outcome::Attempt).error, None);
+        assert_eq!(ctx().record(Outcome::Ok).result, "ok");
+        assert_eq!(ctx().record(Outcome::Ok).error, None);
+        let err = ctx().record(Outcome::Error("boom".into()));
+        assert_eq!(err.result, "error");
+        assert_eq!(err.error.as_deref(), Some("boom"));
     }
 
     #[test]

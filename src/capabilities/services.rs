@@ -1,4 +1,3 @@
-use crate::audit::AuditRecord;
 use crate::cli::{Cli, ServicesAction};
 use crate::envelope::{ApiError, Envelope};
 use crate::error::{FezError, Result};
@@ -191,37 +190,18 @@ fn run_mutation(cli: &Cli, m: Mutation, unit: &str) -> Result<View> {
 
     // Layer 4: structured audit — attempt, execute, then result.
     let sink = crate::audit::sink_from_env();
-    let actor = crate::audit::actor();
-    let cid = crate::audit::correlation_id();
-    sink.write(&AuditRecord::new(
-        &actor,
+    let audit = crate::audit::AuditContext::new(
+        &crate::audit::actor(),
         &host,
         m.verb(),
         unit,
-        "attempt",
-        None,
-        &cid,
-    ));
+        &crate::audit::correlation_id(),
+    );
+    sink.write(&audit.record(crate::audit::Outcome::Attempt));
     let result = execute(cli, &m, &host, unit);
     match &result {
-        Ok(_) => sink.write(&AuditRecord::new(
-            &actor,
-            &host,
-            m.verb(),
-            unit,
-            "ok",
-            None,
-            &cid,
-        )),
-        Err(e) => sink.write(&AuditRecord::new(
-            &actor,
-            &host,
-            m.verb(),
-            unit,
-            "error",
-            Some(e.to_string()),
-            &cid,
-        )),
+        Ok(_) => sink.write(&audit.record(crate::audit::Outcome::Ok)),
+        Err(e) => sink.write(&audit.record(crate::audit::Outcome::Error(e.to_string()))),
     }
     result
 }
