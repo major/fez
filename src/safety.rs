@@ -39,19 +39,24 @@ pub fn check_protected(unit: &str, force: bool) -> Result<()> {
 
 /// Default protected-package patterns. A bare name matches exactly; a
 /// `*`-suffixed pattern matches by prefix. These guard the host's bootability
-/// and the agent's own access path (SSH + Cockpit + fez's transport).
+/// (kernel, bootloader, early-boot, package-manager libraries) and the agent's
+/// own access path (SSH + Cockpit + fez's transport).
 const PROTECTED_PACKAGES: &[&str] = &[
     "kernel*",
     "systemd*",
     "glibc",
     "dnf*",
-    "rpm",
+    "rpm*",
     "sudo",
     "openssh-server",
     "cockpit*",
     "dbus*",
     "coreutils*",
     "bash",
+    "grub2*",
+    "shim*",
+    "dracut*",
+    "linux-firmware",
 ];
 
 /// Maximum packages a removal plan may remove before it is treated as a
@@ -177,6 +182,18 @@ mod tests {
     fn removal_plan_allows_small_cascade() {
         let removed: Vec<String> = (0..5).map(|i| format!("pkg{i}")).collect();
         assert!(check_removal_plan(&removed, false).is_ok());
+    }
+
+    #[test]
+    fn removal_plan_allows_exactly_cascade_limit() {
+        let removed: Vec<String> = (0..20).map(|i| format!("pkg{i}")).collect();
+        assert!(check_removal_plan(&removed, false).is_ok());
+    }
+
+    #[test]
+    fn removal_plan_allows_large_cascade_with_force() {
+        let removed: Vec<String> = (0..50).map(|i| format!("pkg{i}")).collect();
+        assert!(check_removal_plan(&removed, true).is_ok());
     }
 
     #[test]
