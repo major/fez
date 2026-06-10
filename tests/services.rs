@@ -437,3 +437,133 @@ fn read_path_unaffected_by_downstream_denial() {
         .success()
         .stdout(contains("\"kind\":\"ServiceList\""));
 }
+
+// --- Transparent escalation (cockpit.Superuser mechanism fallback) --------
+//
+// FEZ_FAKE_BRIDGES models the host's viable escalation mechanisms as an
+// ordered list of name:outcome pairs (ok|err). fez reads cockpit.Superuser
+// Bridges and tries Start(name) for each until one succeeds; only if all fail
+// does it return access-denied (exit 11). Reads never escalate.
+
+#[test]
+fn escalation_succeeds_with_passwordless_sudo() {
+    // Case 1: sudo is present and starts cleanly -> mutation works.
+    fez_fake()
+        .env("FEZ_AUDIT", "off")
+        .env("FEZ_FAKE_BRIDGES", "sudo:ok")
+        .args(["services", "restart", "chronyd.service", "--json"])
+        .assert()
+        .success()
+        .stdout(contains("\"kind\":\"ServiceMutation\""));
+}
+
+#[test]
+fn escalation_succeeds_with_polkit_only() {
+    // Case 2: no sudo, only polkit, and it starts -> mutation works.
+    fez_fake()
+        .env("FEZ_AUDIT", "off")
+        .env("FEZ_FAKE_BRIDGES", "polkit:ok")
+        .args(["services", "restart", "chronyd.service", "--json"])
+        .assert()
+        .success()
+        .stdout(contains("\"kind\":\"ServiceMutation\""));
+}
+
+#[test]
+fn escalation_falls_through_sudo_to_polkit() {
+    // Case 3 (acceptance test for Layer 2): sudo errors on Start, fez falls
+    // through to polkit, which succeeds. The old design (pin sudo) could not
+    // pass this.
+    fez_fake()
+        .env("FEZ_AUDIT", "off")
+        .env("FEZ_FAKE_BRIDGES", "sudo:err,polkit:ok")
+        .args(["services", "restart", "chronyd.service", "--json"])
+        .assert()
+        .success()
+        .stdout(contains("\"kind\":\"ServiceMutation\""));
+}
+
+#[test]
+fn escalation_all_fail_maps_to_access_denied() {
+    // Case 4a: every mechanism errors on Start -> exit 11 with remediation
+    // that names both sudo and polkit.
+    fez_fake()
+        .env("FEZ_AUDIT", "off")
+        .env("FEZ_FAKE_BRIDGES", "sudo:err,polkit:err")
+        .args(["services", "restart", "chronyd.service", "--json"])
+        .assert()
+        .code(11)
+        .stdout(contains("\"code\":\"access-denied\""))
+        .stdout(contains("polkit"));
+}
+
+#[test]
+fn escalation_empty_bridges_maps_to_access_denied() {
+    // Case 4b: the host advertises no mechanism at all -> exit 11.
+    fez_fake()
+        .env("FEZ_AUDIT", "off")
+        .env("FEZ_FAKE_BRIDGES", "")
+        .args(["services", "restart", "chronyd.service", "--json"])
+        .assert()
+        .code(11)
+        .stdout(contains("\"code\":\"access-denied\""))
+        .stdout(contains("polkit"));
+}
+
+#[test]
+fn read_succeeds_without_escalation() {
+    // Case 5: a read never escalates, so it still works on a host with no
+    // viable escalation mechanism.
+    fez_fake()
+        .env("FEZ_AUDIT", "off")
+        .env("FEZ_FAKE_BRIDGES", "")
+        .args(["services", "list", "--json"])
+        .assert()
+        .success()
+        .stdout(contains("\"kind\":\"ServiceList\""));
+}
+
+#[test]
+fn escalation_override_forces_named_mechanism() {
+    // Case 6a: FEZ_ESCALATION=polkit selects polkit. sudo errors on Start, so
+    // success is only possible by starting polkit, proving the override picked
+    // it. The no-fall-through guarantee is covered separately by
+    // escalation_override_named_failure_does_not_fall_through.
+    fez_fake()
+        .env("FEZ_AUDIT", "off")
+        .env("FEZ_FAKE_BRIDGES", "sudo:err,polkit:ok")
+        .env("FEZ_ESCALATION", "polkit")
+        .args(["services", "restart", "chronyd.service", "--json"])
+        .assert()
+        .success()
+        .stdout(contains("\"kind\":\"ServiceMutation\""));
+}
+
+#[test]
+fn escalation_override_off_denies_mutation() {
+    // Case 6b: FEZ_ESCALATION=off never escalates, so a mutation fails fast
+    // with access-denied even though a mechanism is available.
+    fez_fake()
+        .env("FEZ_AUDIT", "off")
+        .env("FEZ_FAKE_BRIDGES", "sudo:ok")
+        .env("FEZ_ESCALATION", "off")
+        .args(["services", "restart", "chronyd.service", "--json"])
+        .assert()
+        .code(11)
+        .stdout(contains("\"code\":\"access-denied\""));
+}
+
+#[test]
+fn escalation_override_named_failure_does_not_fall_through() {
+    // Case 6c: forcing a mechanism that fails to start exits 11 without trying
+    // any other (no fall-through under FEZ_ESCALATION), even though polkit
+    // would have worked.
+    fez_fake()
+        .env("FEZ_AUDIT", "off")
+        .env("FEZ_FAKE_BRIDGES", "sudo:err,polkit:ok")
+        .env("FEZ_ESCALATION", "sudo")
+        .args(["services", "restart", "chronyd.service", "--json"])
+        .assert()
+        .code(11)
+        .stdout(contains("\"code\":\"access-denied\""));
+}
