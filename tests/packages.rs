@@ -94,6 +94,42 @@ fn packages_remove_small_plan_succeeds() {
 }
 
 #[test]
+fn packages_upgrade_emits_mutation() {
+    fez_fake()
+        .env("FEZ_AUDIT", "off")
+        .env("FEZ_FAKE_PLAN", "install")
+        .args(["packages", "upgrade", "nginx", "--json"])
+        .assert()
+        .success()
+        .stdout(contains("\"kind\": \"PackageMutation\""))
+        .stdout(contains("\"operation\": \"upgrade\""));
+}
+
+#[test]
+fn packages_upgrade_all_dry_run_emits_plan() {
+    fez_fake()
+        .env("FEZ_AUDIT", "off")
+        .env("FEZ_FAKE_PLAN", "install")
+        .args(["packages", "upgrade", "--dry-run", "--json"])
+        .assert()
+        .success()
+        .stdout(contains("\"kind\": \"PackagePlan\""))
+        .stdout(contains("\"dry_run\": true"));
+}
+
+#[test]
+fn packages_remove_protected_human_error_to_stderr() {
+    fez_fake()
+        .env("FEZ_AUDIT", "off")
+        .env("FEZ_FAKE_PLAN", "protected")
+        .args(["packages", "remove", "glibc"])
+        .assert()
+        .code(10)
+        .stderr(contains("error:"))
+        .stderr(contains("dangerous transaction"));
+}
+
+#[test]
 fn packages_remove_protected_refused_without_force() {
     fez_fake()
         .env("FEZ_FAKE_PLAN", "protected")
@@ -143,9 +179,7 @@ fn packages_dependency_missing_returns_exit_9() {
 fn packages_mutation_writes_attempt_and_result_audit_records() {
     let path = std::env::temp_dir().join(format!("fez-pkg-audit-{}.jsonl", std::process::id()));
     let _ = std::fs::remove_file(&path);
-    AssertCommand::cargo_bin("fez")
-        .unwrap()
-        .env("FEZ_BRIDGE", env!("CARGO_BIN_EXE_fez-fake-bridge"))
+    fez_fake()
         .env("FEZ_AUDIT", format!("file:{}", path.display()))
         .env("FEZ_FAKE_PLAN", "small")
         .args(["packages", "remove", "htop", "--json"])
