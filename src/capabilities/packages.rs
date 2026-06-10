@@ -172,6 +172,29 @@ fn dependency_missing() -> FezError {
     }
 }
 
+/// Wrap a value as a cockpit D-Bus variant (`{"t": signature, "v": value}`).
+///
+/// dnf5daemon's option arguments are typed `a{sv}` (a string-keyed dict of
+/// variants). cockpit-bridge marshals each dict value as a variant, which on
+/// the wire is an explicit `{"t","v"}` object: a bare JSON scalar makes the
+/// bridge's marshaller raise `'bool' object is not subscriptable` (or the
+/// equivalent for other types) when it tries to read `value["t"]`.
+fn variant(signature: &str, value: Value) -> Value {
+    json!({ "t": signature, "v": value })
+}
+
+/// Build an `a{sv}` options dict, variant-wrapping every value.
+///
+/// Each entry is `(key, dbus_signature, value)`; the value is wrapped via
+/// [`variant`] so the bridge can marshal the dict without introspection.
+fn options(entries: &[(&str, &str, Value)]) -> Value {
+    let map: serde_json::Map<String, Value> = entries
+        .iter()
+        .map(|(k, sig, v)| ((*k).to_string(), variant(sig, v.clone())))
+        .collect();
+    Value::Object(map)
+}
+
 /// Open the dnf channel (privileged for mutations) and start a daemon session.
 ///
 /// Returns `(channel, session_path)`; a ServiceUnknown D-Bus error (the daemon
@@ -187,7 +210,10 @@ fn open_session(client: &mut BridgeClient, privileged: bool) -> Result<(String, 
         SM_PATH,
         SM_IFACE,
         "open_session",
-        json!([{"load_system_repo": true, "load_available_repos": true}]),
+        json!([options(&[
+            ("load_system_repo", "b", json!(true)),
+            ("load_available_repos", "b", json!(true)),
+        ])]),
     );
     let out = match out {
         Ok(v) => v,
@@ -281,11 +307,11 @@ fn rpm_list(
         session,
         RPM_IFACE,
         "list",
-        json!([{
-            "scope": scope,
-            "patterns": patterns,
-            "package_attrs": PKG_ATTRS,
-        }]),
+        json!([options(&[
+            ("scope", "s", json!(scope)),
+            ("patterns", "as", json!(patterns)),
+            ("package_attrs", "as", json!(PKG_ATTRS)),
+        ])]),
     )?;
     Ok(out
         .get(0)
@@ -417,10 +443,10 @@ fn repolist(
         session,
         REPO_IFACE,
         "list",
-        json!([{
-            "enable_disable": filter.enable_disable(),
-            "repo_attrs": ["id", "name", "enabled"],
-        }]),
+        json!([options(&[
+            ("enable_disable", "s", json!(filter.enable_disable())),
+            ("repo_attrs", "as", json!(["id", "name", "enabled"])),
+        ])]),
     )?;
     let raw = out
         .get(0)
@@ -713,6 +739,31 @@ mod tests {
             "repo_id": {"t":"s","v":"fedora"},
             "install_size": {"t":"t","v": size.to_string()}
         }])
+    }
+
+    #[test]
+    fn variant_wraps_value_with_signature() {
+        assert_eq!(variant("b", json!(true)), json!({"t": "b", "v": true}));
+        assert_eq!(variant("s", json!("x")), json!({"t": "s", "v": "x"}));
+    }
+
+    #[test]
+    fn options_wraps_every_value_as_a_variant() {
+        let opts = options(&[
+            ("load_system_repo", "b", json!(true)),
+            ("scope", "s", json!("installed")),
+            ("patterns", "as", json!(["htop"])),
+        ]);
+        // Every value must be the explicit {"t","v"} variant form, never a bare
+        // scalar, or cockpit's a{sv} marshaller raises a TypeError.
+        assert_eq!(
+            opts,
+            json!({
+                "load_system_repo": {"t": "b", "v": true},
+                "scope": {"t": "s", "v": "installed"},
+                "patterns": {"t": "as", "v": ["htop"]},
+            })
+        );
     }
 
     #[test]
