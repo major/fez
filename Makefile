@@ -12,10 +12,10 @@ LCOV := lcov.info
 
 .DEFAULT_GOAL := check
 
-.PHONY: check test coverage coverage-html docs-coverage lint clean-coverage
+.PHONY: check test coverage coverage-html docs-coverage lint security deny machete msrv clean-coverage
 
-# One-shot local gate: lint, tests, and docstring coverage.
-check: lint test docs-coverage
+# One-shot local gate: lint, tests, docstring coverage, and supply-chain checks.
+check: lint test docs-coverage security
 
 # Run the test suite.
 test:
@@ -41,6 +41,25 @@ docs-coverage:
 lint:
 	cargo fmt --check
 	cargo clippy --all-targets -- -D warnings
+
+# Supply-chain and dependency hygiene: advisories/licenses/bans/sources and
+# unused-dependency detection.
+security: deny machete
+
+# RUSTSEC advisories, license policy, banned/duplicate crates, and source
+# allow-listing. Config in deny.toml. Install: cargo install cargo-deny --locked
+deny:
+	cargo deny check
+
+# Detect dependencies declared in Cargo.toml but never used.
+# Install: cargo install cargo-machete --locked
+machete:
+	cargo machete
+
+# Verify the crate actually compiles on the pinned MSRV, not just on stable.
+# Requires the 1.92 toolchain: rustup toolchain install 1.92
+msrv:
+	cargo +1.92 check --all-targets
 
 clean-coverage:
 	cargo llvm-cov clean --workspace

@@ -1,0 +1,50 @@
+# cargo-deny configuration. Enforced by `make deny` and the `security` CI job.
+# Schema: https://embarkstudios.github.io/cargo-deny/checks/cfg.html
+
+[graph]
+# fez ships as a Linux/macOS CLI; only check targets we actually build for.
+targets = [
+    "x86_64-unknown-linux-gnu",
+    "aarch64-unknown-linux-gnu",
+    "x86_64-apple-darwin",
+    "aarch64-apple-darwin",
+]
+all-features = true
+
+[advisories]
+# RUSTSEC advisory database. Vulnerabilities always fail. Flag unmaintained
+# and yanked crates too. `ignore` stays empty: justify every exception here.
+unmaintained = "all"
+yanked = "deny"
+ignore = []
+
+[licenses]
+# High confidence required before inferring a license from crate text.
+confidence-threshold = 0.93
+# fez is Apache-2.0. Permit only OSI-permissive licenses compatible with it.
+# Keep this list tight: a new dep with an unlisted license should fail CI and
+# force a deliberate review, not silently slip in.
+allow = [
+    "Apache-2.0",
+    "MIT",
+    "Unicode-3.0",
+    "Unlicense",
+]
+exceptions = []
+
+[bans]
+# Catch dependency bloat: duplicate versions of the same crate and wildcard
+# version requirements. Warn (not deny) on duplicates so transitive churn does
+# not break CI, while still surfacing it.
+multiple-versions = "warn"
+wildcards = "deny"
+deny = []
+skip = []
+skip-tree = []
+
+[sources]
+# Only crates.io. No unknown registries or git sources without an explicit
+# allow entry.
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]

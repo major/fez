@@ -98,3 +98,45 @@ jobs:
           key: docs-coverage
       - name: Check docstring coverage
         run: make docs-coverage
+
+  msrv:
+    name: msrv
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10  # v6.0.3
+        with:
+          persist-credentials: false
+      - name: Install pinned MSRV toolchain
+        uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9  # stable action ref; installs 1.92 below
+        with:
+          toolchain: "1.92"
+      - name: Cache Rust build artifacts
+        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4  # v2.9.1
+        with:
+          key: msrv
+      - name: Build on MSRV
+        run: make msrv
+
+  security:
+    name: security
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10  # v6.0.3
+        with:
+          persist-credentials: false
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9  # stable action ref; installs 1.92 below
+        with:
+          toolchain: "1.92"
+      - name: Cache Rust build artifacts
+        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4  # v2.9.1
+        with:
+          key: security
+      - name: Install cargo-deny and cargo-machete
+        uses: taiki-e/install-action@fd2f5e3d644b484055ebf4268f474c565f148f25  # v2.81.9
+        with:
+          tool: cargo-deny,cargo-machete
+      - name: Run supply-chain and dependency checks
+        run: make security

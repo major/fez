@@ -21,20 +21,29 @@ installed binary and library crate name stay `fez`.
 
 Use the Makefile, not raw cargo, for gated work. `make` defaults to `check`.
 
-- `make check` - local one-shot gate: `lint test docs-coverage`
+- `make check` - local one-shot gate: `lint test docs-coverage security`
 - `make lint` - `cargo fmt --check` then `cargo clippy --all-targets -- -D warnings`
 - `make test` - `cargo test` (unit + integration)
 - `make coverage` / `make coverage-html` - lcov for Codecov / HTML report
 - `make docs-coverage` - **requires the nightly toolchain** (`cargo +nightly`); enforces 100% docstring coverage via `scripts/docs_coverage.py`
+- `make security` - supply-chain + dep hygiene: `deny machete`
+  - `make deny` - `cargo deny check` (RUSTSEC advisories, license policy, banned/duplicate crates, source allow-list; config in `deny.toml`). Install: `cargo install cargo-deny --locked`
+  - `make machete` - `cargo machete` (unused declared deps). Install: `cargo install cargo-machete --locked`
+- `make msrv` - `cargo +1.92 check --all-targets`; proves the crate compiles on the pinned MSRV, not just stable. Requires `rustup toolchain install 1.92`
 - Single test: `cargo test --test services name_of_test` (integration files are `tests/cli.rs`, `tests/mcp.rs`, `tests/services.rs`)
 
-## Gates (CI: `.github/workflows/ci.yml`)
+## Gates (CI: `.github/workflows/ci.yml`, `.github/workflows/codeql.yml`)
 
 All enforced; do not regress:
 
 - **90% project** + **95% patch** test coverage (Codecov, `codecov.yml`)
 - **100% docstring coverage**. Crate root denies missing docs; every `pub` item needs a doc comment, fallible methods need an `# Errors` section.
 - `clippy -D warnings` and `cargo fmt --check`. Never add `#![deny(warnings)]` to source; that lint pressure lives in CI flags only.
+- **MSRV build** (`msrv` job): `cargo +1.92 check --all-targets` must pass. The pinned MSRV is a contract, not a declaration.
+- **Supply chain** (`security` job): `cargo deny check` (advisories/licenses/bans/sources via `deny.toml`) + `cargo machete` (unused deps). License allow-list is tight (Apache-2.0/MIT/Unicode-3.0/Unlicense); a dep with an unlisted license fails CI on purpose.
+- **CodeQL** (separate `codeql.yml`, build-mode `manual`): runs on push/PR to `main` and weekly. Results land in the Security tab. Not part of the `make check` gate (needs the GitHub CodeQL runner), so it cannot be reproduced locally.
+
+CI actions are SHA-pinned. When bumping an action, pin the new commit SHA and keep the `# vX.Y.Z` comment accurate.
 
 ## Architecture
 
