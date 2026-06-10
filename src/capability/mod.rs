@@ -75,6 +75,29 @@ fn mutation(
     }
 }
 
+fn enablement(id: &str, summary: &str, long: &str) -> Descriptor {
+    let verb = id.rsplit('.').next().expect("capability id has a verb");
+    Descriptor {
+        id: id.into(),
+        summary: summary.into(),
+        long: long.into(),
+        privileged: true,
+        output_kind: "ServiceEnablement".into(),
+        inputs: vec![input("unit", true)],
+        flags: vec![
+            "--host".into(),
+            "--json".into(),
+            "--dry-run".into(),
+            "--force".into(),
+            "--now".into(),
+        ],
+        examples: vec![
+            format!("fez services {verb} chronyd.service --json"),
+            format!("fez services {verb} chronyd.service --now"),
+        ],
+    }
+}
+
 /// The full set of capability descriptors fez supports.
 pub fn registry() -> Vec<Descriptor> {
     vec![
@@ -159,48 +182,18 @@ Privileged. Protected units are refused unless --force is supplied (exit 8).",
             "ServiceMutation",
             &[],
         ),
-        Descriptor {
-            id: "services.enable".into(),
-            summary: "Enable a unit".into(),
-            long: "Enable a unit so it starts at boot. Add --now to also start it \
-immediately. Privileged. Protected units are refused unless --force is supplied (exit 8)."
-                .into(),
-            privileged: true,
-            output_kind: "ServiceEnablement".into(),
-            inputs: vec![input("unit", true)],
-            flags: vec![
-                "--host".into(),
-                "--json".into(),
-                "--dry-run".into(),
-                "--force".into(),
-                "--now".into(),
-            ],
-            examples: vec![
-                "fez services enable chronyd.service --json".into(),
-                "fez services enable chronyd.service --now".into(),
-            ],
-        },
-        Descriptor {
-            id: "services.disable".into(),
-            summary: "Disable a unit".into(),
-            long: "Disable a unit so it no longer starts at boot. Add --now to also \
-stop it immediately. Privileged. Protected units are refused unless --force is supplied (exit 8)."
-                .into(),
-            privileged: true,
-            output_kind: "ServiceEnablement".into(),
-            inputs: vec![input("unit", true)],
-            flags: vec![
-                "--host".into(),
-                "--json".into(),
-                "--dry-run".into(),
-                "--force".into(),
-                "--now".into(),
-            ],
-            examples: vec![
-                "fez services disable chronyd.service --json".into(),
-                "fez services disable chronyd.service --now".into(),
-            ],
-        },
+        enablement(
+            "services.enable",
+            "Enable a unit",
+            "Enable a unit so it starts at boot. Add --now to also start it \
+immediately. Privileged. Protected units are refused unless --force is supplied (exit 8).",
+        ),
+        enablement(
+            "services.disable",
+            "Disable a unit",
+            "Disable a unit so it no longer starts at boot. Add --now to also \
+stop it immediately. Privileged. Protected units are refused unless --force is supplied (exit 8).",
+        ),
     ]
 }
 
