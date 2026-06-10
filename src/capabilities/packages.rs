@@ -46,6 +46,10 @@ impl Mutation {
             Mutation::Upgrade => "upgrade",
         }
     }
+    /// The dnf5daemon `Rpm` D-Bus method name to stage this mutation.
+    ///
+    /// Intentionally distinct from [`Mutation::verb`] (the user-facing display
+    /// verb); the two happen to coincide today but answer different questions.
     fn method(self) -> &'static str {
         match self {
             Mutation::Install => "install",
@@ -111,13 +115,21 @@ enum Plan<'a> {
 /// breaks the build here instead of hitting an `unreachable!` at runtime.
 fn classify(action: &PackagesAction) -> Plan<'_> {
     match action {
-        PackagesAction::List { available, .. } => Plan::Read(ReadAction::List {
+        PackagesAction::List {
+            installed: _installed,
+            available,
+            repo: _repo,
+        } => Plan::Read(ReadAction::List {
             available: *available,
         }),
         PackagesAction::Info { spec } => Plan::Read(ReadAction::Info { spec }),
         PackagesAction::Search { pattern } => Plan::Read(ReadAction::Search { pattern }),
         PackagesAction::CheckUpdate => Plan::Read(ReadAction::CheckUpdate),
-        PackagesAction::Repolist { disabled, all, .. } => {
+        PackagesAction::Repolist {
+            enabled: _enabled,
+            disabled,
+            all,
+        } => {
             let filter = if *all {
                 RepoFilter::All
             } else if *disabled {
@@ -457,10 +469,6 @@ struct ResolvedPlan {
 }
 
 impl ResolvedPlan {
-    /// Bare package names the plan would remove (for the removal guardrail).
-    fn removed_names(&self) -> Vec<String> {
-        self.remove_names.clone()
-    }
     /// The plan rendered as the `fez/v1` data payload.
     fn data(&self) -> Value {
         json!({
@@ -564,7 +572,7 @@ fn mutation_inner(
     }
 
     // 4. Removal guardrails (protected package / cascade) before any execution.
-    crate::safety::check_removal_plan(&plan.removed_names(), cli.force)?;
+    crate::safety::check_removal_plan(&plan.remove_names, cli.force)?;
 
     // 5. Audit attempt, execute, audit result.
     let sink = crate::audit::sink_from_env();
@@ -720,7 +728,7 @@ mod tests {
         assert_eq!(plan.remove, vec!["oldpkg-1-1.x86_64"]);
         assert_eq!(plan.upgrade, vec!["nginx-1-1.x86_64"]);
         assert_eq!(plan.downgrade, vec!["foo-1-1.x86_64"]);
-        assert_eq!(plan.removed_names(), vec!["oldpkg".to_string()]);
+        assert_eq!(plan.remove_names, vec!["oldpkg".to_string()]);
     }
 
     #[test]
@@ -729,10 +737,7 @@ mod tests {
             item("Install", "newpkg", 100),
             item("Replaced", "oldpkg", 50)
         ]);
-        assert_eq!(
-            parse_plan(&items).removed_names(),
-            vec!["oldpkg".to_string()]
-        );
+        assert_eq!(parse_plan(&items).remove_names, vec!["oldpkg".to_string()]);
     }
 
     #[test]
