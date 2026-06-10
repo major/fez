@@ -353,6 +353,28 @@ removals are refused by guardrails unless --force is supplied."
                 "fez packages distro-sync kernel --dry-run".into(),
             ],
         },
+        Descriptor {
+            id: "packages.downgrade".into(),
+            summary: "Downgrade packages".into(),
+            long: "Roll one or more packages back to an earlier available version. Resolves \
+first and surfaces the plan; --dry-run stops after the plan. Privileged. Exits 9 if \
+dnf5daemon is missing, 10 if removals are refused by guardrails unless --force is \
+supplied."
+                .into(),
+            privileged: true,
+            output_kind: "PackageMutation".into(),
+            inputs: vec![input("specs", true)],
+            flags: vec![
+                "--host".into(),
+                "--json".into(),
+                "--dry-run".into(),
+                "--force".into(),
+            ],
+            examples: vec![
+                "fez packages downgrade nginx --json".into(),
+                "fez packages downgrade kernel --dry-run".into(),
+            ],
+        },
     ]
 }
 

@@ -227,6 +227,12 @@ pub enum PackagesAction {
         /// Package specs to sync; empty means sync everything.
         specs: Vec<String>,
     },
+    /// Downgrade packages to an earlier available version.
+    Downgrade {
+        /// Package specs to downgrade.
+        #[arg(required = true)]
+        specs: Vec<String>,
+    },
 }
 
 #[cfg(test)]

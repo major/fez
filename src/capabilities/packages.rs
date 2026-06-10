@@ -37,6 +37,7 @@ enum Mutation {
     Remove,
     Upgrade,
     DistroSync,
+    Downgrade,
 }
 
 impl Mutation {
@@ -46,6 +47,7 @@ impl Mutation {
             Mutation::Remove => "remove",
             Mutation::Upgrade => "upgrade",
             Mutation::DistroSync => "distro-sync",
+            Mutation::Downgrade => "downgrade",
         }
     }
     /// The dnf5daemon `Rpm` D-Bus method name to stage this mutation.
@@ -58,6 +60,7 @@ impl Mutation {
             Mutation::Remove => "remove",
             Mutation::Upgrade => "upgrade",
             Mutation::DistroSync => "distro_sync",
+            Mutation::Downgrade => "downgrade",
         }
     }
 }
@@ -156,6 +159,10 @@ fn classify(action: &PackagesAction) -> Plan<'_> {
         },
         PackagesAction::DistroSync { specs } => Plan::Mutate {
             mutation: Mutation::DistroSync,
+            specs: specs.clone(),
+        },
+        PackagesAction::Downgrade { specs } => Plan::Mutate {
+            mutation: Mutation::Downgrade,
             specs: specs.clone(),
         },
     }
