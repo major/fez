@@ -111,11 +111,17 @@ fn packages_history_lists_recent_changes() {
         .assert()
         .success()
         .stdout(contains("\"kind\":\"PackageHistory\""))
-        .stdout(contains("\"columns\":[\"change\",\"name\",\"evr\",\"arch\"]"))
+        .stdout(contains(
+            "\"columns\":[\"change\",\"name\",\"evr\",\"arch\"]",
+        ))
         .stdout(contains("\"rows\":"))
         .stdout(contains("\"count\":"))
-        .stdout(contains("installed"))
-        .stdout(contains("htop"));
+        .stdout(contains(
+            "[\"installed\",\"htop\",\"3.3.0-1.fc40\",\"x86_64\"]",
+        ))
+        .stdout(contains(
+            "[\"upgraded\",\"nginx\",\"1.24.0-7.fc40\",\"x86_64\"]",
+        ));
 }
 
 #[test]
