@@ -319,11 +319,14 @@ fn main() -> io::Result<()> {
                     match method {
                         // cockpit.Superuser.Bridges property read via
                         // org.freedesktop.DBus.Properties.Get(iface, "Bridges").
-                        // Returns the FEZ_FAKE_BRIDGES mechanism names as an
-                        // `as` array (the variant out-arg unwrapped to its value).
+                        // `Properties.Get` returns a single `v` out-arg, so the
+                        // `as` value is variant-wrapped: {"t":"as","v":[...]}.
+                        // Real cockpit-bridge does NOT unwrap it; mirror that so
+                        // the client's variant-unwrapping is exercised exactly as
+                        // in production (same discipline as `GetAll` below).
                         "Get" => {
                             let names: Vec<Value> = bridges.iter().map(|(n, _)| json!(n)).collect();
-                            json!({"reply":[[names]],"id":id})
+                            json!({"reply":[[{"t":"as","v":names}]],"id":id})
                         }
                         // cockpit.Superuser.Start(name): bring up the named
                         // mechanism. `ok` succeeds (record escalated); `err`

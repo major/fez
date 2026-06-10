@@ -260,11 +260,16 @@ impl BridgeClient {
             "Get",
             json!([SUPERUSER_IFACE, "Bridges"]),
         )?;
-        // `dbus_call` returns the out-argument array (`reply[0]`). Properties.Get
-        // has a single out-arg (the variant), so the `as` value is `out[0]`.
+        // `dbus_call` returns the out-argument array (`reply[0]`).
+        // `Properties.Get` has a single `v` out-arg, so the `as` value arrives
+        // variant-wrapped: `out = [{"t":"as","v":["sudo",...]}]`. Unwrap the
+        // `{"t","v"}` envelope to reach the array (cockpit-bridge does not
+        // unwrap it for us; treating `out[0]` as the array directly yields an
+        // empty list and a spurious exit-11 deny).
         let names = out
             .as_array()
             .and_then(|args| args.first())
+            .map(variant_value)
             .and_then(Value::as_array)
             .map(|arr| {
                 arr.iter()
@@ -395,6 +400,17 @@ impl Drop for BridgeClient {
         let _ = self.child.kill();
         let _ = self.child.wait();
     }
+}
+
+/// Unwrap a D-Bus variant envelope to its inner value.
+///
+/// cockpit-bridge represents a variant on the wire as `{"t":<sig>,"v":<value>}`
+/// (e.g. a `Properties.Get` out-arg or an `a{sv}` dict value). Return the inner
+/// `v` when present, otherwise the value unchanged, so callers can treat
+/// variant-wrapped and bare values uniformly (same convention as the services
+/// status parser).
+fn variant_value(v: &Value) -> &Value {
+    v.get("v").unwrap_or(v)
 }
 
 /// Convert a channel-close `problem` into the matching [`FezError`].
