@@ -24,6 +24,77 @@ fn dnf_package(name: &str, evr: &str, arch: &str, repo_id: &str, install_size: u
     })
 }
 
+/// Reject an `a{sv}` options dict whose values are not variant-wrapped.
+///
+/// Real cockpit-bridge marshals every value of an `a{sv}` argument as a D-Bus
+/// variant, which on the wire is an explicit `{"t":<sig>,"v":<value>}` object.
+/// A bare JSON scalar makes the marshaller raise `'bool' object is not
+/// subscriptable` (or the type-specific equivalent). The fake mirrors that so
+/// the integration tests catch a regression where fez sends bare scalars.
+///
+/// Returns `Some(error_reply)` when a bare value is found, `None` otherwise.
+fn reject_unwrapped_options(args: &[Value], id: &Value) -> Option<Value> {
+    let opts = args.last()?.as_object()?;
+    for (key, val) in opts {
+        let wrapped = val
+            .as_object()
+            .is_some_and(|o| o.contains_key("t") && o.contains_key("v"));
+        if !wrapped {
+            return Some(json!({"error":[
+                "org.freedesktop.DBus.Error.InvalidArgs",
+                [format!(
+                    "a{{sv}} value for key {key:?} is not a variant ({{\"t\",\"v\"}}); \
+                     cockpit-bridge would raise a marshalling TypeError"
+                )]
+            ],"id": id}));
+        }
+    }
+    None
+}
+
+/// Canned reply for a dnf5daemon (`org.rpm.dnf.v0`) method.
+///
+/// Split out from the systemd match so the caller can validate the `a{sv}`
+/// options argument (via [`reject_unwrapped_options`]) before dispatching.
+fn dnf_reply(method: &str, iface: &str, id: &Value) -> Value {
+    match method {
+        // SessionManager.open_session -> (session_object_path).
+        // FEZ_FAKE_NO_DNF5 simulates the daemon being absent: the bus name
+        // fails to activate, yielding ServiceUnknown.
+        "open_session" => {
+            if std::env::var_os("FEZ_FAKE_NO_DNF5").is_some() {
+                json!({"error":[
+                    "org.freedesktop.DBus.Error.ServiceUnknown",
+                    ["The name org.rpm.dnf.v0 was not provided by any .service files"]
+                ],"id": id})
+            } else {
+                json!({"reply":[[SESSION_PATH]],"id": id})
+            }
+        }
+        // rpm.Repo.list(options) -> (repositories). Shares the method name
+        // `list` with Rpm.list; disambiguated by iface.
+        "list" if iface.ends_with(".rpm.Repo") => json!({"reply":[[[
+            dnf_repo("fedora", "Fedora", true),
+            dnf_repo("updates-testing", "Fedora - Testing", false),
+        ]]],"id": id}),
+        // rpm.Rpm.list(options) -> (packages).
+        "list" => json!({"reply":[[[
+            dnf_package("bash", "5.2.26-1.fc40", "x86_64", "fedora", 7340032),
+            dnf_package("htop", "3.3.0-1.fc40", "x86_64", "fedora", 245760),
+            dnf_package("nginx", "1.24.0-7.fc40", "x86_64", "fedora", 1572864),
+        ]]],"id": id}),
+        // Staging calls: install/remove/upgrade return nothing.
+        "install" | "remove" | "upgrade" => json!({"reply":[[]],"id": id}),
+        // Goal.resolve(options) -> (transaction_items, result). result 0 == no problems.
+        "resolve" => json!({"reply":[[fake_resolve_items(), 0]],"id": id}),
+        // Goal.do_transaction(options) -> ().
+        "do_transaction" => json!({"reply":[[]],"id": id}),
+        other => json!({"error":[
+            "org.freedesktop.DBus.Error.UnknownMethod",
+            [format!("no fake for {other}")]],"id": id}),
+    }
+}
+
 /// Build a dnf5daemon repository `a{sv}` attribute map.
 fn dnf_repo(id: &str, name: &str, enabled: bool) -> Value {
     json!({
@@ -140,22 +211,48 @@ fn main() -> io::Result<()> {
                 // (rpm.Rpm.list vs rpm.Repo.list) which share a method name.
                 let iface = call.get(1).and_then(Value::as_str).unwrap_or("");
                 let method = call.get(2).and_then(Value::as_str).unwrap_or("");
-                let reply = match method {
-                    // reply[0][0] = units array
-                    "ListUnits" => json!({"reply":[[[
+                let args = call
+                    .get(3)
+                    .and_then(Value::as_array)
+                    .cloned()
+                    .unwrap_or_default();
+                // dnf5daemon methods whose last argument is an a{sv} options
+                // dict. cockpit-bridge marshals each value as a variant, so a
+                // bare scalar is a wire error; reject it the way real bridge
+                // would (see reject_unwrapped_options).
+                let dnf_options_method = matches!(
+                    method,
+                    "open_session"
+                        | "list"
+                        | "install"
+                        | "remove"
+                        | "upgrade"
+                        | "resolve"
+                        | "do_transaction"
+                );
+                let reply = if dnf_options_method {
+                    if let Some(err) = reject_unwrapped_options(&args, &id) {
+                        send_data(&mut stdout, &frame.channel, &err);
+                        continue;
+                    }
+                    dnf_reply(method, iface, &id)
+                } else {
+                    match method {
+                        // reply[0][0] = units array
+                        "ListUnits" => json!({"reply":[[[
                         ["sshd.service","OpenSSH server daemon","loaded","active","running","",
                          "/org/freedesktop/systemd1/unit/sshd_2eservice",0,"","/"],
                         ["chronyd.service","NTP client/server","loaded","inactive","dead","",
                          "/org/freedesktop/systemd1/unit/chronyd_2eservice",0,"","/"]
                     ]]],"id":id}),
-                    // reply[0][0] = object path
-                    "GetUnit" | "LoadUnit" => {
-                        json!({"reply":[["/org/freedesktop/systemd1/unit/sshd_2eservice"]],"id":id})
-                    }
-                    // reply[0][0] = a{sv} dict. Real cockpit-bridge wraps each
-                    // value as a D-Bus variant: {"t":"s","v":"..."}. Mirror that
-                    // so the status path is exercised exactly as in production.
-                    "GetAll" => json!({"reply":[[{
+                        // reply[0][0] = object path
+                        "GetUnit" | "LoadUnit" => {
+                            json!({"reply":[["/org/freedesktop/systemd1/unit/sshd_2eservice"]],"id":id})
+                        }
+                        // reply[0][0] = a{sv} dict. Real cockpit-bridge wraps each
+                        // value as a D-Bus variant: {"t":"s","v":"..."}. Mirror that
+                        // so the status path is exercised exactly as in production.
+                        "GetAll" => json!({"reply":[[{
                         "Id":{"t":"s","v":"sshd.service"},
                         "Description":{"t":"s","v":"OpenSSH server daemon"},
                         "LoadState":{"t":"s","v":"loaded"},
@@ -163,66 +260,36 @@ fn main() -> io::Result<()> {
                         "SubState":{"t":"s","v":"running"},
                         "UnitFileState":{"t":"s","v":"enabled"}
                     }]],"id":id}),
-                    // Lifecycle methods return a job object path: reply[0][0].
-                    "StartUnit" | "StopUnit" | "RestartUnit" | "ReloadUnit" => {
-                        json!({"reply":[["/org/freedesktop/systemd1/job/42"]],"id":id})
-                    }
-                    // Manager.Reload returns void; fez calls it after
-                    // enable/disable to refresh cached unit-file state.
-                    "Reload" => json!({"reply":[[]],"id":id}),
-                    // EnableUnitFiles returns two out args: carries_install_info (bool)
-                    // and a changes array. out_args = reply[0] = [true, [changes]].
-                    "EnableUnitFiles" => json!({"reply":[[
+                        // Lifecycle methods return a job object path: reply[0][0].
+                        "StartUnit" | "StopUnit" | "RestartUnit" | "ReloadUnit" => {
+                            json!({"reply":[["/org/freedesktop/systemd1/job/42"]],"id":id})
+                        }
+                        // Manager.Reload returns void; fez calls it after
+                        // enable/disable to refresh cached unit-file state.
+                        "Reload" => json!({"reply":[[]],"id":id}),
+                        // EnableUnitFiles returns two out args: carries_install_info (bool)
+                        // and a changes array. out_args = reply[0] = [true, [changes]].
+                        "EnableUnitFiles" => json!({"reply":[[
                         true,
                         [["symlink",
                           "/etc/systemd/system/multi-user.target.wants/chronyd.service",
                           "/usr/lib/systemd/system/chronyd.service"]]
                     ]],"id":id}),
-                    // DisableUnitFiles returns one out arg: a changes array.
-                    // out_args = reply[0] = [[changes]].
-                    "DisableUnitFiles" => json!({"reply":[[
+                        // DisableUnitFiles returns one out arg: a changes array.
+                        // out_args = reply[0] = [[changes]].
+                        "DisableUnitFiles" => json!({"reply":[[
                         [["unlink",
                           "/etc/systemd/system/multi-user.target.wants/chronyd.service",
                           ""]]
                     ]],"id":id}),
-                    // ---- org.rpm.dnf.v0 (dnf5daemon) ----
-                    // SessionManager.open_session -> (session_object_path).
-                    // FEZ_FAKE_NO_DNF5 simulates the daemon being absent: the
-                    // bus name fails to activate, yielding ServiceUnknown.
-                    "open_session" => {
-                        if std::env::var_os("FEZ_FAKE_NO_DNF5").is_some() {
-                            json!({"error":[
-                                "org.freedesktop.DBus.Error.ServiceUnknown",
-                                ["The name org.rpm.dnf.v0 was not provided by any .service files"]
-                            ],"id":id})
-                        } else {
-                            json!({"reply":[[SESSION_PATH]],"id":id})
-                        }
-                    }
-                    // SessionManager.close_session(path) -> (bool).
-                    "close_session" => json!({"reply":[[true]],"id":id}),
-                    // rpm.Repo.list(options) -> (repositories). Shares the
-                    // method name `list` with Rpm.list; disambiguated by iface.
-                    "list" if iface.ends_with(".rpm.Repo") => json!({"reply":[[[
-                        dnf_repo("fedora", "Fedora", true),
-                        dnf_repo("updates-testing", "Fedora - Testing", false),
-                    ]]],"id":id}),
-                    // rpm.Rpm.list(options) -> (packages).
-                    "list" => json!({"reply":[[[
-                        dnf_package("bash", "5.2.26-1.fc40", "x86_64", "fedora", 7340032),
-                        dnf_package("htop", "3.3.0-1.fc40", "x86_64", "fedora", 245760),
-                        dnf_package("nginx", "1.24.0-7.fc40", "x86_64", "fedora", 1572864),
-                    ]]],"id":id}),
-                    // Staging calls: install/remove/upgrade return nothing.
-                    "install" | "remove" | "upgrade" => json!({"reply":[[]],"id":id}),
-                    // Goal.resolve(options) -> (transaction_items, result).
-                    // result 0 == no problems.
-                    "resolve" => json!({"reply":[[fake_resolve_items(), 0]],"id":id}),
-                    // Goal.do_transaction(options) -> ().
-                    "do_transaction" => json!({"reply":[[]],"id":id}),
-                    other => json!({"error":[
+                        // dnf5daemon SessionManager.close_session(path) -> (bool).
+                        // Takes a bare object path, not an a{sv} dict, so it is not
+                        // a dnf_options_method and lands here.
+                        "close_session" => json!({"reply":[[true]],"id":id}),
+                        other => json!({"error":[
                         "org.freedesktop.DBus.Error.UnknownMethod",
                         [format!("no fake for {other}")]],"id":id}),
+                    }
                 };
                 send_data(&mut stdout, &frame.channel, &reply);
             }
