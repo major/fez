@@ -79,17 +79,24 @@ pub fn registry() -> Vec<Descriptor> {
         Descriptor {
             id: "services.list".into(),
             summary: "List systemd units".into(),
-            long: "List systemd units, optionally filtered by active state.".into(),
+            long: "List systemd units on the target host. Use --state to filter by \
+active state (e.g. active, failed, inactive). Read-only; never mutates."
+                .into(),
             privileged: false,
             output_kind: "ServiceList".into(),
             inputs: vec![input("state", false)],
             flags: vec!["--host".into(), "--json".into(), "--state".into()],
-            examples: vec!["fez services list --state failed --json".into()],
+            examples: vec![
+                "fez services list --state failed --json".into(),
+                "fez --host web01 services list".into(),
+            ],
         },
         Descriptor {
             id: "services.status".into(),
             summary: "Show one unit's status".into(),
-            long: "Show the current status of a single systemd unit.".into(),
+            long: "Show the current status of a single systemd unit (active state, \
+sub-state, enablement). Read-only."
+                .into(),
             privileged: false,
             output_kind: "ServiceStatus".into(),
             inputs: vec![input("unit", true)],
@@ -99,7 +106,9 @@ pub fn registry() -> Vec<Descriptor> {
         Descriptor {
             id: "services.logs".into(),
             summary: "Read a unit's journal".into(),
-            long: "Read journal entries for a single systemd unit.".into(),
+            long: "Read journal entries for a unit. Filter with --since and --priority \
+(journalctl syntax), cap with --lines, or stream with --follow. Read-only."
+                .into(),
             privileged: false,
             output_kind: "LogEntries".into(),
             inputs: vec![input("unit", true)],
@@ -111,50 +120,85 @@ pub fn registry() -> Vec<Descriptor> {
                 "--lines".into(),
                 "--follow".into(),
             ],
-            examples: vec!["fez services logs sshd.service --lines 100 --json".into()],
+            examples: vec![
+                "fez services logs sshd.service --lines 100 --json".into(),
+                "fez services logs nginx.service --since '1 hour ago' --priority err".into(),
+            ],
         },
         mutation(
             "services.start",
             "Start a unit",
-            "Start a systemd unit on the target host.",
+            "Start a systemd unit immediately. Privileged. Protected units are \
+refused unless --force is supplied. Exits 8 on a protected-unit refusal.",
             "ServiceMutation",
             &[],
         ),
         mutation(
             "services.stop",
             "Stop a unit",
-            "Stop a systemd unit on the target host.",
+            "Stop a running systemd unit. Privileged. Protected units are refused \
+unless --force is supplied (exit 8).",
             "ServiceMutation",
             &[],
         ),
         mutation(
             "services.restart",
             "Restart a unit",
-            "Restart a systemd unit on the target host.",
+            "Restart a systemd unit. Privileged. Protected units are refused unless \
+--force is supplied (exit 8).",
             "ServiceMutation",
             &[],
         ),
         mutation(
             "services.reload",
             "Reload a unit's configuration",
-            "Reload a systemd unit's configuration without restarting it.",
+            "Ask a unit to reload its configuration without a full restart. \
+Privileged. Protected units are refused unless --force is supplied (exit 8).",
             "ServiceMutation",
             &[],
         ),
-        mutation(
-            "services.enable",
-            "Enable a unit",
-            "Enable a systemd unit so it starts on boot.",
-            "ServiceEnablement",
-            &["--now"],
-        ),
-        mutation(
-            "services.disable",
-            "Disable a unit",
-            "Disable a systemd unit so it no longer starts on boot.",
-            "ServiceEnablement",
-            &["--now"],
-        ),
+        Descriptor {
+            id: "services.enable".into(),
+            summary: "Enable a unit".into(),
+            long: "Enable a unit so it starts at boot. Add --now to also start it \
+immediately. Privileged. Protected units are refused unless --force is supplied (exit 8)."
+                .into(),
+            privileged: true,
+            output_kind: "ServiceEnablement".into(),
+            inputs: vec![input("unit", true)],
+            flags: vec![
+                "--host".into(),
+                "--json".into(),
+                "--dry-run".into(),
+                "--force".into(),
+                "--now".into(),
+            ],
+            examples: vec![
+                "fez services enable chronyd.service --json".into(),
+                "fez services enable chronyd.service --now".into(),
+            ],
+        },
+        Descriptor {
+            id: "services.disable".into(),
+            summary: "Disable a unit".into(),
+            long: "Disable a unit so it no longer starts at boot. Add --now to also \
+stop it immediately. Privileged. Protected units are refused unless --force is supplied (exit 8)."
+                .into(),
+            privileged: true,
+            output_kind: "ServiceEnablement".into(),
+            inputs: vec![input("unit", true)],
+            flags: vec![
+                "--host".into(),
+                "--json".into(),
+                "--dry-run".into(),
+                "--force".into(),
+                "--now".into(),
+            ],
+            examples: vec![
+                "fez services disable chronyd.service --json".into(),
+                "fez services disable chronyd.service --now".into(),
+            ],
+        },
     ]
 }
 
@@ -175,6 +219,30 @@ mod tests {
             for ex in &d.examples {
                 assert!(ex.starts_with("fez "), "{}: bad example {:?}", d.id, ex);
             }
+        }
+    }
+
+    #[test]
+    fn protected_capabilities_document_force() {
+        for d in registry() {
+            if d.privileged {
+                assert!(
+                    d.long.contains("--force") || d.examples.iter().any(|e| e.contains("--force")),
+                    "{}: privileged capability should mention --force",
+                    d.id
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn enable_disable_have_now_example() {
+        for id in ["services.enable", "services.disable"] {
+            let d = find(id).unwrap();
+            assert!(
+                d.examples.iter().any(|e| e.contains("--now")),
+                "{id}: needs --now example"
+            );
         }
     }
 }
