@@ -226,3 +226,42 @@ fn man_emits_roff() {
         .stdout(contains(".TH"))
         .stdout(contains("fez"));
 }
+
+#[test]
+fn every_capability_id_has_a_clap_path() {
+    // Each dotted id maps to a real subcommand path under the enriched command.
+    let cmd = fez::cli::command();
+    for d in fez::capability::registry() {
+        let parts: Vec<&str> = d.id.split('.').collect();
+        let mut node = &cmd;
+        let mut found = true;
+        for p in &parts {
+            match node.get_subcommands().find(|c| c.get_name() == *p) {
+                Some(c) => node = c,
+                None => {
+                    found = false;
+                    break;
+                }
+            }
+        }
+        assert!(found, "capability {} has no clap path", d.id);
+    }
+}
+
+#[test]
+fn describe_example_matches_help_after_help() {
+    // describe and --help both read the registry, so the first example must
+    // appear in the rendered after_help for that command.
+    let cmd = fez::cli::command();
+    let d = fez::capability::find("services.start").unwrap();
+    let services = cmd
+        .get_subcommands()
+        .find(|c| c.get_name() == "services")
+        .unwrap();
+    let start = services
+        .get_subcommands()
+        .find(|c| c.get_name() == "start")
+        .unwrap();
+    let after = start.get_after_help().unwrap().to_string();
+    assert!(after.contains(&d.examples[0]));
+}
