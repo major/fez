@@ -1,0 +1,33 @@
+# yaml-language-server: $schema=https://coderabbit.ai/integrations/schema.v2.json
+inheritance: true
+
+reviews:
+  profile: assertive
+  path_instructions:
+    - path: "src/**/*.rs"
+      instructions: |
+        fez review:
+        - Preserve the public API contract: error codes (FezError::code/exit_code),
+          the fez/v1 JSON envelope shape, and the CLI surface are part of the
+          contract. Flag silent breaks.
+        - Keep async/IO thin; pure logic belongs in sync helpers that can be
+          unit-tested inline.
+        - Every pub item needs a doc comment; fallible methods need an # Errors
+          section (CI enforces 100% docstring coverage).
+        - Error handling uses the thiserror FezError enum and pub type Result<T>,
+          propagated with ?. Flag any anyhow usage.
+        - When a command, flag, or arg changes, the clap `about` and the matching
+          capability descriptor (summary/long/flags/examples) must change together.
+        - Keep secrets out of logs, errors, tests, and docs.
+        - Watch for Rust code smells:
+          - .unwrap()/.expect()/panic!/unreachable! on fallible paths outside
+            tests; prefer ? and the FezError enum.
+          - Needless .clone()/.to_owned() where a borrow or move would do.
+          - Blocking calls (std::fs, std::process, thread::sleep) inside async fns.
+          - .unwrap() on locks, or holding a MutexGuard across an .await.
+          - Stringly-typed errors and panics used for control flow.
+          - Overly broad pub visibility; keep internal items private.
+          - Reimplementing iterator/Option/Result combinators with manual loops or
+            nested matches that map/and_then/unwrap_or express more clearly.
+          - Manual Drop/Display/From impls that derives or thiserror cover.
+          - unsafe without a // SAFETY: comment justifying the invariants.
