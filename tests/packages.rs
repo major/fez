@@ -186,6 +186,31 @@ fn packages_downgrade_emits_mutation() {
 }
 
 #[test]
+fn packages_reinstall_dry_run_emits_plan() {
+    fez_fake()
+        .env("FEZ_FAKE_PLAN", "install")
+        .env("FEZ_AUDIT", "off")
+        .args(["packages", "reinstall", "bash", "--dry-run", "--json"])
+        .assert()
+        .success()
+        .stdout(contains("\"kind\":\"PackagePlan\""))
+        .stdout(contains("\"dry_run\":true"))
+        .stdout(contains("\"operation\":\"reinstall\""));
+}
+
+#[test]
+fn packages_reinstall_emits_mutation() {
+    fez_fake()
+        .env("FEZ_AUDIT", "off")
+        .env("FEZ_FAKE_PLAN", "install")
+        .args(["packages", "reinstall", "bash", "--json"])
+        .assert()
+        .success()
+        .stdout(contains("\"kind\":\"PackageMutation\""))
+        .stdout(contains("\"operation\":\"reinstall\""));
+}
+
+#[test]
 fn packages_remove_protected_human_error_to_stderr() {
     fez_fake()
         .env("FEZ_AUDIT", "off")

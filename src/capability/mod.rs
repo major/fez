@@ -375,6 +375,28 @@ supplied."
                 "fez packages downgrade kernel --dry-run".into(),
             ],
         },
+        Descriptor {
+            id: "packages.reinstall".into(),
+            summary: "Reinstall packages".into(),
+            long: "Reinstall one or more packages at their current version (repair without a \
+version change). Resolves first and surfaces the plan; --dry-run stops after the plan. \
+Privileged. Exits 9 if dnf5daemon is missing, 10 if removals are refused by guardrails \
+unless --force is supplied."
+                .into(),
+            privileged: true,
+            output_kind: "PackageMutation".into(),
+            inputs: vec![input("specs", true)],
+            flags: vec![
+                "--host".into(),
+                "--json".into(),
+                "--dry-run".into(),
+                "--force".into(),
+            ],
+            examples: vec![
+                "fez packages reinstall bash --json".into(),
+                "fez packages reinstall httpd --dry-run".into(),
+            ],
+        },
     ]
 }
 

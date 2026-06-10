@@ -233,6 +233,12 @@ pub enum PackagesAction {
         #[arg(required = true)]
         specs: Vec<String>,
     },
+    /// Reinstall packages without changing their version.
+    Reinstall {
+        /// Package specs to reinstall.
+        #[arg(required = true)]
+        specs: Vec<String>,
+    },
 }
 
 #[cfg(test)]
