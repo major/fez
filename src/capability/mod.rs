@@ -318,7 +318,7 @@ supplied."
                 .into(),
             privileged: true,
             output_kind: "PackageMutation".into(),
-            inputs: vec![],
+            inputs: vec![input("specs", false)],
             flags: vec![
                 "--host".into(),
                 "--json".into(),
