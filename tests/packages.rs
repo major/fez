@@ -136,6 +136,31 @@ fn packages_upgrade_all_dry_run_emits_plan() {
 }
 
 #[test]
+fn packages_distro_sync_dry_run_emits_plan() {
+    fez_fake()
+        .env("FEZ_FAKE_PLAN", "install")
+        .env("FEZ_AUDIT", "off")
+        .args(["packages", "distro-sync", "--dry-run", "--json"])
+        .assert()
+        .success()
+        .stdout(contains("\"kind\":\"PackagePlan\""))
+        .stdout(contains("\"dry_run\":true"))
+        .stdout(contains("\"operation\":\"distro-sync\""));
+}
+
+#[test]
+fn packages_distro_sync_emits_mutation() {
+    fez_fake()
+        .env("FEZ_AUDIT", "off")
+        .env("FEZ_FAKE_PLAN", "install")
+        .args(["packages", "distro-sync", "--json"])
+        .assert()
+        .success()
+        .stdout(contains("\"kind\":\"PackageMutation\""))
+        .stdout(contains("\"operation\":\"distro-sync\""));
+}
+
+#[test]
 fn packages_remove_protected_human_error_to_stderr() {
     fez_fake()
         .env("FEZ_AUDIT", "off")

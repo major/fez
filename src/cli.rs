@@ -222,6 +222,11 @@ pub enum PackagesAction {
         /// Package specs to upgrade; empty means upgrade everything.
         specs: Vec<String>,
     },
+    /// Synchronize installed packages to the versions in the enabled repos.
+    DistroSync {
+        /// Package specs to sync; empty means sync everything.
+        specs: Vec<String>,
+    },
 }
 
 #[cfg(test)]

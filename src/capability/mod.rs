@@ -330,6 +330,29 @@ supplied."
                 "fez packages upgrade nginx --force".into(),
             ],
         },
+        Descriptor {
+            id: "packages.distro-sync".into(),
+            summary: "Sync packages to repo versions".into(),
+            long: "Synchronize installed packages to the versions offered by the enabled \
+repositories (the canonical \"make this host match the repos\" operation). Names sync \
+only those packages; empty syncs everything. Resolves first and surfaces the plan; \
+--dry-run stops after the plan. Privileged. Exits 9 if dnf5daemon is missing, 10 if \
+removals are refused by guardrails unless --force is supplied."
+                .into(),
+            privileged: true,
+            output_kind: "PackageMutation".into(),
+            inputs: vec![input("specs", false)],
+            flags: vec![
+                "--host".into(),
+                "--json".into(),
+                "--dry-run".into(),
+                "--force".into(),
+            ],
+            examples: vec![
+                "fez packages distro-sync --json".into(),
+                "fez packages distro-sync kernel --dry-run".into(),
+            ],
+        },
     ]
 }
 

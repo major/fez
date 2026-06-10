@@ -83,8 +83,11 @@ fn dnf_reply(method: &str, iface: &str, id: &Value) -> Value {
             dnf_package("htop", "3.3.0-1.fc40", "x86_64", "fedora", 245760),
             dnf_package("nginx", "1.24.0-7.fc40", "x86_64", "fedora", 1572864),
         ]]],"id": id}),
-        // Staging calls: install/remove/upgrade return nothing.
-        "install" | "remove" | "upgrade" => json!({"reply":[[]],"id": id}),
+        // Staging calls: install/remove/upgrade/distro_sync/downgrade/reinstall
+        // return nothing.
+        "install" | "remove" | "upgrade" | "distro_sync" | "downgrade" | "reinstall" => {
+            json!({"reply":[[]],"id": id})
+        }
         // Goal.resolve(options) -> (transaction_items, result). result 0 == no problems.
         "resolve" => json!({"reply":[[fake_resolve_items(), 0]],"id": id}),
         // Goal.do_transaction(options) -> ().
@@ -306,6 +309,10 @@ fn main() -> io::Result<()> {
                         | "install"
                         | "remove"
                         | "upgrade"
+                        | "distro_sync"
+                        | "downgrade"
+                        | "reinstall"
+                        | "recent_changes"
                         | "resolve"
                         | "do_transaction"
                 );

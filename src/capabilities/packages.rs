@@ -36,6 +36,7 @@ enum Mutation {
     Install,
     Remove,
     Upgrade,
+    DistroSync,
 }
 
 impl Mutation {
@@ -44,17 +45,19 @@ impl Mutation {
             Mutation::Install => "install",
             Mutation::Remove => "remove",
             Mutation::Upgrade => "upgrade",
+            Mutation::DistroSync => "distro-sync",
         }
     }
     /// The dnf5daemon `Rpm` D-Bus method name to stage this mutation.
     ///
-    /// Intentionally distinct from [`Mutation::verb`] (the user-facing display
-    /// verb); the two happen to coincide today but answer different questions.
+    /// Distinct from [`Mutation::verb`] (the user-facing display verb): e.g.
+    /// `distro-sync` (verb) maps to the `distro_sync` D-Bus method.
     fn method(self) -> &'static str {
         match self {
             Mutation::Install => "install",
             Mutation::Remove => "remove",
             Mutation::Upgrade => "upgrade",
+            Mutation::DistroSync => "distro_sync",
         }
     }
 }
@@ -149,6 +152,10 @@ fn classify(action: &PackagesAction) -> Plan<'_> {
         },
         PackagesAction::Upgrade { specs } => Plan::Mutate {
             mutation: Mutation::Upgrade,
+            specs: specs.clone(),
+        },
+        PackagesAction::DistroSync { specs } => Plan::Mutate {
+            mutation: Mutation::DistroSync,
             specs: specs.clone(),
         },
     }
