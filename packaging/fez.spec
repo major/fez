@@ -39,6 +39,9 @@ on-demand capability discovery model, plus an MCP gateway for MCP-aware agents.}
 
 %build
 %cargo_build
+# Generate the man page from the built binary's hidden `man` subcommand so it
+# stays in lockstep with the capability registry (long descriptions, examples).
+$(find target -maxdepth 2 -type f -name fez | head -1) man > fez.1
 
 %install
 %cargo_install
@@ -47,6 +50,7 @@ rm -f %{buildroot}%{_bindir}/fez-fake-bridge
 # Application package: ship only the binary. cargo install also stages the
 # crate registry source for library reuse, which a leaf app must not ship.
 rm -rf %{buildroot}%{_datadir}/cargo
+install -Dpm0644 fez.1 %{buildroot}%{_mandir}/man1/fez.1
 
 %check
 %cargo_test
@@ -55,6 +59,7 @@ rm -rf %{buildroot}%{_datadir}/cargo
 %license LICENSE
 %doc README.md
 %{_bindir}/fez
+%{_mandir}/man1/fez.1*
 
 %changelog
 %autochangelog

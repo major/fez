@@ -215,3 +215,14 @@ fn completions_bash_emits_script() {
         .success()
         .stdout(contains("_fez"));
 }
+
+#[test]
+fn man_emits_roff() {
+    Command::cargo_bin("fez")
+        .unwrap()
+        .arg("man")
+        .assert()
+        .success()
+        .stdout(contains(".TH"))
+        .stdout(contains("fez"));
+}

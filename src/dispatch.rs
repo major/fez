@@ -49,6 +49,15 @@ pub fn run(cli: Cli) -> i32 {
             clap_complete::generate(*shell, &mut cmd, name, &mut std::io::stdout());
             0
         }
+        TopCommand::Man => {
+            let cmd = crate::cli::command();
+            let man = clap_mangen::Man::new(cmd);
+            let mut buf = Vec::new();
+            man.render(&mut buf).expect("render man page");
+            use std::io::Write;
+            std::io::stdout().write_all(&buf).expect("write man page");
+            0
+        }
         TopCommand::Services { .. } => crate::capabilities::services::dispatch(&cli),
         TopCommand::Mcp => crate::mcp::run(),
     }

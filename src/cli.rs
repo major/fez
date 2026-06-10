@@ -64,6 +64,9 @@ pub enum TopCommand {
         #[arg(value_enum)]
         shell: Shell,
     },
+    /// Emit the roff man page on stdout (used by packaging).
+    #[command(hide = true)]
+    Man,
     /// Manage systemd services.
     Services {
         /// The `services` action to perform.
