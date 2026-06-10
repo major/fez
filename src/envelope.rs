@@ -81,8 +81,25 @@ impl Envelope {
         self
     }
     /// Serialize the envelope to a pretty-printed JSON string.
+    ///
+    /// Returns a valid `fez/v1` error envelope on serialization failure so that
+    /// callers always receive syntactically correct JSON.
     pub fn to_json_string(&self) -> String {
-        serde_json::to_string_pretty(self).expect("envelope serializes")
+        serde_json::to_string_pretty(self).unwrap_or_else(|_| {
+            serde_json::to_string_pretty(
+                &serde_json::json!({
+                    "apiVersion": "fez/v1",
+                    "kind": "Error",
+                    "host": "",
+                    "status": "error",
+                    "error": {
+                        "code": "internal",
+                        "message": "envelope serialization failed",
+                    }
+                }),
+            )
+            .unwrap_or_default()
+        })
     }
 }
 
