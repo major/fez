@@ -92,6 +92,12 @@ pub enum TopCommand {
         #[command(subcommand)]
         action: PackagesAction,
     },
+    /// Inspect NetworkManager devices and connections.
+    Network {
+        /// The `network` action to perform.
+        #[command(subcommand)]
+        action: NetworkAction,
+    },
     /// Run as an MCP server (JSON-RPC 2.0 over stdio): a frugal gateway exposing
     /// list_capabilities, describe_capability, and invoke meta-tools.
     Mcp,
@@ -221,6 +227,22 @@ pub enum PackagesAction {
     Upgrade {
         /// Package specs to upgrade; empty means upgrade everything.
         specs: Vec<String>,
+    },
+}
+
+/// Actions under the `network` subcommand.
+#[derive(Subcommand, Debug)]
+pub enum NetworkAction {
+    /// List network devices.
+    List {
+        /// Include every device, including unmanaged virtual interfaces.
+        #[arg(long)]
+        all: bool,
+    },
+    /// Show one device's full network detail.
+    Show {
+        /// Device interface name to inspect (e.g. `enp1s0`).
+        device: String,
     },
 }
 

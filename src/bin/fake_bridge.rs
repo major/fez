@@ -146,6 +146,171 @@ fn fake_resolve_items() -> Value {
     }
 }
 
+/// NetworkManager root manager object path.
+const NM_MGR_PATH: &str = "/org/freedesktop/NetworkManager";
+
+/// Canned NetworkManager (`org.freedesktop.NetworkManager`) reply for a call
+/// against a NM object path.
+///
+/// NM reuses the generic `Get`/`GetAll` property methods across many object
+/// types, so the fake disambiguates by **object path** rather than method name
+/// (unlike the systemd/dnf surfaces). Every `a{sv}`/variant value is
+/// variant-wrapped (`{"t":<sig>,"v":<value>}`) exactly like real cockpit-bridge
+/// and the systemd `GetAll` arm, so the client's unwrap path is exercised.
+///
+/// Canned topology (returned by `GetDevices`):
+/// - `/Devices/1` `enp1s0`: ethernet (type 1), activated (100), managed; full
+///   IPv4 (`/IP4Config/1`) + IPv6 (`/IP6Config/1`) + active connection
+///   (`/ActiveConnection/1`) + DHCP lease (`/DHCP4Config/1`).
+/// - `/Devices/2` `enp2s0`: ethernet (type 1), unavailable (20), managed; no IP
+///   config (object path `"/"`) to exercise the null-config guard.
+/// - `/Devices/3` `lo`: loopback (type 32), unmanaged (10); kept by the default
+///   filter on device type even though it is unmanaged.
+/// - `/Devices/9` `veth0`: veth (type 20), unmanaged (10); hidden by the default
+///   filter, shown only with `--all`.
+fn nm_reply(path: &str, method: &str, id: &Value) -> Value {
+    // Manager: GetDevices -> (ao). Also answers Get/GetAll for global props,
+    // but fez only calls GetDevices on the manager for these two actions.
+    if path == NM_MGR_PATH {
+        return match method {
+            "GetDevices" => json!({"reply":[[[
+                format!("{NM_MGR_PATH}/Devices/1"),
+                format!("{NM_MGR_PATH}/Devices/2"),
+                format!("{NM_MGR_PATH}/Devices/3"),
+                format!("{NM_MGR_PATH}/Devices/9"),
+            ]]],"id":id}),
+            other => nm_unknown(other, id),
+        };
+    }
+    // Device objects: GetAll -> a{sv} device properties.
+    if let Some(n) = path.strip_prefix(&format!("{NM_MGR_PATH}/Devices/")) {
+        return match method {
+            "GetAll" => nm_device_props(n, id),
+            other => nm_unknown(other, id),
+        };
+    }
+    // IP4Config objects: GetAll -> AddressData/Gateway/NameserverData/Domains.
+    if path.starts_with(&format!("{NM_MGR_PATH}/IP4Config/")) {
+        return match method {
+            "GetAll" => json!({"reply":[[{
+                "AddressData": {"t":"aa{sv}","v":[
+                    {"address":{"t":"s","v":"192.168.10.20"},"prefix":{"t":"u","v":24}}
+                ]},
+                "Gateway": {"t":"s","v":"192.168.10.1"},
+                "NameserverData": {"t":"aa{sv}","v":[
+                    {"address":{"t":"s","v":"192.168.10.1"}},
+                    {"address":{"t":"s","v":"1.1.1.1"}}
+                ]},
+                "Domains": {"t":"as","v":["lan"]},
+            }]],"id":id}),
+            other => nm_unknown(other, id),
+        };
+    }
+    // IP6Config objects: GetAll -> AddressData/Gateway.
+    if path.starts_with(&format!("{NM_MGR_PATH}/IP6Config/")) {
+        return match method {
+            "GetAll" => json!({"reply":[[{
+                "AddressData": {"t":"aa{sv}","v":[
+                    {"address":{"t":"s","v":"fd00::20"},"prefix":{"t":"u","v":64}}
+                ]},
+                "Gateway": {"t":"s","v":"fd00::1"},
+            }]],"id":id}),
+            other => nm_unknown(other, id),
+        };
+    }
+    // Active connection objects: GetAll -> Id/Type/Default.
+    if path.starts_with(&format!("{NM_MGR_PATH}/ActiveConnection/")) {
+        return match method {
+            "GetAll" => json!({"reply":[[{
+                "Id": {"t":"s","v":"enp1s0"},
+                "Type": {"t":"s","v":"802-3-ethernet"},
+                "Default": {"t":"b","v":true},
+            }]],"id":id}),
+            other => nm_unknown(other, id),
+        };
+    }
+    // DHCP4 config objects: GetAll -> Options (a{sv}).
+    if path.starts_with(&format!("{NM_MGR_PATH}/DHCP4Config/")) {
+        return match method {
+            "GetAll" => json!({"reply":[[{
+                "Options": {"t":"a{sv}","v":{
+                    "routers": {"t":"s","v":"192.168.10.1"},
+                    "ip_address": {"t":"s","v":"192.168.10.20"},
+                }},
+            }]],"id":id}),
+            other => nm_unknown(other, id),
+        };
+    }
+    nm_unknown(method, id)
+}
+
+/// Build the `a{sv}` device property map for `Devices/<n>` GetAll.
+fn nm_device_props(n: &str, id: &Value) -> Value {
+    let nm = NM_MGR_PATH;
+    // (interface, type, state, managed, ip4, ip6, active, dhcp4)
+    let (iface, dtype, state, managed, ip4, ip6, active, dhcp4) = match n {
+        "1" => (
+            "enp1s0",
+            1u32,
+            100u32,
+            true,
+            format!("{nm}/IP4Config/1"),
+            format!("{nm}/IP6Config/1"),
+            format!("{nm}/ActiveConnection/1"),
+            format!("{nm}/DHCP4Config/1"),
+        ),
+        "2" => (
+            "enp2s0",
+            1u32,
+            20u32,
+            true,
+            "/".to_string(),
+            "/".to_string(),
+            "/".to_string(),
+            "/".to_string(),
+        ),
+        "3" => (
+            "lo",
+            32u32,
+            10u32,
+            false,
+            "/".to_string(),
+            "/".to_string(),
+            "/".to_string(),
+            "/".to_string(),
+        ),
+        _ => (
+            "veth0",
+            20u32,
+            10u32,
+            false,
+            "/".to_string(),
+            "/".to_string(),
+            "/".to_string(),
+            "/".to_string(),
+        ),
+    };
+    json!({"reply":[[{
+        "Interface": {"t":"s","v":iface},
+        "DeviceType": {"t":"u","v":dtype},
+        "State": {"t":"u","v":state},
+        "Managed": {"t":"b","v":managed},
+        "HwAddress": {"t":"s","v":"52:54:00:12:34:56"},
+        "Mtu": {"t":"u","v":1500},
+        "Ip4Config": {"t":"o","v":ip4},
+        "Ip6Config": {"t":"o","v":ip6},
+        "ActiveConnection": {"t":"o","v":active},
+        "Dhcp4Config": {"t":"o","v":dhcp4},
+    }]],"id":id})
+}
+
+/// Unknown-method D-Bus error for a NM call the fake does not model.
+fn nm_unknown(method: &str, id: &Value) -> Value {
+    json!({"error":[
+        "org.freedesktop.DBus.Error.UnknownMethod",
+        [format!("no NM fake for {method}")]],"id": id})
+}
+
 /// The host's escalation mechanisms as modeled by `FEZ_FAKE_BRIDGES`.
 ///
 /// Real cockpit-bridge exposes a `cockpit.Superuser.Bridges` property (the
@@ -288,6 +453,7 @@ fn main() -> io::Result<()> {
                 // call = [path, interface, method, args]. The interface is
                 // needed to disambiguate dnf5daemon's two `list` methods
                 // (rpm.Rpm.list vs rpm.Repo.list) which share a method name.
+                let path = call.first().and_then(Value::as_str).unwrap_or("");
                 let iface = call.get(1).and_then(Value::as_str).unwrap_or("");
                 let method = call.get(2).and_then(Value::as_str).unwrap_or("");
                 let args = call
@@ -309,7 +475,11 @@ fn main() -> io::Result<()> {
                         | "resolve"
                         | "do_transaction"
                 );
-                let reply = if dnf_options_method {
+                let reply = if path.starts_with(NM_MGR_PATH) {
+                    // NetworkManager surface: disambiguated by object path, not
+                    // method name (Get/GetAll are reused across object types).
+                    nm_reply(path, method, &id)
+                } else if dnf_options_method {
                     if let Some(err) = reject_unwrapped_options(&args, &id) {
                         send_data(&mut stdout, &frame.channel, &err);
                         continue;

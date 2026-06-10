@@ -62,6 +62,7 @@ pub fn run(cli: Cli) -> i32 {
         }
         TopCommand::Services { action } => crate::capabilities::services::dispatch(&cli, action),
         TopCommand::Packages { action } => crate::capabilities::packages::dispatch(&cli, action),
+        TopCommand::Network { action } => crate::capabilities::network::dispatch(&cli, action),
         TopCommand::Mcp => crate::mcp::run(),
     }
 }
