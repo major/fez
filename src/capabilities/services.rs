@@ -237,6 +237,20 @@ impl Mutation {
             _ => unreachable!("manager_method called for enable/disable"),
         }
     }
+    fn enablement_method(&self) -> &'static str {
+        match self {
+            Mutation::Enable { .. } => "EnableUnitFiles",
+            Mutation::Disable { .. } => "DisableUnitFiles",
+            _ => unreachable!("enablement_method called for non-enablement mutation"),
+        }
+    }
+    fn enablement_followup_method(&self) -> &'static str {
+        match self {
+            Mutation::Enable { .. } => "StartUnit",
+            Mutation::Disable { .. } => "StopUnit",
+            _ => unreachable!("enablement_followup_method called for non-enablement mutation"),
+        }
+    }
     /// The inverse invocation, for the reversibility hint (Section 8, layer 5).
     fn reverse_cmd(&self, unit: &str) -> Option<String> {
         match self {
@@ -287,67 +301,67 @@ fn execute(cli: &Cli, m: &Mutation, host: &str, unit: &str) -> Result<View> {
                 json!({"operation": m.verb(), "unit": unit, "host": host, "job": job}),
             ))
         }
-        Mutation::Enable { now } => {
-            let out = client.dbus_call(
-                &channel,
-                MGR_PATH,
-                MGR_IFACE,
-                "EnableUnitFiles",
-                json!([[unit], false, false]),
-            )?;
-            // out_args = [carries_install_info (bool), changes (array)].
-            let changes = out.get(1).cloned().unwrap_or_else(|| json!([]));
-            // EnableUnitFiles writes the symlink but leaves each unit's cached
-            // UnitFileState stale (still "disabled") until the manager reloads.
-            // `systemctl enable` reloads implicitly; do the same so a follow-up
-            // status reports "enabled" instead of the stale value.
-            reload_daemon(&mut client, &channel)?;
-            if *now {
-                client.dbus_call(
-                    &channel,
-                    MGR_PATH,
-                    MGR_IFACE,
-                    "StartUnit",
-                    json!([unit, "replace"]),
-                )?;
-            }
-            Ok(mutation_view(
-                m,
-                host,
-                unit,
-                json!({"operation": "enable", "unit": unit, "host": host, "now": *now, "changes": changes}),
-            ))
-        }
-        Mutation::Disable { now } => {
-            let out = client.dbus_call(
-                &channel,
-                MGR_PATH,
-                MGR_IFACE,
-                "DisableUnitFiles",
-                json!([[unit], false]),
-            )?;
-            // out_args = [changes (array)].
-            let changes = out.get(0).cloned().unwrap_or_else(|| json!([]));
-            // Same stale-cache caveat as enable: reload so the cached
-            // UnitFileState refreshes to "disabled".
-            reload_daemon(&mut client, &channel)?;
-            if *now {
-                client.dbus_call(
-                    &channel,
-                    MGR_PATH,
-                    MGR_IFACE,
-                    "StopUnit",
-                    json!([unit, "replace"]),
-                )?;
-            }
-            Ok(mutation_view(
-                m,
-                host,
-                unit,
-                json!({"operation": "disable", "unit": unit, "host": host, "now": *now, "changes": changes}),
-            ))
+        Mutation::Enable { now } | Mutation::Disable { now } => {
+            execute_enablement(&mut client, &channel, m, host, unit, *now)
         }
     }
+}
+
+fn execute_enablement(
+    client: &mut BridgeClient,
+    channel: &str,
+    m: &Mutation,
+    host: &str,
+    unit: &str,
+    now: bool,
+) -> Result<View> {
+    // Shared enable/disable path: issue the unit-file D-Bus call, extract the
+    // method-specific changes output, refresh systemd's cached state, and run
+    // the matching StartUnit/StopUnit follow-up when --now is requested.
+    let out = match m {
+        Mutation::Enable { .. } => client.dbus_call(
+            channel,
+            MGR_PATH,
+            MGR_IFACE,
+            m.enablement_method(),
+            json!([[unit], false, false]),
+        )?,
+        Mutation::Disable { .. } => client.dbus_call(
+            channel,
+            MGR_PATH,
+            MGR_IFACE,
+            m.enablement_method(),
+            json!([[unit], false]),
+        )?,
+        _ => unreachable!("execute_enablement called for non-enablement mutation"),
+    };
+    let changes = match m {
+        // EnableUnitFiles out_args = [carries_install_info (bool), changes (array)].
+        Mutation::Enable { .. } => out.get(1),
+        // DisableUnitFiles out_args = [changes (array)].
+        Mutation::Disable { .. } => out.get(0),
+        _ => unreachable!("execute_enablement called for non-enablement mutation"),
+    }
+    .cloned()
+    .unwrap_or_else(|| json!([]));
+
+    // Unit file changes leave systemd's cached UnitFileState stale until reload.
+    reload_daemon(client, channel)?;
+    if now {
+        client.dbus_call(
+            channel,
+            MGR_PATH,
+            MGR_IFACE,
+            m.enablement_followup_method(),
+            json!([unit, "replace"]),
+        )?;
+    }
+    Ok(mutation_view(
+        m,
+        host,
+        unit,
+        json!({"operation": m.verb(), "unit": unit, "host": host, "now": now, "changes": changes}),
+    ))
 }
 
 /// Ask systemd to reload its manager configuration so cached unit-file states
@@ -490,12 +504,7 @@ fn logs(
                     if as_json {
                         println!("{}", serde_json::to_string(&log_entry(&v)).unwrap());
                     } else {
-                        println!(
-                            "{}  {}: {}",
-                            s(&v, "__REALTIME_TIMESTAMP"),
-                            s(&v, "SYSLOG_IDENTIFIER"),
-                            s(&v, "MESSAGE")
-                        );
+                        println!("{}", log_human_line(&v));
                     }
                 }
             }
@@ -515,12 +524,8 @@ fn logs(
     let mut human = String::new();
     for line in blob.split(|&b| b == b'\n').filter(|l| !l.is_empty()) {
         if let Ok(v) = serde_json::from_slice::<Value>(line) {
-            human.push_str(&format!(
-                "{}  {}: {}\n",
-                s(&v, "__REALTIME_TIMESTAMP"),
-                s(&v, "SYSLOG_IDENTIFIER"),
-                s(&v, "MESSAGE")
-            ));
+            human.push_str(&log_human_line(&v));
+            human.push('\n');
             entries.push(log_entry(&v));
         }
     }
@@ -542,6 +547,15 @@ fn log_entry(v: &Value) -> Value {
         "message": s(v, "MESSAGE"),
         "pid": s(v, "_PID"),
     })
+}
+
+fn log_human_line(v: &Value) -> String {
+    format!(
+        "{}  {}: {}",
+        s(v, "__REALTIME_TIMESTAMP"),
+        s(v, "SYSLOG_IDENTIFIER"),
+        s(v, "MESSAGE")
+    )
 }
 
 fn render(cli: &Cli, result: Result<View>) -> i32 {

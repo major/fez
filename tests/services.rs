@@ -11,6 +11,13 @@ fn fez_fake() -> AssertCommand {
     c
 }
 
+fn fez_without_bridge() -> AssertCommand {
+    let mut c = AssertCommand::cargo_bin("fez").unwrap();
+    c.env("FEZ_BRIDGE", "/nonexistent/cockpit-bridge")
+        .env("FEZ_AUDIT", "off");
+    c
+}
+
 fn fake_transport() -> LocalTransport {
     LocalTransport {
         program: env!("CARGO_BIN_EXE_fez-fake-bridge").into(),
@@ -200,9 +207,7 @@ fn privileged_dbus_call_succeeds_against_fake() {
 // assert success — proof that no connection was attempted (no Spawn error).
 #[test]
 fn services_start_dry_run_does_not_connect() {
-    let mut c = AssertCommand::cargo_bin("fez").unwrap();
-    c.env("FEZ_BRIDGE", "/nonexistent/cockpit-bridge")
-        .env("FEZ_AUDIT", "off")
+    fez_without_bridge()
         .args([
             "services",
             "start",
@@ -220,9 +225,7 @@ fn services_start_dry_run_does_not_connect() {
 // Protected-unit refusal happens before connecting: exit 8, no Spawn error.
 #[test]
 fn protected_unit_refused_before_connecting() {
-    let mut c = AssertCommand::cargo_bin("fez").unwrap();
-    c.env("FEZ_BRIDGE", "/nonexistent/cockpit-bridge")
-        .env("FEZ_AUDIT", "off")
+    fez_without_bridge()
         .args(["services", "stop", "sshd.service", "--json"])
         .assert()
         .code(8)
@@ -232,9 +235,7 @@ fn protected_unit_refused_before_connecting() {
 // --force overrides the policy; --dry-run still previews without executing.
 #[test]
 fn force_overrides_policy_in_dry_run() {
-    let mut c = AssertCommand::cargo_bin("fez").unwrap();
-    c.env("FEZ_BRIDGE", "/nonexistent/cockpit-bridge")
-        .env("FEZ_AUDIT", "off")
+    fez_without_bridge()
         .args([
             "services",
             "stop",
