@@ -161,6 +161,18 @@ fn services_status_human() {
         .stdout(contains("active (running)"));
 }
 
+// A bare unit name (no `.service` suffix) must resolve the same way the
+// fully-qualified form does, matching systemctl's client-side name mangling.
+#[test]
+fn services_status_accepts_bare_unit_name() {
+    fez_fake()
+        .args(["services", "status", "sshd"])
+        .assert()
+        .success()
+        .stdout(contains("sshd.service"))
+        .stdout(contains("active (running)"));
+}
+
 #[test]
 fn services_logs_json_entries() {
     fez_fake()

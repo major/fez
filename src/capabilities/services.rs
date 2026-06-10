@@ -4,12 +4,41 @@ use crate::error::{FezError, Result};
 use crate::protocol::client::BridgeClient;
 use crate::transport;
 use serde_json::{json, Value};
+use std::borrow::Cow;
 use std::io::IsTerminal;
 
 const MGR_PATH: &str = "/org/freedesktop/systemd1";
 const MGR_IFACE: &str = "org.freedesktop.systemd1.Manager";
 const PROPS_IFACE: &str = "org.freedesktop.DBus.Properties";
 const UNIT_IFACE: &str = "org.freedesktop.systemd1.Unit";
+
+/// systemd's recognized unit-type extensions. A name ending in one of these is
+/// already fully qualified; anything else defaults to `.service`. Mirrors the
+/// suffix-defaulting half of systemd's `unit_name_mangle()`.
+const UNIT_SUFFIXES: [&str; 11] = [
+    ".service",
+    ".socket",
+    ".target",
+    ".timer",
+    ".mount",
+    ".automount",
+    ".swap",
+    ".path",
+    ".slice",
+    ".scope",
+    ".device",
+];
+
+/// Normalize a unit name the way systemctl does client-side: if it already ends
+/// in a recognized systemd unit-type extension, pass it through; otherwise append
+/// `.service`. Path/slash escaping is intentionally not handled.
+fn mangle_unit(name: &str) -> Cow<'_, str> {
+    if UNIT_SUFFIXES.iter().any(|suffix| name.ends_with(suffix)) {
+        Cow::Borrowed(name)
+    } else {
+        Cow::Owned(format!("{name}.service"))
+    }
+}
 
 struct View {
     kind: &'static str,
@@ -151,7 +180,7 @@ fn run_read(cli: &Cli, action: ReadAction<'_>) -> Result<View> {
     let host = client.host().to_string();
     match action {
         ReadAction::List { state } => list(&mut client, host, state),
-        ReadAction::Status { unit } => status(&mut client, host, unit),
+        ReadAction::Status { unit } => status(&mut client, host, &mangle_unit(unit)),
         ReadAction::Logs {
             unit,
             since,
@@ -162,7 +191,7 @@ fn run_read(cli: &Cli, action: ReadAction<'_>) -> Result<View> {
             &mut client,
             host,
             cli.json,
-            unit,
+            &mangle_unit(unit),
             since,
             priority,
             lines,
@@ -172,6 +201,8 @@ fn run_read(cli: &Cli, action: ReadAction<'_>) -> Result<View> {
 }
 
 fn run_mutation(cli: &Cli, m: Mutation, unit: &str) -> Result<View> {
+    let unit = mangle_unit(unit);
+    let unit = unit.as_ref();
     let host = cli.resolved_host();
 
     // Layer 3: protected-unit policy — before anything privileged.
@@ -644,8 +675,43 @@ fn render(cli: &Cli, result: Result<View>) -> i32 {
 
 #[cfg(test)]
 mod tests {
-    use super::s;
+    use super::{mangle_unit, s};
     use serde_json::json;
+
+    #[test]
+    fn mangle_appends_service_to_bare_name() {
+        assert_eq!(mangle_unit("NetworkManager"), "NetworkManager.service");
+    }
+
+    #[test]
+    fn mangle_leaves_known_suffixes_untouched() {
+        for name in [
+            "sshd.service",
+            "dbus.socket",
+            "multi-user.target",
+            "logrotate.timer",
+            "var-lib.mount",
+            "proc-sys.automount",
+            "dev-sda1.swap",
+            "run-foo.path",
+            "user.slice",
+            "session-1.scope",
+            "dev-sda.device",
+        ] {
+            assert_eq!(mangle_unit(name), name);
+        }
+    }
+
+    #[test]
+    fn mangle_treats_unknown_dotted_tail_as_bare() {
+        // Matches systemd: only a *recognized* unit-type extension is left alone.
+        assert_eq!(mangle_unit("foo.bar"), "foo.bar.service");
+    }
+
+    #[test]
+    fn mangle_does_not_double_suffix_service() {
+        assert_eq!(mangle_unit("sshd.service"), "sshd.service");
+    }
 
     // Real cockpit-bridge returns a{sv} dicts with each value wrapped as a
     // D-Bus variant: {"t":"s","v":"active"}. `s()` must unwrap that to "active".
