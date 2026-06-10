@@ -1,10 +1,13 @@
 use assert_cmd::Command;
 use predicates::str::contains;
 
+fn fez() -> Command {
+    Command::cargo_bin("fez").unwrap()
+}
+
 #[test]
 fn prints_version() {
-    Command::cargo_bin("fez")
-        .unwrap()
+    fez()
         .arg("--version")
         .assert()
         .success()
@@ -13,8 +16,7 @@ fn prints_version() {
 
 #[test]
 fn help_lists_command_groups() {
-    Command::cargo_bin("fez")
-        .unwrap()
+    fez()
         .arg("--help")
         .assert()
         .success()
@@ -25,8 +27,7 @@ fn help_lists_command_groups() {
 
 #[test]
 fn global_flags_present() {
-    Command::cargo_bin("fez")
-        .unwrap()
+    fez()
         .args(["services", "list", "--help"])
         .assert()
         .success()
@@ -36,8 +37,7 @@ fn global_flags_present() {
 
 #[test]
 fn capabilities_lists_service_ids() {
-    Command::cargo_bin("fez")
-        .unwrap()
+    fez()
         .arg("capabilities")
         .assert()
         .success()
@@ -47,8 +47,7 @@ fn capabilities_lists_service_ids() {
 
 #[test]
 fn describe_emits_envelope_json() {
-    Command::cargo_bin("fez")
-        .unwrap()
+    fez()
         .args(["describe", "services.status", "--json"])
         .assert()
         .success()
@@ -58,17 +57,12 @@ fn describe_emits_envelope_json() {
 
 #[test]
 fn describe_unknown_exits_4() {
-    Command::cargo_bin("fez")
-        .unwrap()
-        .args(["describe", "nope"])
-        .assert()
-        .code(4);
+    fez().args(["describe", "nope"]).assert().code(4);
 }
 
 #[test]
 fn capabilities_lists_mutation_ids() {
-    Command::cargo_bin("fez")
-        .unwrap()
+    fez()
         .arg("capabilities")
         .assert()
         .success()
@@ -82,8 +76,7 @@ fn capabilities_lists_mutation_ids() {
 
 #[test]
 fn describe_start_is_privileged() {
-    Command::cargo_bin("fez")
-        .unwrap()
+    fez()
         .args(["describe", "services.start", "--json"])
         .assert()
         .success()
@@ -95,8 +88,7 @@ fn describe_start_is_privileged() {
 
 #[test]
 fn describe_enable_lists_now_flag() {
-    Command::cargo_bin("fez")
-        .unwrap()
+    fez()
         .args(["describe", "services.enable", "--json"])
         .assert()
         .success()
@@ -106,8 +98,7 @@ fn describe_enable_lists_now_flag() {
 
 #[test]
 fn services_help_lists_mutation_verbs() {
-    Command::cargo_bin("fez")
-        .unwrap()
+    fez()
         .args(["services", "--help"])
         .assert()
         .success()
@@ -117,8 +108,7 @@ fn services_help_lists_mutation_verbs() {
 
 #[test]
 fn help_lists_mcp_subcommand() {
-    Command::cargo_bin("fez")
-        .unwrap()
+    fez()
         .arg("--help")
         .assert()
         .success()
@@ -127,8 +117,7 @@ fn help_lists_mcp_subcommand() {
 
 #[test]
 fn capabilities_json_emits_envelope() {
-    Command::cargo_bin("fez")
-        .unwrap()
+    fez()
         .args(["capabilities", "--json"])
         .assert()
         .success()
@@ -139,8 +128,7 @@ fn capabilities_json_emits_envelope() {
 
 #[test]
 fn describe_human_output_includes_example() {
-    Command::cargo_bin("fez")
-        .unwrap()
+    fez()
         .args(["describe", "services.status"])
         .assert()
         .success()
@@ -151,8 +139,7 @@ fn describe_human_output_includes_example() {
 
 #[test]
 fn describe_unknown_json_still_exits_4() {
-    Command::cargo_bin("fez")
-        .unwrap()
+    fez()
         .args(["describe", "nope", "--json"])
         .assert()
         .code(4)
@@ -161,8 +148,7 @@ fn describe_unknown_json_still_exits_4() {
 
 #[test]
 fn services_start_help_shows_examples_and_long() {
-    Command::cargo_bin("fez")
-        .unwrap()
+    fez()
         .args(["services", "start", "--help"])
         .assert()
         .success()
@@ -172,8 +158,7 @@ fn services_start_help_shows_examples_and_long() {
 
 #[test]
 fn guide_text_mentions_discovery_loop_and_exit_codes() {
-    Command::cargo_bin("fez")
-        .unwrap()
+    fez()
         .arg("guide")
         .assert()
         .success()
@@ -185,8 +170,7 @@ fn guide_text_mentions_discovery_loop_and_exit_codes() {
 
 #[test]
 fn guide_json_emits_agent_guide_envelope() {
-    Command::cargo_bin("fez")
-        .unwrap()
+    fez()
         .args(["guide", "--json"])
         .assert()
         .success()
@@ -197,8 +181,7 @@ fn guide_json_emits_agent_guide_envelope() {
 
 #[test]
 fn describe_text_shows_long_and_all_examples() {
-    Command::cargo_bin("fez")
-        .unwrap()
+    fez()
         .args(["describe", "services.enable"])
         .assert()
         .success()
@@ -208,8 +191,7 @@ fn describe_text_shows_long_and_all_examples() {
 
 #[test]
 fn completions_bash_emits_script() {
-    Command::cargo_bin("fez")
-        .unwrap()
+    fez()
         .args(["completions", "bash"])
         .assert()
         .success()
@@ -218,8 +200,7 @@ fn completions_bash_emits_script() {
 
 #[test]
 fn man_emits_roff() {
-    Command::cargo_bin("fez")
-        .unwrap()
+    fez()
         .arg("man")
         .assert()
         .success()
