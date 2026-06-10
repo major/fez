@@ -23,7 +23,9 @@ pub fn run(cli: Cli) -> i32 {
         TopCommand::Describe { capability: id } => match capability::find(id) {
             Some(d) => {
                 if cli.json {
-                    let data = serde_json::to_value(&d).unwrap();
+                    let data = serde_json::to_value(&d).unwrap_or_else(|_| {
+                        json!({"error": "descriptor serialization failed"})
+                    });
                     println!(
                         "{}",
                         Envelope::ok("CapabilityDescriptor", &host, data).to_json_string()

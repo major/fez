@@ -565,7 +565,10 @@ fn logs(
             for line in chunk.split(|&b| b == b'\n').filter(|l| !l.is_empty()) {
                 if let Ok(v) = serde_json::from_slice::<Value>(line) {
                     if as_json {
-                        println!("{}", serde_json::to_string(&log_entry(&v)).unwrap());
+                        println!(
+                            "{}",
+                            serde_json::to_string(&log_entry(&v)).unwrap_or_default()
+                        );
                     } else {
                         println!("{}", log_human_line(&v));
                     }
