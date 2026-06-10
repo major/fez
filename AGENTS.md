@@ -85,5 +85,5 @@ Runtime knobs read from the environment: `FEZ_BRIDGE` (bridge binary path, used 
 
 ## Notes
 
-- The `packages` capability drives **dnf5daemon** (`org.rpm.dnf.v0`) over the bridge. The target must have `dnf5daemon` installed and activatable (Fedora 41+, RHEL 10). When it is absent, fez returns exit 9 (`dependency-missing`) with remediation in the envelope `detail`.
+- The `packages` capability drives **dnf5daemon** (`org.rpm.dnf.v0`) over the bridge. The target must have the daemon installed and activatable (Fedora 41+, RHEL 10). The package that provides the `org.rpm.dnf.v0` D-Bus service is **`dnf5daemon-server`** (not `dnf5daemon`, which does not exist as a package name); the remediation string in `dependency_missing()` and the install command must use `dnf5daemon-server`. When it is absent, fez returns exit 9 (`dependency-missing`) with remediation in the envelope `detail`.
 - README links a design spec at `docs/superpowers/specs/2026-06-09-agentic-os-design.md` that is **not present** in the repo (`docs/superpowers/` only has the release-process and coverage-enforcement specs/plans). Do not trust that link.
