@@ -1,4 +1,4 @@
-use clap::{Parser, Subcommand};
+use clap::{CommandFactory, Parser, Subcommand};
 
 #[derive(Parser, Debug)]
 #[command(
@@ -27,6 +27,11 @@ pub struct Cli {
     /// The subcommand to run.
     #[command(subcommand)]
     pub command: TopCommand,
+}
+
+/// The derived clap command tree before registry enrichment.
+pub fn raw_command() -> clap::Command {
+    <Cli as CommandFactory>::command()
 }
 
 /// The top-level subcommands fez accepts.

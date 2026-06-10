@@ -2,6 +2,8 @@
 //! advertise the command surface (ids, inputs, flags, examples) to agents.
 use serde::Serialize;
 
+pub mod help;
+
 /// A single named input a capability accepts.
 #[derive(Serialize, Clone)]
 pub struct Input {
