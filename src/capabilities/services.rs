@@ -504,12 +504,7 @@ fn logs(
                     if as_json {
                         println!("{}", serde_json::to_string(&log_entry(&v)).unwrap());
                     } else {
-                        println!(
-                            "{}  {}: {}",
-                            s(&v, "__REALTIME_TIMESTAMP"),
-                            s(&v, "SYSLOG_IDENTIFIER"),
-                            s(&v, "MESSAGE")
-                        );
+                        println!("{}", log_human_line(&v));
                     }
                 }
             }
@@ -529,12 +524,8 @@ fn logs(
     let mut human = String::new();
     for line in blob.split(|&b| b == b'\n').filter(|l| !l.is_empty()) {
         if let Ok(v) = serde_json::from_slice::<Value>(line) {
-            human.push_str(&format!(
-                "{}  {}: {}\n",
-                s(&v, "__REALTIME_TIMESTAMP"),
-                s(&v, "SYSLOG_IDENTIFIER"),
-                s(&v, "MESSAGE")
-            ));
+            human.push_str(&log_human_line(&v));
+            human.push('\n');
             entries.push(log_entry(&v));
         }
     }
@@ -556,6 +547,15 @@ fn log_entry(v: &Value) -> Value {
         "message": s(v, "MESSAGE"),
         "pid": s(v, "_PID"),
     })
+}
+
+fn log_human_line(v: &Value) -> String {
+    format!(
+        "{}  {}: {}",
+        s(v, "__REALTIME_TIMESTAMP"),
+        s(v, "SYSLOG_IDENTIFIER"),
+        s(v, "MESSAGE")
+    )
 }
 
 fn render(cli: &Cli, result: Result<View>) -> i32 {
