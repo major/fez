@@ -229,9 +229,8 @@ fn main() -> io::Result<()> {
                 let payload = ctrl.get("payload").and_then(Value::as_str).unwrap_or("");
                 // A privileged channel (`superuser: "require"`) the bridge
                 // cannot route to root closes with `access-denied` instead of
-                // `ready`. Under the FEZ_FAKE_BRIDGES model that means no
-                // cockpit.Superuser.Start has succeeded yet; under the legacy
-                // FEZ_FAKE_SUPERUSER model it means mode "denied".
+                // `ready`: that means no cockpit.Superuser.Start has succeeded
+                // yet (no root peer exists).
                 let privileged = ctrl.get("superuser").and_then(Value::as_str) == Some("require");
                 // FEZ_FAKE_DENY_PRIVILEGED models a host where escalation
                 // succeeds but the sudoers/polkit policy still rejects the
