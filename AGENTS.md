@@ -64,6 +64,7 @@ Errors: single `FezError` enum (`src/error.rs`) with stable string `code()` and 
 
 - Integration tests drive a **fake bridge binary** (`src/bin/fake_bridge.rs`, built as `fez-fake-bridge`) instead of a real `cockpit-bridge`. Tests point fez at it via the `FEZ_BRIDGE` env var set to `env!("CARGO_BIN_EXE_fez-fake-bridge")`. The fake reports `chronyd` inactive and `sshd` active; assertions depend on that.
 - Packages integration tests (`tests/packages.rs`) drive the same fake bridge over `org.rpm.dnf.v0` (dnf5daemon). `FEZ_FAKE_PLAN` selects the staged transaction plan the fake returns from `Goal.resolve` (`install`/`small`/`protected`/`cascade`, exercising the removal guardrails); `FEZ_FAKE_NO_DNF5` makes the fake report the daemon absent (`ServiceUnknown`) to exercise the exit-9 `dependency-missing` path.
+- Envelope JSON is **compact** (`Envelope::to_json_string` uses `serde_json::to_string`, no spaces). Assert `--json` output with substrings like `"kind":"ServiceList"` (no space after the colon). Pretty-printed `"kind": "X"` passes against a stale local build but fails in CI's clean build.
 - E2E (`test/e2e/run.sh`) provisions a real cloud host via Terraform, installs `cockpit-bridge`, and exercises the real transport. Expensive and destructive (auto-`destroy` on exit). It auto-`tee`s every run to `test/e2e/logs/run-<ts>.log` (gitignored) with a `last-run.log` symlink; read the log on failure. It pins SSH config with `FEZ_SSH_CONFIG` (`ssh -F`), not `HOME`, because OpenSSH ignores `$HOME/.ssh/config` non-interactively.
 
 ## Env vars
