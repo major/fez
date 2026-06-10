@@ -180,7 +180,7 @@ fn run_read(cli: &Cli, action: ReadAction<'_>) -> Result<View> {
     let host = client.host().to_string();
     match action {
         ReadAction::List { state } => list(&mut client, host, state),
-        ReadAction::Status { unit } => status(&mut client, host, unit),
+        ReadAction::Status { unit } => status(&mut client, host, &mangle_unit(unit)),
         ReadAction::Logs {
             unit,
             since,
@@ -191,7 +191,7 @@ fn run_read(cli: &Cli, action: ReadAction<'_>) -> Result<View> {
             &mut client,
             host,
             cli.json,
-            unit,
+            &mangle_unit(unit),
             since,
             priority,
             lines,
