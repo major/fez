@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0](https://github.com/major/fez/compare/v0.2.0...v0.3.0) - 2026-06-10
+
+### Added
+
+- *(packages)* add dnf5daemon-backed package management capability ([#23](https://github.com/major/fez/pull/23))
+- LLM-optimized JSON output ([#21](https://github.com/major/fez/pull/21))
+- *(services)* default bare unit names to .service ([#19](https://github.com/major/fez/pull/19))
+
+### Fixed
+
+- *(packages)* variant-wrap dnf5daemon a{sv} option arguments
+- *(cli)* reset SIGPIPE to SIG_DFL so piped output exits cleanly ([#22](https://github.com/major/fez/pull/22))
+
+### Other
+
+- *(agents)* note compact envelope JSON for test assertions
+- use buildless CodeQL extraction for Rust
+- add supply-chain, MSRV, and CodeQL gates ([#17](https://github.com/major/fez/pull/17))
+
 ## [0.2.0](https://github.com/major/fez/compare/v0.1.0...v0.2.0) - 2026-06-10
 
 ### Fixed
