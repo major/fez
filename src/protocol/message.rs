@@ -240,6 +240,24 @@ mod tests {
     }
 
     #[test]
+    fn serializes_internal_bus_open() {
+        // The internal-bus open (used to reach cockpit.Superuser) carries
+        // bus:"internal", no name, and is never privileged.
+        let open = Control::open("ch9", "dbus-json3").opt("bus", json!("internal"));
+        let v = serde_json::to_value(open).unwrap();
+        assert_eq!(
+            v,
+            json!({
+                "command":"open","channel":"ch9","payload":"dbus-json3",
+                "bus":"internal"
+            })
+        );
+        let obj = v.as_object().unwrap();
+        assert!(!obj.contains_key("name"));
+        assert!(!obj.contains_key("superuser"));
+    }
+
+    #[test]
     fn serializes_dbus_call() {
         let call = DbusCall::new(
             "ch1",
