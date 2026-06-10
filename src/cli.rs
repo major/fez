@@ -1,4 +1,5 @@
 use clap::{CommandFactory, FromArgMatches, Parser, Subcommand};
+use clap_complete::Shell;
 
 #[derive(Parser, Debug)]
 #[command(
@@ -57,6 +58,12 @@ pub enum TopCommand {
     },
     /// Print the agent contract: discovery loop, envelope, exit codes, env vars.
     Guide,
+    /// Generate a shell completion script on stdout.
+    Completions {
+        /// Shell to generate completions for.
+        #[arg(value_enum)]
+        shell: Shell,
+    },
     /// Manage systemd services.
     Services {
         /// The `services` action to perform.

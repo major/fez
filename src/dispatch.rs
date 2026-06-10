@@ -43,6 +43,12 @@ pub fn run(cli: Cli) -> i32 {
             }
         },
         TopCommand::Guide => crate::guide::run(&host, cli.json),
+        TopCommand::Completions { shell } => {
+            let mut cmd = crate::cli::command();
+            let name = cmd.get_name().to_string();
+            clap_complete::generate(*shell, &mut cmd, name, &mut std::io::stdout());
+            0
+        }
         TopCommand::Services { .. } => crate::capabilities::services::dispatch(&cli),
         TopCommand::Mcp => crate::mcp::run(),
     }

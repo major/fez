@@ -205,3 +205,13 @@ fn describe_text_shows_long_and_all_examples() {
         .stdout(contains("--now"))
         .stdout(contains("boot"));
 }
+
+#[test]
+fn completions_bash_emits_script() {
+    Command::cargo_bin("fez")
+        .unwrap()
+        .args(["completions", "bash"])
+        .assert()
+        .success()
+        .stdout(contains("_fez"));
+}
