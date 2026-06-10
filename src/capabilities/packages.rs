@@ -168,7 +168,7 @@ fn dependency_missing() -> FezError {
     FezError::DependencyMissing {
         component: "dnf5daemon".into(),
         dbus_name: DNF_NAME.into(),
-        remediation: "Install dnf5daemon on the target (dnf install dnf5daemon) and ensure its D-Bus service org.rpm.dnf.v0 is activatable, then retry.".into(),
+        remediation: "Install the dnf5daemon server on the target (dnf install dnf5daemon-server) and ensure its D-Bus service org.rpm.dnf.v0 is activatable, then retry.".into(),
     }
 }
 
