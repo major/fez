@@ -215,8 +215,22 @@ fn main() -> io::Result<()> {
             // brings up no root peer at init and just completes the handshake.
             // Escalation happens later, driven by the client via
             // cockpit.Superuser.Start over the internal bus.
+            //
+            // Real cockpit only runs superuser negotiation (and thus only emits
+            // `superuser-init-done`) when init carries an escalation request,
+            // i.e. `superuser` is an object or a string other than "none".
+            // `SuperuserRoutingRule.init` is never invoked for `superuser:
+            // "none"`, so no `superuser-init-done` is sent. Mirror that here so
+            // the fake cannot mask a client that wrongly blocks on it.
             if let Some("init") = command {
-                send_control(&mut stdout, &json!({"command":"superuser-init-done"}));
+                let requests_escalation = match ctrl.get("superuser") {
+                    None | Some(Value::Null) => false,
+                    Some(Value::String(s)) => s != "none",
+                    Some(_) => true,
+                };
+                if requests_escalation {
+                    send_control(&mut stdout, &json!({"command":"superuser-init-done"}));
+                }
                 continue;
             }
             // close, done: ignore; only `open` needs a response.

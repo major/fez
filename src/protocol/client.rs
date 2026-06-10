@@ -108,15 +108,17 @@ impl BridgeClient {
 
     /// Complete the bridge handshake.
     ///
-    /// Waits for the bridge's `init`, then for `superuser-init-done`. Because we
-    /// send `init` with `superuser: "none"`, the bridge brings up no root peer
-    /// and the superuser negotiation completes trivially: there is no init-time
-    /// credential prompt to answer. Escalation is deferred to [`escalate`], run
-    /// lazily before the first privileged channel open.
+    /// Waits for the bridge's `init` reply, which completes the handshake.
+    /// Because we send `init` with `superuser: "none"`, the bridge brings up no
+    /// root peer at init time and runs no superuser negotiation, so it emits no
+    /// `superuser-init-done` (cockpit's `SuperuserRoutingRule.init` is only
+    /// invoked, and only then fires `superuser-init-done`, when init carries a
+    /// `superuser` object). Waiting for that message here would hang against a
+    /// real bridge. Escalation is deferred to [`escalate`], run lazily before
+    /// the first privileged channel open.
     ///
     /// [`escalate`]: BridgeClient::escalate
     fn await_init(&mut self) -> Result<()> {
-        let mut saw_init = false;
         loop {
             let frame = self.recv()?;
             if !frame.channel.is_empty() {
@@ -124,16 +126,11 @@ impl BridgeClient {
             }
             let c: IncomingControl =
                 serde_json::from_slice(&frame.payload).map_err(FezError::Decode)?;
-            match c.command.as_str() {
-                "init" => {
-                    saw_init = true;
-                }
-                // Superuser negotiation finished (trivially, since we deferred
-                // escalation). The handshake is done; proceed.
-                "superuser-init-done" if saw_init => {
-                    return Ok(());
-                }
-                _ => {}
+            // The bridge's `init` reply opens the transport. We deferred
+            // escalation (`superuser: "none"`), so there is no further superuser
+            // negotiation to await; the handshake is done.
+            if c.command == "init" {
+                return Ok(());
             }
         }
     }
