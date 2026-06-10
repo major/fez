@@ -201,6 +201,8 @@ fn run_read(cli: &Cli, action: ReadAction<'_>) -> Result<View> {
 }
 
 fn run_mutation(cli: &Cli, m: Mutation, unit: &str) -> Result<View> {
+    let unit = mangle_unit(unit);
+    let unit = unit.as_ref();
     let host = cli.resolved_host();
 
     // Layer 3: protected-unit policy — before anything privileged.
