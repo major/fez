@@ -13,7 +13,7 @@ fn packages_list_json_has_packages() {
         .args(["packages", "list", "--json"])
         .assert()
         .success()
-        .stdout(contains("\"kind\": \"PackageList\""))
+        .stdout(contains("\"kind\":\"PackageList\""))
         .stdout(contains("bash"))
         .stdout(contains("htop"));
 }
@@ -34,8 +34,8 @@ fn packages_info_json() {
         .args(["packages", "info", "bash", "--json"])
         .assert()
         .success()
-        .stdout(contains("\"kind\": \"PackageInfo\""))
-        .stdout(contains("\"name\": \"bash\""));
+        .stdout(contains("\"kind\":\"PackageInfo\""))
+        .stdout(contains("\"name\":\"bash\""));
 }
 
 #[test]
@@ -44,7 +44,7 @@ fn packages_search_finds_nginx() {
         .args(["packages", "search", "ngin", "--json"])
         .assert()
         .success()
-        .stdout(contains("\"kind\": \"PackageSearch\""))
+        .stdout(contains("\"kind\":\"PackageSearch\""))
         .stdout(contains("nginx"));
 }
 
@@ -54,7 +54,7 @@ fn packages_check_update_lists_updates() {
         .args(["packages", "check-update", "--json"])
         .assert()
         .success()
-        .stdout(contains("\"kind\": \"PackageUpdates\""));
+        .stdout(contains("\"kind\":\"PackageUpdates\""));
 }
 
 #[test]
@@ -63,7 +63,7 @@ fn packages_repolist_shows_enabled_state() {
         .args(["packages", "repolist", "--all", "--json"])
         .assert()
         .success()
-        .stdout(contains("\"kind\": \"RepoList\""))
+        .stdout(contains("\"kind\":\"RepoList\""))
         .stdout(contains("fedora"))
         .stdout(contains("\"enabled\""));
 }
@@ -76,9 +76,9 @@ fn packages_install_dry_run_emits_plan() {
         .args(["packages", "install", "htop", "--dry-run", "--json"])
         .assert()
         .success()
-        .stdout(contains("\"kind\": \"PackagePlan\""))
-        .stdout(contains("\"dry_run\": true"))
-        .stdout(contains("\"operation\": \"install\""));
+        .stdout(contains("\"kind\":\"PackagePlan\""))
+        .stdout(contains("\"dry_run\":true"))
+        .stdout(contains("\"operation\":\"install\""));
 }
 
 #[test]
@@ -89,8 +89,8 @@ fn packages_remove_small_plan_succeeds() {
         .args(["packages", "remove", "htop", "--json"])
         .assert()
         .success()
-        .stdout(contains("\"kind\": \"PackageMutation\""))
-        .stdout(contains("\"operation\": \"remove\""));
+        .stdout(contains("\"kind\":\"PackageMutation\""))
+        .stdout(contains("\"operation\":\"remove\""));
 }
 
 #[test]
@@ -101,8 +101,8 @@ fn packages_upgrade_emits_mutation() {
         .args(["packages", "upgrade", "nginx", "--json"])
         .assert()
         .success()
-        .stdout(contains("\"kind\": \"PackageMutation\""))
-        .stdout(contains("\"operation\": \"upgrade\""));
+        .stdout(contains("\"kind\":\"PackageMutation\""))
+        .stdout(contains("\"operation\":\"upgrade\""));
 }
 
 #[test]
@@ -113,8 +113,8 @@ fn packages_upgrade_all_dry_run_emits_plan() {
         .args(["packages", "upgrade", "--dry-run", "--json"])
         .assert()
         .success()
-        .stdout(contains("\"kind\": \"PackagePlan\""))
-        .stdout(contains("\"dry_run\": true"));
+        .stdout(contains("\"kind\":\"PackagePlan\""))
+        .stdout(contains("\"dry_run\":true"));
 }
 
 #[test]
@@ -137,7 +137,7 @@ fn packages_remove_protected_refused_without_force() {
         .args(["packages", "remove", "glibc", "--json"])
         .assert()
         .code(10)
-        .stdout(contains("\"code\": \"dangerous-transaction\""))
+        .stdout(contains("\"code\":\"dangerous-transaction\""))
         .stdout(contains("glibc"));
 }
 
@@ -149,7 +149,7 @@ fn packages_remove_protected_allowed_with_force() {
         .args(["packages", "remove", "glibc", "--force", "--json"])
         .assert()
         .success()
-        .stdout(contains("\"kind\": \"PackageMutation\""));
+        .stdout(contains("\"kind\":\"PackageMutation\""));
 }
 
 #[test]
@@ -160,7 +160,7 @@ fn packages_remove_cascade_refused_without_force() {
         .args(["packages", "remove", "leaf", "--json"])
         .assert()
         .code(10)
-        .stdout(contains("\"code\": \"dangerous-transaction\""));
+        .stdout(contains("\"code\":\"dangerous-transaction\""));
 }
 
 #[test]
@@ -170,7 +170,7 @@ fn packages_dependency_missing_returns_exit_9() {
         .args(["packages", "list", "--json"])
         .assert()
         .code(9)
-        .stdout(contains("\"code\": \"dependency-missing\""))
+        .stdout(contains("\"code\":\"dependency-missing\""))
         .stdout(contains("dnf5daemon"))
         .stdout(contains("\"remediation\""));
 }
