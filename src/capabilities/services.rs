@@ -495,10 +495,25 @@ fn list(client: &mut BridgeClient, host: String, state: Option<&str>) -> Result<
             s(u, "description")
         ));
     }
+    // Columnar projection: field names are stated once in `columns`, and each
+    // unit becomes a positional row aligned to that column order. This keeps the
+    // `--json` payload compact for LLM consumers. `units` above stays the source
+    // of truth for the human renderer.
+    let columns = [
+        "name",
+        "description",
+        "load_state",
+        "active_state",
+        "sub_state",
+    ];
+    let rows: Vec<Value> = units
+        .iter()
+        .map(|u| Value::Array(columns.iter().map(|c| u[*c].clone()).collect()))
+        .collect();
     Ok(View {
         kind: "ServiceList",
         host,
-        data: json!({"units": units}),
+        data: json!({"columns": columns, "rows": rows, "count": rows.len()}),
         human,
         pre_rendered: false,
         hints: None,

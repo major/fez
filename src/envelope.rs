@@ -85,17 +85,8 @@ impl Envelope {
     /// Returns a valid `fez/v1` error envelope on serialization failure so that
     /// callers always receive syntactically correct JSON.
     pub fn to_json_string(&self) -> String {
-        serde_json::to_string_pretty(self).unwrap_or_else(|_| {
-            r#"{
-  "apiVersion": "fez/v1",
-  "kind": "Error",
-  "host": "",
-  "status": "error",
-  "error": {
-    "code": "internal",
-    "message": "envelope serialization failed"
-  }
-}"#
+        serde_json::to_string(self).unwrap_or_else(|_| {
+            r#"{"apiVersion":"fez/v1","kind":"Error","host":"","status":"error","error":{"code":"internal","message":"envelope serialization failed"}}"#
             .to_string()
         })
     }
@@ -108,12 +99,12 @@ mod tests {
 
     #[test]
     fn ok_envelope_shape() {
-        let e = Envelope::ok("ServiceList", "localhost", json!({"units":[]}));
+        let e = Envelope::ok("Sample", "localhost", json!({"k":"v"}));
         assert_eq!(
             serde_json::to_value(&e).unwrap(),
             json!({
-                "apiVersion":"fez/v1","kind":"ServiceList","host":"localhost",
-                "status":"ok","data":{"units":[]}
+                "apiVersion":"fez/v1","kind":"Sample","host":"localhost",
+                "status":"ok","data":{"k":"v"}
             })
         );
     }

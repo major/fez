@@ -111,13 +111,19 @@ fn privileged_dbus_open_routes_through_sudo_peer() {
 }
 
 #[test]
-fn services_list_json_has_units() {
+fn services_list_json_is_columnar() {
     fez_fake()
         .args(["services", "list", "--json"])
         .assert()
         .success()
-        .stdout(contains("\"kind\": \"ServiceList\""))
-        .stdout(contains("sshd.service"));
+        .stdout(contains("\"kind\":\"ServiceList\""))
+        .stdout(contains("\"columns\":"))
+        .stdout(contains("\"rows\":"))
+        .stdout(contains("\"count\":"))
+        .stdout(contains("\"name\""))
+        .stdout(contains("\"active_state\""))
+        .stdout(contains("sshd.service"))
+        .stdout(contains("\"units\"").not());
 }
 
 #[test]
@@ -146,9 +152,9 @@ fn services_status_json() {
         .args(["services", "status", "sshd.service", "--json"])
         .assert()
         .success()
-        .stdout(contains("\"kind\": \"ServiceStatus\""))
-        .stdout(contains("\"active_state\": \"active\""))
-        .stdout(contains("\"unit_file_state\": \"enabled\""));
+        .stdout(contains("\"kind\":\"ServiceStatus\""))
+        .stdout(contains("\"active_state\":\"active\""))
+        .stdout(contains("\"unit_file_state\":\"enabled\""));
 }
 
 #[test]
@@ -179,7 +185,7 @@ fn services_logs_json_entries() {
         .args(["services", "logs", "sshd.service", "--json"])
         .assert()
         .success()
-        .stdout(contains("\"kind\": \"LogEntries\""))
+        .stdout(contains("\"kind\":\"LogEntries\""))
         .stdout(contains("Accepted publickey"));
 }
 
@@ -229,9 +235,9 @@ fn services_start_dry_run_does_not_connect() {
         ])
         .assert()
         .success()
-        .stdout(contains("\"kind\": \"DryRun\""))
-        .stdout(contains("\"operation\": \"start\""))
-        .stdout(contains("\"privileged\": true"));
+        .stdout(contains("\"kind\":\"DryRun\""))
+        .stdout(contains("\"operation\":\"start\""))
+        .stdout(contains("\"privileged\":true"));
 }
 
 // Protected-unit refusal happens before connecting: exit 8, no Spawn error.
@@ -241,7 +247,7 @@ fn protected_unit_refused_before_connecting() {
         .args(["services", "stop", "sshd.service", "--json"])
         .assert()
         .code(8)
-        .stdout(contains("\"code\": \"protected-unit\""));
+        .stdout(contains("\"code\":\"protected-unit\""));
 }
 
 // --force overrides the policy; --dry-run still previews without executing.
@@ -258,7 +264,7 @@ fn force_overrides_policy_in_dry_run() {
         ])
         .assert()
         .success()
-        .stdout(contains("\"kind\": \"DryRun\""));
+        .stdout(contains("\"kind\":\"DryRun\""));
 }
 
 #[test]
@@ -268,10 +274,10 @@ fn services_start_returns_mutation_with_reverse_hint() {
         .args(["services", "start", "chronyd.service", "--json"])
         .assert()
         .success()
-        .stdout(contains("\"kind\": \"ServiceMutation\""))
-        .stdout(contains("\"job\": \"/org/freedesktop/systemd1/job/42\""))
+        .stdout(contains("\"kind\":\"ServiceMutation\""))
+        .stdout(contains("\"job\":\"/org/freedesktop/systemd1/job/42\""))
         .stdout(contains(
-            "\"reverse\": \"fez services stop chronyd.service\"",
+            "\"reverse\":\"fez services stop chronyd.service\"",
         ));
 }
 
@@ -292,7 +298,7 @@ fn services_restart_has_no_reverse_hint() {
         .args(["services", "restart", "chronyd.service", "--json"])
         .assert()
         .success()
-        .stdout(contains("\"kind\": \"ServiceMutation\""))
+        .stdout(contains("\"kind\":\"ServiceMutation\""))
         .stdout(contains("hints").not());
 }
 
@@ -325,10 +331,10 @@ fn services_enable_returns_enablement_with_reverse_hint() {
         .args(["services", "enable", "chronyd.service", "--json"])
         .assert()
         .success()
-        .stdout(contains("\"kind\": \"ServiceEnablement\""))
+        .stdout(contains("\"kind\":\"ServiceEnablement\""))
         .stdout(contains("\"changes\""))
         .stdout(contains(
-            "\"reverse\": \"fez services disable chronyd.service\"",
+            "\"reverse\":\"fez services disable chronyd.service\"",
         ));
 }
 
@@ -340,7 +346,7 @@ fn services_enable_now_hint_includes_now() {
         .assert()
         .success()
         .stdout(contains(
-            "\"reverse\": \"fez services disable chronyd.service --now\"",
+            "\"reverse\":\"fez services disable chronyd.service --now\"",
         ));
 }
 

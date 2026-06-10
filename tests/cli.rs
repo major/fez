@@ -51,7 +51,7 @@ fn describe_emits_envelope_json() {
         .args(["describe", "services.status", "--json"])
         .assert()
         .success()
-        .stdout(contains("\"apiVersion\": \"fez/v1\""))
+        .stdout(contains("\"apiVersion\":\"fez/v1\""))
         .stdout(contains("ServiceStatus"));
 }
 
@@ -80,8 +80,8 @@ fn describe_start_is_privileged() {
         .args(["describe", "services.start", "--json"])
         .assert()
         .success()
-        .stdout(contains("\"privileged\": true"))
-        .stdout(contains("\"output_kind\": \"ServiceMutation\""))
+        .stdout(contains("\"privileged\":true"))
+        .stdout(contains("\"output_kind\":\"ServiceMutation\""))
         .stdout(contains("--dry-run"))
         .stdout(contains("--force"));
 }
@@ -92,7 +92,7 @@ fn describe_enable_lists_now_flag() {
         .args(["describe", "services.enable", "--json"])
         .assert()
         .success()
-        .stdout(contains("\"output_kind\": \"ServiceEnablement\""))
+        .stdout(contains("\"output_kind\":\"ServiceEnablement\""))
         .stdout(contains("--now"));
 }
 
@@ -121,7 +121,7 @@ fn capabilities_json_emits_envelope() {
         .args(["capabilities", "--json"])
         .assert()
         .success()
-        .stdout(contains("\"apiVersion\": \"fez/v1\""))
+        .stdout(contains("\"apiVersion\":\"fez/v1\""))
         .stdout(contains("CapabilityList"))
         .stdout(contains("services.list"));
 }
@@ -174,7 +174,7 @@ fn guide_json_emits_agent_guide_envelope() {
         .args(["guide", "--json"])
         .assert()
         .success()
-        .stdout(contains("\"apiVersion\": \"fez/v1\""))
+        .stdout(contains("\"apiVersion\":\"fez/v1\""))
         .stdout(contains("AgentGuide"))
         .stdout(contains("exitCodes"));
 }
