@@ -28,6 +28,7 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9  # stable
         with:
+          toolchain: "1.92"
           targets: ${{ matrix.target }}
       - name: Build and upload fez binary
         uses: taiki-e/upload-rust-binary-action@57510bf386b3945b57963e73201cea60ca18dff4  # v1.9.1
