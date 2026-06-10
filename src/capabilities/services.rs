@@ -1,5 +1,5 @@
 use crate::audit::AuditRecord;
-use crate::cli::{Cli, ServicesAction, TopCommand};
+use crate::cli::{Cli, ServicesAction};
 use crate::envelope::{ApiError, Envelope};
 use crate::error::{FezError, Result};
 use crate::protocol::client::BridgeClient;
@@ -56,44 +56,104 @@ impl Mutation {
     }
 }
 
-fn action_to_mutation(action: &ServicesAction) -> (Mutation, &str) {
+/// A read subcommand and its arguments, borrowed from the parsed action.
+///
+/// Splitting reads out of [`ServicesAction`] makes [`run_read`] total: every
+/// variant here maps to a handler, so adding one is a compile error rather than
+/// a runtime panic.
+enum ReadAction<'a> {
+    List {
+        state: Option<&'a str>,
+    },
+    Status {
+        unit: &'a str,
+    },
+    Logs {
+        unit: &'a str,
+        since: Option<&'a str>,
+        priority: Option<&'a str>,
+        lines: Option<u32>,
+        follow: bool,
+    },
+}
+
+/// The read/mutate split of a parsed [`ServicesAction`].
+///
+/// [`classify`] is the single place that matches the full clap enum; everything
+/// downstream consumes one arm of this and is therefore total.
+enum Plan<'a> {
+    Read(ReadAction<'a>),
+    Mutate { mutation: Mutation, unit: &'a str },
+}
+
+/// Map the flat clap enum onto the read/mutate [`Plan`] split.
+///
+/// This is the only exhaustive match over [`ServicesAction`]; the rest of the
+/// module works off [`Plan`], so a new variant breaks the build here instead of
+/// hitting an `unreachable!` at runtime.
+fn classify(action: &ServicesAction) -> Plan<'_> {
     match action {
-        ServicesAction::Start { unit } => (Mutation::Start, unit),
-        ServicesAction::Stop { unit } => (Mutation::Stop, unit),
-        ServicesAction::Restart { unit } => (Mutation::Restart, unit),
-        ServicesAction::Reload { unit } => (Mutation::Reload, unit),
-        ServicesAction::Enable { unit, now } => (Mutation::Enable { now: *now }, unit),
-        ServicesAction::Disable { unit, now } => (Mutation::Disable { now: *now }, unit),
-        _ => unreachable!("action_to_mutation called for a read"),
+        ServicesAction::List { state } => Plan::Read(ReadAction::List {
+            state: state.as_deref(),
+        }),
+        ServicesAction::Status { unit } => Plan::Read(ReadAction::Status { unit }),
+        ServicesAction::Logs {
+            unit,
+            since,
+            priority,
+            lines,
+            follow,
+        } => Plan::Read(ReadAction::Logs {
+            unit,
+            since: since.as_deref(),
+            priority: priority.as_deref(),
+            lines: *lines,
+            follow: *follow,
+        }),
+        ServicesAction::Start { unit } => Plan::Mutate {
+            mutation: Mutation::Start,
+            unit,
+        },
+        ServicesAction::Stop { unit } => Plan::Mutate {
+            mutation: Mutation::Stop,
+            unit,
+        },
+        ServicesAction::Restart { unit } => Plan::Mutate {
+            mutation: Mutation::Restart,
+            unit,
+        },
+        ServicesAction::Reload { unit } => Plan::Mutate {
+            mutation: Mutation::Reload,
+            unit,
+        },
+        ServicesAction::Enable { unit, now } => Plan::Mutate {
+            mutation: Mutation::Enable { now: *now },
+            unit,
+        },
+        ServicesAction::Disable { unit, now } => Plan::Mutate {
+            mutation: Mutation::Disable { now: *now },
+            unit,
+        },
     }
 }
 
 /// Run the requested `services` subcommand and return the process exit code.
-pub fn dispatch(cli: &Cli) -> i32 {
-    let action = match &cli.command {
-        TopCommand::Services { action } => action,
-        _ => unreachable!("dispatch called for non-services command"),
+pub fn dispatch(cli: &Cli, action: &ServicesAction) -> i32 {
+    let view = match classify(action) {
+        Plan::Read(read) => run_read(cli, read),
+        Plan::Mutate { mutation, unit } => run_mutation(cli, mutation, unit),
     };
-    render(cli, run_action(cli, action))
+    render(cli, view)
 }
 
-fn run_action(cli: &Cli, action: &ServicesAction) -> Result<View> {
-    match action {
-        ServicesAction::List { .. }
-        | ServicesAction::Status { .. }
-        | ServicesAction::Logs { .. } => run_read(cli, action),
-        _ => run_mutation(cli, action),
-    }
-}
-
-fn run_read(cli: &Cli, action: &ServicesAction) -> Result<View> {
+fn run_read(cli: &Cli, action: ReadAction<'_>) -> Result<View> {
     let transport = transport::from_host(cli.host.as_deref());
     let mut client = BridgeClient::connect(transport.as_ref())?;
     let host = client.host().to_string();
     match action {
-        ServicesAction::List { state } => list(&mut client, host, state.as_deref()),
-        ServicesAction::Status { unit } => status(&mut client, host, unit),
-        ServicesAction::Logs {
+        ReadAction::List { state } => list(&mut client, host, state),
+        ReadAction::Status { unit } => status(&mut client, host, unit),
+        ReadAction::Logs {
             unit,
             since,
             priority,
@@ -104,17 +164,15 @@ fn run_read(cli: &Cli, action: &ServicesAction) -> Result<View> {
             host,
             cli.json,
             unit,
-            since.as_deref(),
-            priority.as_deref(),
-            *lines,
-            *follow,
+            since,
+            priority,
+            lines,
+            follow,
         ),
-        _ => unreachable!("run_read called for a mutation"),
     }
 }
 
-fn run_mutation(cli: &Cli, action: &ServicesAction) -> Result<View> {
-    let (m, unit) = action_to_mutation(action);
+fn run_mutation(cli: &Cli, m: Mutation, unit: &str) -> Result<View> {
     let host = cli.host.clone().unwrap_or_else(|| "localhost".into());
 
     // Layer 3: protected-unit policy — before anything privileged.
@@ -228,29 +286,6 @@ impl Mutation {
             _ => "ServiceMutation",
         }
     }
-    fn manager_method(&self) -> &'static str {
-        match self {
-            Mutation::Start => "StartUnit",
-            Mutation::Stop => "StopUnit",
-            Mutation::Restart => "RestartUnit",
-            Mutation::Reload => "ReloadUnit",
-            _ => unreachable!("manager_method called for enable/disable"),
-        }
-    }
-    fn enablement_method(&self) -> &'static str {
-        match self {
-            Mutation::Enable { .. } => "EnableUnitFiles",
-            Mutation::Disable { .. } => "DisableUnitFiles",
-            _ => unreachable!("enablement_method called for non-enablement mutation"),
-        }
-    }
-    fn enablement_followup_method(&self) -> &'static str {
-        match self {
-            Mutation::Enable { .. } => "StartUnit",
-            Mutation::Disable { .. } => "StopUnit",
-            _ => unreachable!("enablement_followup_method called for non-enablement mutation"),
-        }
-    }
     /// The inverse invocation, for the reversibility hint (Section 8, layer 5).
     fn reverse_cmd(&self, unit: &str) -> Option<String> {
         match self {
@@ -284,25 +319,62 @@ fn execute(cli: &Cli, m: &Mutation, host: &str, unit: &str) -> Result<View> {
     let transport = transport::from_host(cli.host.as_deref());
     let mut client = BridgeClient::connect(transport.as_ref())?;
     let channel = client.dbus_open_privileged("org.freedesktop.systemd1")?;
+    // Helper for the simple `*Unit` ops, which differ only by manager method.
+    // Keeping it a fn (not a closure) avoids capturing `client`, so the
+    // enablement arms below can still borrow it.
+    fn simple_unit(
+        client: &mut BridgeClient,
+        channel: &str,
+        m: &Mutation,
+        host: &str,
+        unit: &str,
+        method: &str,
+    ) -> Result<View> {
+        let out = client.dbus_call(
+            channel,
+            MGR_PATH,
+            MGR_IFACE,
+            method,
+            json!([unit, "replace"]),
+        )?;
+        let job = out.get(0).and_then(Value::as_str).unwrap_or("").to_string();
+        Ok(mutation_view(
+            m,
+            host,
+            unit,
+            json!({"operation": m.verb(), "unit": unit, "host": host, "job": job}),
+        ))
+    }
     match m {
-        Mutation::Start | Mutation::Stop | Mutation::Restart | Mutation::Reload => {
-            let out = client.dbus_call(
-                &channel,
-                MGR_PATH,
-                MGR_IFACE,
-                m.manager_method(),
-                json!([unit, "replace"]),
-            )?;
-            let job = out.get(0).and_then(Value::as_str).unwrap_or("").to_string();
-            Ok(mutation_view(
-                m,
-                host,
-                unit,
-                json!({"operation": m.verb(), "unit": unit, "host": host, "job": job}),
-            ))
+        Mutation::Start => simple_unit(&mut client, &channel, m, host, unit, "StartUnit"),
+        Mutation::Stop => simple_unit(&mut client, &channel, m, host, unit, "StopUnit"),
+        Mutation::Restart => simple_unit(&mut client, &channel, m, host, unit, "RestartUnit"),
+        Mutation::Reload => simple_unit(&mut client, &channel, m, host, unit, "ReloadUnit"),
+        Mutation::Enable { now } => {
+            execute_enablement(&mut client, &channel, Enablement::Enable, host, unit, *now)
         }
-        Mutation::Enable { now } | Mutation::Disable { now } => {
-            execute_enablement(&mut client, &channel, m, host, unit, *now)
+        Mutation::Disable { now } => {
+            execute_enablement(&mut client, &channel, Enablement::Disable, host, unit, *now)
+        }
+    }
+}
+
+/// The two unit-file operations, split out of [`Mutation`] so the enablement
+/// path is total: every variant here maps to a real D-Bus call, so the simple
+/// `*Unit` ops cannot reach [`execute_enablement`] and no `unreachable!` is
+/// needed to satisfy exhaustiveness.
+#[derive(Clone, Copy)]
+enum Enablement {
+    Enable,
+    Disable,
+}
+
+impl Enablement {
+    /// The owning [`Mutation`] for `mutation_view`, with `now` threaded back in.
+    fn mutation(self, now: bool) -> Mutation {
+        match self {
+            Enablement::Enable => Mutation::Enable { now },
+            Enablement::Disable => Mutation::Disable { now },
         }
     }
 }
@@ -310,7 +382,7 @@ fn execute(cli: &Cli, m: &Mutation, host: &str, unit: &str) -> Result<View> {
 fn execute_enablement(
     client: &mut BridgeClient,
     channel: &str,
-    m: &Mutation,
+    op: Enablement,
     host: &str,
     unit: &str,
     now: bool,
@@ -318,32 +390,22 @@ fn execute_enablement(
     // Shared enable/disable path: issue the unit-file D-Bus call, extract the
     // method-specific changes output, refresh systemd's cached state, and run
     // the matching StartUnit/StopUnit follow-up when --now is requested.
-    let out = match m {
-        Mutation::Enable { .. } => client.dbus_call(
-            channel,
-            MGR_PATH,
-            MGR_IFACE,
-            m.enablement_method(),
+    //
+    // `args`: EnableUnitFiles takes [[units], runtime, force]; DisableUnitFiles
+    // takes [[units], runtime]. `changes_idx`: EnableUnitFiles out_args are
+    // [carries_install_info (bool), changes (array)] so changes is at 1;
+    // DisableUnitFiles out_args are [changes (array)] so changes is at 0.
+    let (unit_file_method, followup_method, args, changes_idx) = match op {
+        Enablement::Enable => (
+            "EnableUnitFiles",
+            "StartUnit",
             json!([[unit], false, false]),
-        )?,
-        Mutation::Disable { .. } => client.dbus_call(
-            channel,
-            MGR_PATH,
-            MGR_IFACE,
-            m.enablement_method(),
-            json!([[unit], false]),
-        )?,
-        _ => unreachable!("execute_enablement called for non-enablement mutation"),
+            1,
+        ),
+        Enablement::Disable => ("DisableUnitFiles", "StopUnit", json!([[unit], false]), 0),
     };
-    let changes = match m {
-        // EnableUnitFiles out_args = [carries_install_info (bool), changes (array)].
-        Mutation::Enable { .. } => out.get(1),
-        // DisableUnitFiles out_args = [changes (array)].
-        Mutation::Disable { .. } => out.get(0),
-        _ => unreachable!("execute_enablement called for non-enablement mutation"),
-    }
-    .cloned()
-    .unwrap_or_else(|| json!([]));
+    let out = client.dbus_call(channel, MGR_PATH, MGR_IFACE, unit_file_method, args)?;
+    let changes = out.get(changes_idx).cloned().unwrap_or_else(|| json!([]));
 
     // Unit file changes leave systemd's cached UnitFileState stale until reload.
     reload_daemon(client, channel)?;
@@ -352,12 +414,13 @@ fn execute_enablement(
             channel,
             MGR_PATH,
             MGR_IFACE,
-            m.enablement_followup_method(),
+            followup_method,
             json!([unit, "replace"]),
         )?;
     }
+    let m = op.mutation(now);
     Ok(mutation_view(
-        m,
+        &m,
         host,
         unit,
         json!({"operation": m.verb(), "unit": unit, "host": host, "now": now, "changes": changes}),
@@ -626,5 +689,87 @@ mod tests {
     fn s_missing_key_is_empty() {
         let props = json!({"ActiveState": {"t": "s", "v": "active"}});
         assert_eq!(s(&props, "Nope"), "");
+    }
+
+    // `classify` is the single total mapping from the flat clap enum to the
+    // read/mutate split. It replaces the `unreachable!()`-guarded helpers: if a
+    // new `ServicesAction` variant is added, this match fails to compile rather
+    // than panicking at runtime. These cases pin the routing for every variant.
+    #[test]
+    fn classify_routes_reads() {
+        use super::{classify, Plan};
+        use crate::cli::ServicesAction;
+
+        assert!(matches!(
+            classify(&ServicesAction::List { state: None }),
+            Plan::Read(_)
+        ));
+        assert!(matches!(
+            classify(&ServicesAction::Status {
+                unit: "sshd".into()
+            }),
+            Plan::Read(_)
+        ));
+        assert!(matches!(
+            classify(&ServicesAction::Logs {
+                unit: "sshd".into(),
+                since: None,
+                priority: None,
+                lines: Some(50),
+                follow: false,
+            }),
+            Plan::Read(_)
+        ));
+    }
+
+    #[test]
+    fn classify_routes_mutations() {
+        use super::{classify, Mutation, Plan};
+        use crate::cli::ServicesAction;
+
+        let cases = [
+            (ServicesAction::Start { unit: "u".into() }, Mutation::Start),
+            (ServicesAction::Stop { unit: "u".into() }, Mutation::Stop),
+            (
+                ServicesAction::Restart { unit: "u".into() },
+                Mutation::Restart,
+            ),
+            (
+                ServicesAction::Reload { unit: "u".into() },
+                Mutation::Reload,
+            ),
+            (
+                ServicesAction::Enable {
+                    unit: "u".into(),
+                    now: true,
+                },
+                Mutation::Enable { now: true },
+            ),
+            (
+                ServicesAction::Disable {
+                    unit: "u".into(),
+                    now: false,
+                },
+                Mutation::Disable { now: false },
+            ),
+        ];
+        for (action, want) in cases {
+            match classify(&action) {
+                Plan::Mutate { mutation, unit } => {
+                    assert_eq!(mutation.verb(), want.verb());
+                    assert!(matches!(
+                        (mutation, want),
+                        (Mutation::Start, Mutation::Start)
+                            | (Mutation::Stop, Mutation::Stop)
+                            | (Mutation::Restart, Mutation::Restart)
+                            | (Mutation::Reload, Mutation::Reload)
+                            | (Mutation::Enable { .. }, Mutation::Enable { .. })
+                            | (Mutation::Disable { .. }, Mutation::Disable { .. })
+                    ));
+                    assert_eq!(unit, "u");
+                }
+                Plan::Read(_) => panic!("mutation classified as read"),
+            }
+        }
     }
 }
