@@ -31,7 +31,10 @@ pub fn run() -> i32 {
             continue;
         }
         if let Some(resp) = handle_line(&line) {
-            if writeln!(stdout, "{}", serde_json::to_string(&resp).unwrap()).is_err() {
+            let Ok(json) = serde_json::to_string(&resp) else {
+                return 2;
+            };
+            if writeln!(stdout, "{json}").is_err() {
                 break;
             }
             let _ = stdout.flush();
@@ -134,10 +137,11 @@ fn tools_call(params: &Value) -> Result<Value, (i64, String)> {
                 .and_then(Value::as_str)
                 .ok_or((-32602, "missing 'capability'".to_string()))?;
             match capability::find(id) {
-                Some(d) => Ok(text_result(
-                    &serde_json::to_string_pretty(&d).unwrap(),
-                    false,
-                )),
+                Some(d) => {
+                    let text = serde_json::to_string_pretty(&d)
+                        .unwrap_or_else(|e| format!("descriptor serialization error: {e}"));
+                    Ok(text_result(&text, false))
+                }
                 None => Ok(text_result(&format!("unknown capability: {id}"), true)),
             }
         }
