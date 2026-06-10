@@ -4,6 +4,8 @@
 //! The crate is structured as a library plus thin binaries so the fake bridge
 //! and integration tests can reuse the protocol modules.
 
+#![deny(missing_docs)]
+
 /// JSON-lines audit logging of attempted and completed mutations.
 pub mod audit;
 /// Concrete capability implementations (the commands fez runs).

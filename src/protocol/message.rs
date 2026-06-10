@@ -66,8 +66,15 @@ impl Control {
         self
     }
     /// Serialize this control message to JSON bytes.
+    ///
+    /// Returns a safe-close frame on serialization failure so the bridge sees a
+    /// well-formed command rather than receiving nothing.
     pub fn to_json(&self) -> Vec<u8> {
-        serde_json::to_vec(self).expect("control serializes")
+        serde_json::to_vec(self).unwrap_or_else(|_| {
+            serde_json::json!({"command":"close","channel":"","problem":"internal-error"})
+                .to_string()
+                .into_bytes()
+        })
     }
 }
 
@@ -107,8 +114,18 @@ impl DbusCall {
         }
     }
     /// Serialize the call body to JSON bytes.
+    ///
+    /// Returns a valid no-op DbusCallBody on serialization failure so the
+    /// bridge receives well-formed JSON instead of malformed bytes.
     pub fn to_json(&self) -> Vec<u8> {
-        serde_json::to_vec(&self.body).expect("dbus call serializes")
+        serde_json::to_vec(&self.body).unwrap_or_else(|_| {
+            serde_json::json!({
+                "call": ["", "", "", []],
+                "id": "serialize-error"
+            })
+            .to_string()
+            .into_bytes()
+        })
     }
 }
 
