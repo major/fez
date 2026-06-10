@@ -119,9 +119,8 @@ impl DbusCall {
     /// interpret this as a no-op JSON value rather than receiving malformed
     /// bytes.
     pub fn to_json(&self) -> Vec<u8> {
-        serde_json::to_vec(&self.body).unwrap_or_else(|_| {
-            serde_json::json!([]).to_string().into_bytes()
-        })
+        serde_json::to_vec(&self.body)
+            .unwrap_or_else(|_| serde_json::json!([]).to_string().into_bytes())
     }
 }
 

@@ -86,18 +86,16 @@ impl Envelope {
     /// callers always receive syntactically correct JSON.
     pub fn to_json_string(&self) -> String {
         serde_json::to_string_pretty(self).unwrap_or_else(|_| {
-            serde_json::to_string_pretty(
-                &serde_json::json!({
-                    "apiVersion": "fez/v1",
-                    "kind": "Error",
-                    "host": "",
-                    "status": "error",
-                    "error": {
-                        "code": "internal",
-                        "message": "envelope serialization failed",
-                    }
-                }),
-            )
+            serde_json::to_string_pretty(&serde_json::json!({
+                "apiVersion": "fez/v1",
+                "kind": "Error",
+                "host": "",
+                "status": "error",
+                "error": {
+                    "code": "internal",
+                    "message": "envelope serialization failed",
+                }
+            }))
             .unwrap_or_default()
         })
     }
