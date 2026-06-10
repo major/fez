@@ -5,6 +5,27 @@ use serde_json::Value;
 /// The envelope schema version string emitted in `apiVersion`.
 pub const API_VERSION: &str = "fez/v1";
 
+/// Build the columnar table block shared by every list-style payload.
+///
+/// Field names are stated once in `columns`; each item becomes a positional
+/// row aligned to that column order, and `count` is the row total. This keeps
+/// `--json` list output compact and uniform across capabilities (services and
+/// packages both project through here). Callers own per-cell typing: a row
+/// value may be any [`Value`], so an integer column (e.g. `install_size`)
+/// stays an integer rather than being stringified.
+///
+/// Returns a `{"columns": [...], "rows": [[...]], "count": N}` object. Extra
+/// per-kind context (e.g. `scope`, `pattern`) is added by the caller as a
+/// sibling key, not folded in here.
+pub fn table_data(columns: &[&str], rows: Vec<Value>) -> Value {
+    let count = rows.len();
+    serde_json::json!({
+        "columns": columns,
+        "rows": rows,
+        "count": count,
+    })
+}
+
 /// The machine-readable response wrapper for every command.
 #[derive(Serialize)]
 pub struct Envelope {
@@ -127,6 +148,30 @@ mod tests {
                 "status":"error","error":{"code":"not-found","message":"no unit"}
             })
         );
+    }
+
+    #[test]
+    fn table_data_projects_columns_rows_count() {
+        let td = table_data(
+            &["name", "size"],
+            vec![json!(["bash", 7340032]), json!(["htop", 245760])],
+        );
+        assert_eq!(
+            td,
+            json!({
+                "columns": ["name", "size"],
+                "rows": [["bash", 7340032], ["htop", 245760]],
+                "count": 2
+            })
+        );
+        // Integer cells stay integers, not stringified.
+        assert!(td["rows"][0][1].is_i64() || td["rows"][0][1].is_u64());
+    }
+
+    #[test]
+    fn table_data_empty_has_zero_count() {
+        let td = table_data(&["name"], vec![]);
+        assert_eq!(td, json!({"columns": ["name"], "rows": [], "count": 0}));
     }
 
     #[test]

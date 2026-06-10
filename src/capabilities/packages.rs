@@ -276,6 +276,27 @@ fn package_json(p: &Value) -> Value {
     })
 }
 
+/// Column order for the columnar `PackageList`/`PackageSearch` payloads.
+///
+/// Stated once here so the header and each [`package_row`] stay aligned; the
+/// record-shaped [`package_json`] (used by single-package `PackageInfo`) keeps
+/// the same field names.
+const PKG_COLUMNS: &[&str] = &["name", "evr", "arch", "repo_id", "install_size", "summary"];
+
+/// Project one raw package into a positional row aligned to [`PKG_COLUMNS`].
+///
+/// `install_size` stays an integer; every other cell is a string.
+fn package_row(p: &Value) -> Value {
+    json!([
+        sv(p, "name"),
+        sv(p, "evr"),
+        sv(p, "arch"),
+        sv(p, "repo_id"),
+        sv_u64(p, "install_size"),
+        sv(p, "summary"),
+    ])
+}
+
 /// Connect, open an unprivileged session, dispatch the read, and always close.
 fn run_read(cli: &Cli, action: ReadAction<'_>) -> Result<View> {
     let transport = crate::transport::from_host(cli.host.as_deref());
@@ -329,12 +350,11 @@ fn list(
 ) -> Result<View> {
     let scope = if available { "available" } else { "installed" };
     let raw = rpm_list(client, channel, session, scope, &[])?;
-    let packages: Vec<Value> = raw.iter().map(package_json).collect();
     let mut human = format!(
         "{:<24} {:<20} {:<10} {}\n",
         "NAME", "VERSION", "ARCH", "REPO"
     );
-    for p in &packages {
+    for p in &raw {
         human.push_str(&format!(
             "{:<24} {:<20} {:<10} {}\n",
             sv(p, "name"),
@@ -343,10 +363,13 @@ fn list(
             sv(p, "repo_id"),
         ));
     }
+    let rows: Vec<Value> = raw.iter().map(package_row).collect();
+    let mut data = crate::envelope::table_data(PKG_COLUMNS, rows);
+    data["scope"] = json!(scope);
     Ok(View {
         kind: "PackageList",
         host,
-        data: json!({"scope": scope, "packages": packages}),
+        data,
         human,
         hints: None,
     })
@@ -391,15 +414,17 @@ fn search(
 ) -> Result<View> {
     let glob = format!("*{pattern}*");
     let raw = rpm_list(client, channel, session, "available", &[glob])?;
-    let packages: Vec<Value> = raw.iter().map(package_json).collect();
     let mut human = String::new();
-    for p in &packages {
+    for p in &raw {
         human.push_str(&format!("{} - {}\n", sv(p, "name"), sv(p, "summary")));
     }
+    let rows: Vec<Value> = raw.iter().map(package_row).collect();
+    let mut data = crate::envelope::table_data(PKG_COLUMNS, rows);
+    data["pattern"] = json!(pattern);
     Ok(View {
         kind: "PackageSearch",
         host,
-        data: json!({"pattern": pattern, "packages": packages}),
+        data,
         human,
         hints: None,
     })
@@ -412,9 +437,8 @@ fn check_update(
     host: String,
 ) -> Result<View> {
     let raw = rpm_list(client, channel, session, "upgrades", &[])?;
-    let packages: Vec<Value> = raw.iter().map(package_json).collect();
     let mut human = format!("{:<24} {:<20} {}\n", "NAME", "VERSION", "REPO");
-    for p in &packages {
+    for p in &raw {
         human.push_str(&format!(
             "{:<24} {:<20} {}\n",
             sv(p, "name"),
@@ -422,14 +446,18 @@ fn check_update(
             sv(p, "repo_id"),
         ));
     }
+    let rows: Vec<Value> = raw.iter().map(package_row).collect();
     Ok(View {
         kind: "PackageUpdates",
         host,
-        data: json!({"updates": packages}),
+        data: crate::envelope::table_data(PKG_COLUMNS, rows),
         human,
         hints: None,
     })
 }
+
+/// Column order for the columnar `RepoList` payload (`enabled` stays a bool).
+const REPO_COLUMNS: &[&str] = &["id", "name", "enabled"];
 
 fn repolist(
     client: &mut BridgeClient,
@@ -453,31 +481,22 @@ fn repolist(
         .and_then(Value::as_array)
         .cloned()
         .unwrap_or_default();
-    let mut repos = Vec::new();
+    let mut rows = Vec::new();
+    let mut human = format!("{:<24} {:<10} {}\n", "REPO ID", "ENABLED", "NAME");
     for r in &raw {
         let enabled = sv_bool(r, "enabled");
         if !filter.accepts(enabled) {
             continue;
         }
-        repos.push(json!({
-            "id": sv(r, "id"),
-            "name": sv(r, "name"),
-            "enabled": enabled,
-        }));
-    }
-    let mut human = format!("{:<24} {:<10} {}\n", "REPO ID", "ENABLED", "NAME");
-    for r in &repos {
-        human.push_str(&format!(
-            "{:<24} {:<10} {}\n",
-            sv(r, "id"),
-            sv_bool(r, "enabled"),
-            sv(r, "name"),
-        ));
+        let id = sv(r, "id");
+        let name = sv(r, "name");
+        human.push_str(&format!("{id:<24} {enabled:<10} {name}\n"));
+        rows.push(json!([id, name, enabled]));
     }
     Ok(View {
         kind: "RepoList",
         host,
-        data: json!({"repositories": repos}),
+        data: crate::envelope::table_data(REPO_COLUMNS, rows),
         human,
         hints: None,
     })

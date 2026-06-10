@@ -14,6 +14,13 @@ fn packages_list_json_has_packages() {
         .assert()
         .success()
         .stdout(contains("\"kind\":\"PackageList\""))
+        // Columnar shape: column names stated once, items as positional rows.
+        .stdout(contains(
+            "\"columns\":[\"name\",\"evr\",\"arch\",\"repo_id\",\"install_size\",\"summary\"]",
+        ))
+        .stdout(contains("\"rows\":"))
+        .stdout(contains("\"count\":"))
+        .stdout(contains("\"scope\":\"installed\""))
         .stdout(contains("bash"))
         .stdout(contains("htop"));
 }
@@ -45,6 +52,10 @@ fn packages_search_finds_nginx() {
         .assert()
         .success()
         .stdout(contains("\"kind\":\"PackageSearch\""))
+        .stdout(contains(
+            "\"columns\":[\"name\",\"evr\",\"arch\",\"repo_id\",\"install_size\",\"summary\"]",
+        ))
+        .stdout(contains("\"pattern\":\"ngin\""))
         .stdout(contains("nginx"));
 }
 
@@ -54,7 +65,12 @@ fn packages_check_update_lists_updates() {
         .args(["packages", "check-update", "--json"])
         .assert()
         .success()
-        .stdout(contains("\"kind\":\"PackageUpdates\""));
+        .stdout(contains("\"kind\":\"PackageUpdates\""))
+        .stdout(contains(
+            "\"columns\":[\"name\",\"evr\",\"arch\",\"repo_id\",\"install_size\",\"summary\"]",
+        ))
+        .stdout(contains("\"rows\":"))
+        .stdout(contains("\"count\":"));
 }
 
 #[test]
@@ -64,8 +80,10 @@ fn packages_repolist_shows_enabled_state() {
         .assert()
         .success()
         .stdout(contains("\"kind\":\"RepoList\""))
-        .stdout(contains("fedora"))
-        .stdout(contains("\"enabled\""));
+        .stdout(contains("\"columns\":[\"id\",\"name\",\"enabled\"]"))
+        .stdout(contains("\"rows\":"))
+        .stdout(contains("\"count\":"))
+        .stdout(contains("fedora"));
 }
 
 #[test]
