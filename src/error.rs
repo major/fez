@@ -274,6 +274,9 @@ mod tests {
         assert!(is_service_unknown(
             "org.freedesktop.DBus.Error.ServiceUnknown"
         ));
+        assert!(is_service_unknown(
+            "org.freedesktop.DBus.Error.NameHasNoOwner"
+        ));
         assert!(!is_service_unknown("org.freedesktop.systemd1.NoSuchUnit"));
     }
 
@@ -372,6 +375,23 @@ mod tests {
             FezError::Decode(serde_json::from_str::<i32>("x").unwrap_err())
                 .to_string()
                 .starts_with("protocol decode error")
+        );
+        assert_eq!(
+            FezError::DependencyMissing {
+                component: "dnf5daemon".into(),
+                dbus_name: "org.rpm.dnf.v0".into(),
+                remediation: "install it".into(),
+            }
+            .to_string(),
+            "missing dependency dnf5daemon on target: install it"
+        );
+        assert_eq!(
+            FezError::DangerousTransaction {
+                reason: "removes glibc".into(),
+                removed: vec!["glibc".into()],
+            }
+            .to_string(),
+            "refused: dangerous transaction (removes glibc); use --force to override"
         );
     }
 }
