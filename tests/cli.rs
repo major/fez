@@ -157,3 +157,14 @@ fn describe_unknown_json_still_exits_4() {
         .code(4)
         .stderr(contains("unknown capability"));
 }
+
+#[test]
+fn services_start_help_shows_examples_and_long() {
+    Command::cargo_bin("fez")
+        .unwrap()
+        .args(["services", "start", "--help"])
+        .assert()
+        .success()
+        .stdout(contains("Examples:"))
+        .stdout(contains("--force"));
+}

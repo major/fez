@@ -1,4 +1,4 @@
-use clap::{CommandFactory, Parser, Subcommand};
+use clap::{CommandFactory, FromArgMatches, Parser, Subcommand};
 
 #[derive(Parser, Debug)]
 #[command(
@@ -32,6 +32,17 @@ pub struct Cli {
 /// The derived clap command tree before registry enrichment.
 pub fn raw_command() -> clap::Command {
     <Cli as CommandFactory>::command()
+}
+
+/// The fully enriched clap command (registry long-about and examples injected).
+pub fn command() -> clap::Command {
+    crate::capability::help::inject(raw_command())
+}
+
+/// Parse argv through the enriched command. Exits via clap on `--help`/errors.
+pub fn parse() -> Cli {
+    let matches = command().get_matches();
+    Cli::from_arg_matches(&matches).expect("clap validated args")
 }
 
 /// The top-level subcommands fez accepts.
