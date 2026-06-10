@@ -158,6 +158,32 @@ fn superuser_mode() -> String {
     std::env::var("FEZ_FAKE_SUPERUSER").unwrap_or_else(|_| "ok".into())
 }
 
+/// The host's escalation mechanisms as modeled by `FEZ_FAKE_BRIDGES`.
+///
+/// Real cockpit-bridge exposes a `cockpit.Superuser.Bridges` property (the
+/// ordered, validity-filtered mechanism names) and a `Start(name)` method that
+/// brings up the named root peer. The fake models that surface so escalation
+/// can be driven deterministically.
+///
+/// Grammar: comma-separated `name:outcome` pairs, outcome `ok` or `err`, e.g.
+/// `sudo:ok`, `sudo:err,polkit:ok`, or empty (no mechanisms). Order is
+/// preserved (it is the `Bridges` order fez iterates). A bare `name` with no
+/// `:outcome` defaults to `ok`. Unset means the same as empty: no mechanism,
+/// so privileged channels are denied.
+fn fake_bridges() -> Vec<(String, bool)> {
+    let raw = match std::env::var("FEZ_FAKE_BRIDGES") {
+        Ok(v) => v,
+        Err(_) => return Vec::new(),
+    };
+    raw.split(',')
+        .filter(|s| !s.is_empty())
+        .map(|entry| {
+            let (name, outcome) = entry.split_once(':').unwrap_or((entry, "ok"));
+            (name.to_string(), outcome == "ok")
+        })
+        .collect()
+}
+
 fn send_control(out: &mut impl Write, v: &Value) {
     let mut payload = serde_json::to_vec(v).unwrap();
     payload.push(b'\n');
@@ -180,6 +206,11 @@ fn send_data(out: &mut impl Write, channel: &str, v: &Value) {
 fn main() -> io::Result<()> {
     let mut stdin = io::stdin().lock();
     let mut stdout = io::stdout().lock();
+
+    let bridges = fake_bridges();
+    // Tracks whether a cockpit.Superuser.Start has succeeded, i.e. a root peer
+    // is "up". A `superuser: "require"` open succeeds only after that.
+    let mut escalated = false;
 
     send_control(&mut stdout, &json!({"command":"init","version":1}));
 
@@ -224,11 +255,19 @@ fn main() -> io::Result<()> {
                     .unwrap_or("")
                     .to_string();
                 let payload = ctrl.get("payload").and_then(Value::as_str).unwrap_or("");
-                // A privileged channel (`superuser: "require"`) when sudo
-                // escalation failed: the bridge cannot route it to root, so it
-                // closes the channel with `access-denied` instead of `ready`.
+                // A privileged channel (`superuser: "require"`) the bridge
+                // cannot route to root closes with `access-denied` instead of
+                // `ready`. Under the FEZ_FAKE_BRIDGES model that means no
+                // cockpit.Superuser.Start has succeeded yet; under the legacy
+                // FEZ_FAKE_SUPERUSER model it means mode "denied".
                 let privileged = ctrl.get("superuser").and_then(Value::as_str) == Some("require");
-                if privileged && superuser_mode() == "denied" {
+                let bridges_model = std::env::var_os("FEZ_FAKE_BRIDGES").is_some();
+                let deny_privileged = if bridges_model {
+                    !escalated
+                } else {
+                    superuser_mode() == "denied"
+                };
+                if privileged && deny_privileged {
                     send_control(
                         &mut stdout,
                         &json!({"command":"close","channel":channel,"problem":"access-denied"}),
@@ -291,6 +330,30 @@ fn main() -> io::Result<()> {
                     dnf_reply(method, iface, &id)
                 } else {
                     match method {
+                        // cockpit.Superuser.Bridges property read via
+                        // org.freedesktop.DBus.Properties.Get(iface, "Bridges").
+                        // Returns the FEZ_FAKE_BRIDGES mechanism names as an
+                        // `as` array (the variant out-arg unwrapped to its value).
+                        "Get" => {
+                            let names: Vec<Value> = bridges.iter().map(|(n, _)| json!(n)).collect();
+                            json!({"reply":[[names]],"id":id})
+                        }
+                        // cockpit.Superuser.Start(name): bring up the named
+                        // mechanism. `ok` succeeds (record escalated); `err`
+                        // returns a D-Bus error (mirrors a mechanism whose
+                        // credential prompt fez cannot answer).
+                        "Start" => {
+                            let name = args.first().and_then(Value::as_str).unwrap_or("");
+                            match bridges.iter().find(|(n, _)| n == name) {
+                                Some((_, true)) => {
+                                    escalated = true;
+                                    json!({"reply":[[]],"id":id})
+                                }
+                                _ => json!({"error":[
+                                    "cockpit.Superuser.Error",
+                                    [format!("mechanism {name:?} cannot start")]],"id":id}),
+                            }
+                        }
                         // reply[0][0] = units array
                         "ListUnits" => json!({"reply":[[[
                         ["sshd.service","OpenSSH server daemon","loaded","active","running","",
