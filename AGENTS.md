@@ -30,7 +30,7 @@ Use the Makefile, not raw cargo, for gated work. `make` defaults to `check`.
   - `make deny` - `cargo deny check` (RUSTSEC advisories, license policy, banned/duplicate crates, source allow-list; config in `deny.toml`). Install: `cargo install cargo-deny --locked`
   - `make machete` - `cargo machete` (unused declared deps). Install: `cargo install cargo-machete --locked`
 - `make msrv` - `cargo +1.92 check --all-targets`; proves the crate compiles on the pinned MSRV, not just stable. Requires `rustup toolchain install 1.92`
-- Single test: `cargo test --test services name_of_test` (integration files are `tests/cli.rs`, `tests/mcp.rs`, `tests/services.rs`)
+- Single test: `cargo test --test services name_of_test` (integration files are `tests/cli.rs`, `tests/mcp.rs`, `tests/packages.rs`, `tests/services.rs`)
 
 ## Gates (CI: `.github/workflows/ci.yml`, `.github/workflows/codeql.yml`)
 
@@ -63,11 +63,12 @@ Errors: single `FezError` enum (`src/error.rs`) with stable string `code()` and 
 ## Testing quirks
 
 - Integration tests drive a **fake bridge binary** (`src/bin/fake_bridge.rs`, built as `fez-fake-bridge`) instead of a real `cockpit-bridge`. Tests point fez at it via the `FEZ_BRIDGE` env var set to `env!("CARGO_BIN_EXE_fez-fake-bridge")`. The fake reports `chronyd` inactive and `sshd` active; assertions depend on that.
+- Packages integration tests (`tests/packages.rs`) drive the same fake bridge over `org.rpm.dnf.v0` (dnf5daemon). `FEZ_FAKE_PLAN` selects the staged transaction plan the fake returns from `Goal.resolve` (`install`/`small`/`protected`/`cascade`, exercising the removal guardrails); `FEZ_FAKE_NO_DNF5` makes the fake report the daemon absent (`ServiceUnknown`) to exercise the exit-9 `dependency-missing` path.
 - E2E (`test/e2e/run.sh`) provisions a real cloud host via Terraform, installs `cockpit-bridge`, and exercises the real transport. Expensive and destructive (auto-`destroy` on exit). It auto-`tee`s every run to `test/e2e/logs/run-<ts>.log` (gitignored) with a `last-run.log` symlink; read the log on failure. It pins SSH config with `FEZ_SSH_CONFIG` (`ssh -F`), not `HOME`, because OpenSSH ignores `$HOME/.ssh/config` non-interactively.
 
 ## Env vars
 
-Runtime knobs read from the environment: `FEZ_BRIDGE` (bridge binary path, used by tests), `FEZ_AUDIT` (audit sink, e.g. `file:/path/audit.jsonl`), `FEZ_SSH_CONFIG` (ssh `-F` config). Audit records also carry `FEZ_ACTOR`, `FEZ_CORRELATION_ID`, `FEZ_TARGET_HOST`, `FEZ_OPERATION`, `FEZ_UNIT`, etc.
+Runtime knobs read from the environment: `FEZ_BRIDGE` (bridge binary path, used by tests), `FEZ_AUDIT` (audit sink, e.g. `file:/path/audit.jsonl`), `FEZ_SSH_CONFIG` (ssh `-F` config). Audit records also carry `FEZ_ACTOR`, `FEZ_CORRELATION_ID`, `FEZ_TARGET_HOST`, `FEZ_OPERATION`, `FEZ_UNIT`, etc. Test-only fake-bridge knobs: `FEZ_FAKE_PLAN` (selects the canned dnf5daemon `Goal.resolve` plan: `install`/`small`/`protected`/`cascade`) and `FEZ_FAKE_NO_DNF5` (simulates dnf5daemon being absent).
 
 ## Conventions
 
