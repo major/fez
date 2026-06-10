@@ -197,8 +197,11 @@ fn invoke(id: &str, args: &Value) -> Result<Value, (i64, String)> {
 /// Translate an invoke request into `fez` argv. The capability id becomes the
 /// verb path (`services.start` -> ["services","start"]). A named input is a
 /// positional argument unless the descriptor declares a matching `--flag`, in
-/// which case it is emitted as a flag. `host`/`dry_run`/`force` map to globals;
-/// `--json` is always appended so the result is a fez/v1 envelope.
+/// which case it is emitted as a flag. A string positional is pushed as one
+/// argv entry; an array positional is spread into multiple positional entries
+/// (variadic inputs such as `packages.install`'s `specs`), skipping any
+/// non-string element. `host`/`dry_run`/`force` map to globals; `--json` is
+/// always appended so the result is a fez/v1 envelope.
 pub(crate) fn build_argv(d: &capability::Descriptor, args: &Value) -> Vec<String> {
     let mut argv: Vec<String> = d.id.split('.').map(|s| s.to_string()).collect();
     let inputs = args.get("inputs").cloned().unwrap_or_else(|| json!({}));
@@ -209,8 +212,16 @@ pub(crate) fn build_argv(d: &capability::Descriptor, args: &Value) -> Vec<String
         if d.flags.iter().any(|f| f == &flag) {
             continue; // handled in the flag pass
         }
-        if let Some(s) = inputs.get(&input.name).and_then(Value::as_str) {
-            argv.push(s.to_string());
+        match inputs.get(&input.name) {
+            Some(Value::String(s)) => argv.push(s.clone()),
+            Some(Value::Array(items)) => {
+                for item in items {
+                    if let Some(s) = item.as_str() {
+                        argv.push(s.to_string());
+                    }
+                }
+            }
+            _ => {}
         }
     }
     // Remaining inputs that correspond to declared flags. Global flags are
@@ -414,5 +425,35 @@ mod tests {
         assert_eq!(argv, vec!["services", "start", "nginx.service", "--json"]);
         assert_eq!(argv.iter().filter(|a| *a == "--json").count(), 1);
         assert!(!argv.contains(&"--force".to_string()));
+    }
+
+    #[test]
+    fn build_argv_packages_remove_single_spec_string() {
+        assert_eq!(
+            argv_for("packages.remove", j!({"inputs": {"specs": "htop"}})),
+            vec!["packages", "remove", "htop", "--json"]
+        );
+    }
+
+    #[test]
+    fn build_argv_packages_install_spreads_spec_array() {
+        assert_eq!(
+            argv_for(
+                "packages.install",
+                j!({"inputs": {"specs": ["htop", "nginx"]}})
+            ),
+            vec!["packages", "install", "htop", "nginx", "--json"]
+        );
+    }
+
+    #[test]
+    fn build_argv_packages_install_skips_non_string_spec() {
+        assert_eq!(
+            argv_for(
+                "packages.install",
+                j!({"inputs": {"specs": ["htop", 42, "nginx"]}})
+            ),
+            vec!["packages", "install", "htop", "nginx", "--json"]
+        );
     }
 }
