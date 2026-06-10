@@ -105,6 +105,20 @@ fn packages_advisories_lists_errata() {
 }
 
 #[test]
+fn packages_history_lists_recent_changes() {
+    fez_fake()
+        .args(["packages", "history", "--json"])
+        .assert()
+        .success()
+        .stdout(contains("\"kind\":\"PackageHistory\""))
+        .stdout(contains("\"columns\":[\"change\",\"name\",\"evr\",\"arch\"]"))
+        .stdout(contains("\"rows\":"))
+        .stdout(contains("\"count\":"))
+        .stdout(contains("installed"))
+        .stdout(contains("htop"));
+}
+
+#[test]
 fn packages_install_dry_run_emits_plan() {
     fez_fake()
         .env("FEZ_FAKE_PLAN", "install")

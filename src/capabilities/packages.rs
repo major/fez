@@ -18,6 +18,7 @@ const RPM_IFACE: &str = "org.rpm.dnf.v0.rpm.Rpm";
 const REPO_IFACE: &str = "org.rpm.dnf.v0.rpm.Repo";
 const GOAL_IFACE: &str = "org.rpm.dnf.v0.Goal";
 const ADVISORY_IFACE: &str = "org.rpm.dnf.v0.Advisory";
+const HISTORY_IFACE: &str = "org.rpm.dnf.v0.History";
 
 /// Package attributes requested from dnf5daemon's `Rpm.list`.
 const PKG_ATTRS: &[&str] = &["name", "evr", "arch", "repo_id", "install_size", "summary"];
@@ -33,6 +34,12 @@ const ADVISORY_ATTRS: &[&str] = &["name", "title", "type", "severity", "buildtim
 
 /// Column order for the columnar `AdvisoryList` payload.
 const ADVISORY_COLUMNS: &[&str] = &["name", "title", "type", "severity", "buildtime"];
+
+/// Column order for the columnar `PackageHistory` payload.
+const HISTORY_COLUMNS: &[&str] = &["change", "name", "evr", "arch"];
+
+/// `recent_changes` changeset keys, in the order rows are emitted.
+const HISTORY_CHANGES: &[&str] = &["installed", "removed", "upgraded", "downgraded"];
 
 /// One render-ready response: a payload, a human rendering, and an envelope kind.
 struct View {
@@ -93,6 +100,7 @@ enum ReadAction<'a> {
     CheckUpdate,
     Repolist { filter: RepoFilter },
     Advisories,
+    History,
 }
 
 /// Which repositories `repolist` should report.
@@ -163,6 +171,7 @@ fn classify(action: &PackagesAction) -> Plan<'_> {
             Plan::Read(ReadAction::Repolist { filter })
         }
         PackagesAction::Advisories => Plan::Read(ReadAction::Advisories),
+        PackagesAction::History => Plan::Read(ReadAction::History),
         PackagesAction::Install { specs } => Plan::Mutate {
             mutation: Mutation::Install,
             specs: specs.clone(),
@@ -346,6 +355,7 @@ fn run_read(cli: &Cli, action: ReadAction<'_>) -> Result<View> {
         ReadAction::CheckUpdate => check_update(&mut client, &channel, &session, host),
         ReadAction::Repolist { filter } => repolist(&mut client, &channel, &session, host, filter),
         ReadAction::Advisories => advisories(&mut client, &channel, &session, host),
+        ReadAction::History => history(&mut client, &channel, &session, host),
     };
     close_session(&mut client, &channel, &session);
     result
@@ -579,6 +589,48 @@ fn advisories(
         kind: "AdvisoryList",
         host,
         data: crate::envelope::table_data(ADVISORY_COLUMNS, rows),
+        human,
+        hints: None,
+    })
+}
+
+/// Render the `PackageHistory` view from dnf5daemon's `History.recent_changes`.
+///
+/// Flattens the `a{saa{sv}}` changeset (keyed by change type) into one row per
+/// package, tagged with its change type.
+fn history(client: &mut BridgeClient, channel: &str, session: &str, host: String) -> Result<View> {
+    let out = client.dbus_call(
+        channel,
+        session,
+        HISTORY_IFACE,
+        "recent_changes",
+        json!([options(&[("package_attrs", "as", json!(PKG_ATTRS))])]),
+    )?;
+    // recent_changes returns one out-arg: a{saa{sv}} keyed by change type.
+    let changeset = out.get(0).cloned().unwrap_or(Value::Null);
+    let mut rows = Vec::new();
+    let mut human = format!(
+        "{:<12} {:<24} {:<20} {}\n",
+        "CHANGE", "NAME", "VERSION", "ARCH"
+    );
+    for &change in HISTORY_CHANGES {
+        let pkgs = changeset
+            .get(change)
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
+        for p in &pkgs {
+            let name = sv(p, "name");
+            let evr = sv(p, "evr");
+            let arch = sv(p, "arch");
+            human.push_str(&format!("{change:<12} {name:<24} {evr:<20} {arch}\n"));
+            rows.push(json!([change, name, evr, arch]));
+        }
+    }
+    Ok(View {
+        kind: "PackageHistory",
+        host,
+        data: crate::envelope::table_data(HISTORY_COLUMNS, rows),
         human,
         hints: None,
     })

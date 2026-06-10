@@ -98,6 +98,12 @@ fn dnf_reply(method: &str, iface: &str, id: &Value) -> Value {
         "resolve" => json!({"reply":[[fake_resolve_items(), 0]],"id": id}),
         // Goal.do_transaction(options) -> ().
         "do_transaction" => json!({"reply":[[]],"id": id}),
+        // History.recent_changes(options) -> (changeset). The changeset is
+        // a{saa{sv}}: keyed by change type, each value an array of pkg a{sv}.
+        "recent_changes" => json!({"reply":[[{
+            "installed": [dnf_package("htop", "3.3.0-1.fc40", "x86_64", "fedora", 245760)],
+            "upgraded":  [dnf_package("nginx", "1.24.0-7.fc40", "x86_64", "fedora", 1572864)],
+        }]],"id": id}),
         other => json!({"error":[
             "org.freedesktop.DBus.Error.UnknownMethod",
             [format!("no fake for {other}")]],"id": id}),

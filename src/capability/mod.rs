@@ -410,6 +410,18 @@ fixes?\". Read-only."
             flags: vec!["--host".into(), "--json".into()],
             examples: vec!["fez packages advisories --json".into()],
         },
+        Descriptor {
+            id: "packages.history".into(),
+            summary: "Show recent package changes".into(),
+            long: "Show recent package changes on the host (installed, removed, upgraded, \
+downgraded), as recorded in the dnf transaction history. Read-only."
+                .into(),
+            privileged: false,
+            output_kind: "PackageHistory".into(),
+            inputs: vec![],
+            flags: vec!["--host".into(), "--json".into()],
+            examples: vec!["fez packages history --json".into()],
+        },
     ]
 }
 

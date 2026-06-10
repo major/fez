@@ -241,6 +241,8 @@ pub enum PackagesAction {
     },
     /// List security and bugfix advisories (errata) for available updates.
     Advisories,
+    /// Show recent package changes (installed, removed, upgraded, downgraded).
+    History,
 }
 
 #[cfg(test)]
