@@ -28,8 +28,12 @@ pub fn run(cli: Cli) -> i32 {
                         Envelope::ok("CapabilityDescriptor", &host, data).to_json_string()
                     );
                 } else {
-                    let example = d.examples.first().map(String::as_str).unwrap_or("");
-                    println!("{}: {}\n  example: {}", d.id, d.summary, example);
+                    println!("{}: {}", d.id, d.summary);
+                    println!("{}", d.long);
+                    println!("examples:");
+                    for ex in &d.examples {
+                        println!("  {ex}");
+                    }
                 }
                 0
             }

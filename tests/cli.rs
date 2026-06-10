@@ -145,7 +145,8 @@ fn describe_human_output_includes_example() {
         .assert()
         .success()
         .stdout(contains("services.status"))
-        .stdout(contains("example:"));
+        .stdout(contains("examples:"))
+        .stdout(contains("fez services status"));
 }
 
 #[test]
@@ -192,4 +193,15 @@ fn guide_json_emits_agent_guide_envelope() {
         .stdout(contains("\"apiVersion\": \"fez/v1\""))
         .stdout(contains("AgentGuide"))
         .stdout(contains("exitCodes"));
+}
+
+#[test]
+fn describe_text_shows_long_and_all_examples() {
+    Command::cargo_bin("fez")
+        .unwrap()
+        .args(["describe", "services.enable"])
+        .assert()
+        .success()
+        .stdout(contains("--now"))
+        .stdout(contains("boot"));
 }
