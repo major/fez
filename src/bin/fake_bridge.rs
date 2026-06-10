@@ -215,8 +215,22 @@ fn main() -> io::Result<()> {
             // brings up no root peer at init and just completes the handshake.
             // Escalation happens later, driven by the client via
             // cockpit.Superuser.Start over the internal bus.
+            //
+            // Real cockpit only runs superuser negotiation (and thus only emits
+            // `superuser-init-done`) when init carries an escalation request,
+            // i.e. `superuser` is an object or a string other than "none".
+            // `SuperuserRoutingRule.init` is never invoked for `superuser:
+            // "none"`, so no `superuser-init-done` is sent. Mirror that here so
+            // the fake cannot mask a client that wrongly blocks on it.
             if let Some("init") = command {
-                send_control(&mut stdout, &json!({"command":"superuser-init-done"}));
+                let requests_escalation = match ctrl.get("superuser") {
+                    None | Some(Value::Null) => false,
+                    Some(Value::String(s)) => s != "none",
+                    Some(_) => true,
+                };
+                if requests_escalation {
+                    send_control(&mut stdout, &json!({"command":"superuser-init-done"}));
+                }
                 continue;
             }
             // close, done: ignore; only `open` needs a response.
@@ -305,11 +319,14 @@ fn main() -> io::Result<()> {
                     match method {
                         // cockpit.Superuser.Bridges property read via
                         // org.freedesktop.DBus.Properties.Get(iface, "Bridges").
-                        // Returns the FEZ_FAKE_BRIDGES mechanism names as an
-                        // `as` array (the variant out-arg unwrapped to its value).
+                        // `Properties.Get` returns a single `v` out-arg, so the
+                        // `as` value is variant-wrapped: {"t":"as","v":[...]}.
+                        // Real cockpit-bridge does NOT unwrap it; mirror that so
+                        // the client's variant-unwrapping is exercised exactly as
+                        // in production (same discipline as `GetAll` below).
                         "Get" => {
                             let names: Vec<Value> = bridges.iter().map(|(n, _)| json!(n)).collect();
-                            json!({"reply":[[names]],"id":id})
+                            json!({"reply":[[{"t":"as","v":names}]],"id":id})
                         }
                         // cockpit.Superuser.Start(name): bring up the named
                         // mechanism. `ok` succeeds (record escalated); `err`
