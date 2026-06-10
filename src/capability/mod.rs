@@ -330,6 +330,35 @@ supplied."
                 "fez packages upgrade nginx --force".into(),
             ],
         },
+        Descriptor {
+            id: "network.list".into(),
+            summary: "List network devices".into(),
+            long: "List NetworkManager devices with their type, state, primary IPv4/IPv6 \
+address, and MAC. By default unmanaged virtual interfaces (container veth, etc.) are \
+hidden; use --all to show every device. Read-only."
+                .into(),
+            privileged: false,
+            output_kind: "NetworkDeviceList".into(),
+            inputs: vec![],
+            flags: vec!["--host".into(), "--json".into(), "--all".into()],
+            examples: vec![
+                "fez network list --json".into(),
+                "fez network list --all".into(),
+            ],
+        },
+        Descriptor {
+            id: "network.show".into(),
+            summary: "Show one device's network detail".into(),
+            long: "Show the full network detail for one device: addresses (IPv4 and IPv6), \
+gateway, DNS servers, search domains, routes, MAC, MTU, the active connection profile, \
+and DHCP lease. Read-only."
+                .into(),
+            privileged: false,
+            output_kind: "NetworkDeviceDetail".into(),
+            inputs: vec![input("device", true)],
+            flags: vec!["--host".into(), "--json".into()],
+            examples: vec!["fez network show enp1s0 --json".into()],
+        },
     ]
 }
 
