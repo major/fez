@@ -5,7 +5,7 @@ use serde_json::json;
 use std::io::Write;
 
 pub fn run(cli: Cli) -> i32 {
-    let host = cli.host.clone().unwrap_or_else(|| "localhost".into());
+    let host = cli.resolved_host();
     match &cli.command {
         TopCommand::Capabilities => {
             let ids: Vec<String> = capability::registry().into_iter().map(|d| d.id).collect();
