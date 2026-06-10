@@ -246,3 +246,43 @@ fn describe_example_matches_help_after_help() {
     let after = start.get_after_help().unwrap().to_string();
     assert!(after.contains(&d.examples[0]));
 }
+
+// Regression for the BrokenPipe panic (issue #20): when a downstream reader
+// closes the pipe early, fez must not panic (exit 101) or print a panic
+// backtrace. With SIGPIPE reset to SIG_DFL it dies quietly via the signal, the
+// conventional Unix behavior. We spawn the real binary, read a single byte from
+// its stdout, then drop the read end so the rest of the write hits EPIPE.
+#[cfg(unix)]
+#[test]
+fn broken_pipe_does_not_panic() {
+    use std::io::Read;
+    use std::process::{Command as StdCommand, Stdio};
+
+    let exe = assert_cmd::cargo::cargo_bin("fez");
+    let mut child = StdCommand::new(exe)
+        .args(["completions", "zsh"])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn fez");
+
+    // Read one byte, then drop stdout to close the read end of the pipe.
+    {
+        let mut stdout = child.stdout.take().expect("child stdout");
+        let mut one = [0u8; 1];
+        let _ = stdout.read(&mut one);
+    }
+
+    let output = child.wait_with_output().expect("wait for fez");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    assert!(
+        !stderr.contains("panicked"),
+        "fez panicked on broken pipe: {stderr}"
+    );
+    assert_ne!(
+        output.status.code(),
+        Some(101),
+        "fez exited 101 (Rust panic) on broken pipe"
+    );
+}
