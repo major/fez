@@ -14,8 +14,8 @@ channels, delegates privilege escalation to it) and reaches remote hosts by
 shelling out to the system OpenSSH client. Rust, edition 2021, MSRV **1.92**
 (pinned in `rust-toolchain.toml` and `Cargo.toml`; keep both in sync on bump).
 
-`publish = false`: this crate is not released to crates.io. Distribution is RPM
-(`packaging/fez.spec`) plus release binaries.
+Crates.io package name is `rusty-fez` because `fez` is already taken. The
+installed binary and library crate name stay `fez`.
 
 ## Commands
 
@@ -69,7 +69,7 @@ Runtime knobs read from the environment: `FEZ_BRIDGE` (bridge binary path, used 
 
 ## Release
 
-`release-plz` (`.github/workflows/release-plz.yml`, `cd.yml`, `release-plz.toml`) handles version bumps and changelog. Since `publish = false`, no crates.io push; CD attaches Linux binaries on release. RPM packaging lives in `packaging/` (`fez.spec`, `make-vendor.sh`).
+`release-plz` (`.github/workflows/release-plz.yml`, `cd.yml`, `release-plz.toml`) handles version bumps and changelog. Crates.io publishes use the `rusty-fez` package name; release binaries and RPMs still install the `fez` command. RPM packaging lives in `packaging/` (`fez.spec`, `make-vendor.sh`).
 
 ## Notes
 

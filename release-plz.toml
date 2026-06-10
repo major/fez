@@ -1,4 +1,4 @@
 [[package]]
-name = "fez"
+name = "rusty-fez"
 git_tag_name = "v{{ version }}"
 git_release_enable = true

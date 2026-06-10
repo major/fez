@@ -165,20 +165,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6184e33543162437515c2e2b48714794e37845ec9851711914eec9d308f6ebe8"
 
 [[package]]
-name = "fez"
-version = "0.1.0"
-dependencies = [
- "assert_cmd",
- "clap",
- "clap_complete",
- "clap_mangen",
- "predicates",
- "serde",
- "serde_json",
- "thiserror",
-]
-
-[[package]]
 name = "float-cmp"
 version = "0.10.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -320,6 +306,20 @@ name = "roff"
 version = "1.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "323c417e1d9665a65b263ec744ba09030cfb277e9daa0b018a4ab62e57bc8189"
+
+[[package]]
+name = "rusty-fez"
+version = "0.1.0"
+dependencies = [
+ "assert_cmd",
+ "clap",
+ "clap_complete",
+ "clap_mangen",
+ "predicates",
+ "serde",
+ "serde_json",
+ "thiserror",
+]
 
 [[package]]
 name = "serde"

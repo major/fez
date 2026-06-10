@@ -1,5 +1,5 @@
 [package]
-name = "fez"
+name = "rusty-fez"
 version = "0.1.0"
 edition = "2021"
 rust-version = "1.92"
@@ -10,8 +10,10 @@ homepage = "https://github.com/major/fez"
 readme = "README.md"
 keywords = ["cockpit", "systemd", "fedora", "agent", "cli"]
 categories = ["command-line-utilities"]
-publish = false
 default-run = "fez"
+
+[lib]
+name = "fez"
 
 [dependencies]
 clap = { version = "4", features = ["derive"] }
