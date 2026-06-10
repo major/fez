@@ -87,6 +87,24 @@ fn packages_repolist_shows_enabled_state() {
 }
 
 #[test]
+fn packages_advisories_lists_errata() {
+    fez_fake()
+        .args(["packages", "advisories", "--json"])
+        .assert()
+        .success()
+        .stdout(contains("\"kind\":\"AdvisoryList\""))
+        .stdout(contains(
+            "\"columns\":[\"name\",\"title\",\"type\",\"severity\",\"buildtime\"]",
+        ))
+        .stdout(contains("\"rows\":"))
+        .stdout(contains("\"count\":"))
+        .stdout(contains(
+            "[\"FEDORA-2025-aaaa\",\"kernel security update\",\"security\",\"important\",",
+        ))
+        .stdout(contains("\"bugfix\""));
+}
+
+#[test]
 fn packages_install_dry_run_emits_plan() {
     fez_fake()
         .env("FEZ_FAKE_PLAN", "install")

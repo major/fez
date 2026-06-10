@@ -17,9 +17,22 @@ const SM_IFACE: &str = "org.rpm.dnf.v0.SessionManager";
 const RPM_IFACE: &str = "org.rpm.dnf.v0.rpm.Rpm";
 const REPO_IFACE: &str = "org.rpm.dnf.v0.rpm.Repo";
 const GOAL_IFACE: &str = "org.rpm.dnf.v0.Goal";
+const ADVISORY_IFACE: &str = "org.rpm.dnf.v0.Advisory";
 
 /// Package attributes requested from dnf5daemon's `Rpm.list`.
 const PKG_ATTRS: &[&str] = &["name", "evr", "arch", "repo_id", "install_size", "summary"];
+
+/// Scalar advisory attributes requested from dnf5daemon's `Advisory.list`.
+///
+/// dnf5daemon carries the advisory identifier (e.g. `FEDORA-2026-ab80241be8`,
+/// `RHSA-2024:1234`) in the `name` attribute; the separate `advisoryid`
+/// attribute is frequently empty, so it is intentionally not requested. Nested
+/// attrs (`collections`, `references`) are omitted because the columnar
+/// renderer only handles scalar cells.
+const ADVISORY_ATTRS: &[&str] = &["name", "title", "type", "severity", "buildtime"];
+
+/// Column order for the columnar `AdvisoryList` payload.
+const ADVISORY_COLUMNS: &[&str] = &["name", "title", "type", "severity", "buildtime"];
 
 /// One render-ready response: a payload, a human rendering, and an envelope kind.
 struct View {
@@ -79,6 +92,7 @@ enum ReadAction<'a> {
     Search { pattern: &'a str },
     CheckUpdate,
     Repolist { filter: RepoFilter },
+    Advisories,
 }
 
 /// Which repositories `repolist` should report.
@@ -148,6 +162,7 @@ fn classify(action: &PackagesAction) -> Plan<'_> {
             };
             Plan::Read(ReadAction::Repolist { filter })
         }
+        PackagesAction::Advisories => Plan::Read(ReadAction::Advisories),
         PackagesAction::Install { specs } => Plan::Mutate {
             mutation: Mutation::Install,
             specs: specs.clone(),
@@ -330,6 +345,7 @@ fn run_read(cli: &Cli, action: ReadAction<'_>) -> Result<View> {
         ReadAction::Search { pattern } => search(&mut client, &channel, &session, host, pattern),
         ReadAction::CheckUpdate => check_update(&mut client, &channel, &session, host),
         ReadAction::Repolist { filter } => repolist(&mut client, &channel, &session, host, filter),
+        ReadAction::Advisories => advisories(&mut client, &channel, &session, host),
     };
     close_session(&mut client, &channel, &session);
     result
@@ -518,6 +534,51 @@ fn repolist(
         kind: "RepoList",
         host,
         data: crate::envelope::table_data(REPO_COLUMNS, rows),
+        human,
+        hints: None,
+    })
+}
+
+/// Render the `AdvisoryList` view from dnf5daemon's `Advisory.list`.
+fn advisories(
+    client: &mut BridgeClient,
+    channel: &str,
+    session: &str,
+    host: String,
+) -> Result<View> {
+    let out = client.dbus_call(
+        channel,
+        session,
+        ADVISORY_IFACE,
+        "list",
+        json!([options(&[
+            ("availability", "s", json!("available")),
+            ("advisory_attrs", "as", json!(ADVISORY_ATTRS)),
+        ])]),
+    )?;
+    let raw = out
+        .get(0)
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    let mut human = format!(
+        "{:<28} {:<12} {:<12} {}\n",
+        "ADVISORY", "TYPE", "SEVERITY", "TITLE"
+    );
+    let mut rows = Vec::new();
+    for a in &raw {
+        let name = sv(a, "name");
+        let title = sv(a, "title");
+        let kind = sv(a, "type");
+        let severity = sv(a, "severity");
+        let buildtime = sv_u64(a, "buildtime");
+        human.push_str(&format!("{name:<28} {kind:<12} {severity:<12} {title}\n"));
+        rows.push(json!([name, title, kind, severity, buildtime]));
+    }
+    Ok(View {
+        kind: "AdvisoryList",
+        host,
+        data: crate::envelope::table_data(ADVISORY_COLUMNS, rows),
         human,
         hints: None,
     })

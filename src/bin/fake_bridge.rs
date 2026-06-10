@@ -77,6 +77,12 @@ fn dnf_reply(method: &str, iface: &str, id: &Value) -> Value {
             dnf_repo("fedora", "Fedora", true),
             dnf_repo("updates-testing", "Fedora - Testing", false),
         ]]],"id": id}),
+        // Advisory.list(options) -> (advisories). Shares the method name `list`
+        // with Rpm.list and Repo.list; disambiguated by iface.
+        "list" if iface.ends_with(".Advisory") => json!({"reply":[[[
+            dnf_advisory("FEDORA-2025-aaaa", "kernel security update", "security", "important"),
+            dnf_advisory("FEDORA-2025-bbbb", "bash bugfix update", "bugfix", "none"),
+        ]]],"id": id}),
         // rpm.Rpm.list(options) -> (packages).
         "list" => json!({"reply":[[[
             dnf_package("bash", "5.2.26-1.fc40", "x86_64", "fedora", 7340032),
@@ -104,6 +110,20 @@ fn dnf_repo(id: &str, name: &str, enabled: bool) -> Value {
         "id":      {"t":"s","v":id},
         "name":    {"t":"s","v":name},
         "enabled": {"t":"b","v":enabled},
+    })
+}
+
+/// Build a dnf5daemon advisory `a{sv}` attribute map.
+///
+/// Models the real `Advisory.list` shape: the advisory identifier lives in
+/// `name` (e.g. `FEDORA-2025-aaaa`), `title` carries the human summary.
+fn dnf_advisory(name: &str, title: &str, kind: &str, severity: &str) -> Value {
+    json!({
+        "name":     {"t":"s","v":name},
+        "title":    {"t":"s","v":title},
+        "type":     {"t":"s","v":kind},
+        "severity": {"t":"s","v":severity},
+        "buildtime":{"t":"t","v":1_700_000_000u64},
     })
 }
 

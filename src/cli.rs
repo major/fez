@@ -239,6 +239,8 @@ pub enum PackagesAction {
         #[arg(required = true)]
         specs: Vec<String>,
     },
+    /// List security and bugfix advisories (errata) for available updates.
+    Advisories,
 }
 
 #[cfg(test)]

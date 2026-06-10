@@ -397,6 +397,19 @@ unless --force is supplied."
                 "fez packages reinstall httpd --dry-run".into(),
             ],
         },
+        Descriptor {
+            id: "packages.advisories".into(),
+            summary: "List advisories (errata)".into(),
+            long: "List security, bugfix, and enhancement advisories (errata) for available \
+updates. Equivalent to `dnf updateinfo`: answers \"which pending updates are security \
+fixes?\". Read-only."
+                .into(),
+            privileged: false,
+            output_kind: "AdvisoryList".into(),
+            inputs: vec![],
+            flags: vec!["--host".into(), "--json".into()],
+            examples: vec!["fez packages advisories --json".into()],
+        },
     ]
 }
 
