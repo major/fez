@@ -58,7 +58,7 @@ pub fn run(cli: Cli) -> i32 {
             std::io::stdout().write_all(&buf).expect("write man page");
             0
         }
-        TopCommand::Services { .. } => crate::capabilities::services::dispatch(&cli),
+        TopCommand::Services { action } => crate::capabilities::services::dispatch(&cli, action),
         TopCommand::Mcp => crate::mcp::run(),
     }
 }
