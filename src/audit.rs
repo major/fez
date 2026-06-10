@@ -148,18 +148,17 @@ pub fn correlation_id() -> String {
 /// newline use `KEY=VALUE\n`; values with a newline use the binary form:
 /// `KEY\n` + little-endian u64 length + raw bytes + `\n`.
 fn push_field(out: &mut Vec<u8>, key: &str, value: &str) {
+    out.extend_from_slice(key.as_bytes());
     if value.contains('\n') {
-        out.extend_from_slice(key.as_bytes());
+        // Binary form: KEY\n + LE u64 length + raw bytes + \n.
         out.push(b'\n');
         out.extend_from_slice(&(value.len() as u64).to_le_bytes());
-        out.extend_from_slice(value.as_bytes());
-        out.push(b'\n');
     } else {
-        out.extend_from_slice(key.as_bytes());
+        // Plain form: KEY=VALUE\n.
         out.push(b'=');
-        out.extend_from_slice(value.as_bytes());
-        out.push(b'\n');
     }
+    out.extend_from_slice(value.as_bytes());
+    out.push(b'\n');
 }
 
 /// Encode an audit record as systemd journal native-protocol fields.

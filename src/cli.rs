@@ -30,6 +30,19 @@ pub struct Cli {
     pub command: TopCommand,
 }
 
+impl Cli {
+    /// The host label for the response envelope and audit records.
+    ///
+    /// Resolves the global `--host` flag through the same normalization the
+    /// transport applies, so the reported label never drifts from the host the
+    /// bridge actually runs on. In particular `--host local` and an omitted
+    /// `--host` both report `localhost`, matching [`crate::transport::from_host`].
+    #[must_use]
+    pub fn resolved_host(&self) -> String {
+        crate::transport::from_host(self.host.as_deref()).host_label()
+    }
+}
+
 /// The derived clap command tree before registry enrichment.
 pub fn raw_command() -> clap::Command {
     <Cli as CommandFactory>::command()
@@ -145,4 +158,40 @@ pub enum ServicesAction {
         #[arg(long)]
         now: bool,
     },
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn cli(args: &[&str]) -> Cli {
+        Cli::try_parse_from(args).expect("args parse")
+    }
+
+    #[test]
+    fn resolved_host_defaults_to_localhost() {
+        assert_eq!(
+            cli(&["fez", "services", "list"]).resolved_host(),
+            "localhost"
+        );
+    }
+
+    #[test]
+    fn resolved_host_normalizes_local_alias() {
+        // `--host local` must report the same label as the transport uses
+        // (`localhost`), so the envelope/audit host never drifts from the
+        // host the bridge actually runs on.
+        assert_eq!(
+            cli(&["fez", "--host", "local", "services", "list"]).resolved_host(),
+            "localhost"
+        );
+    }
+
+    #[test]
+    fn resolved_host_passes_through_explicit_host() {
+        assert_eq!(
+            cli(&["fez", "--host", "fedora@box.example", "services", "list"]).resolved_host(),
+            "fedora@box.example"
+        );
+    }
 }

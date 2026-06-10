@@ -172,7 +172,7 @@ fn run_read(cli: &Cli, action: ReadAction<'_>) -> Result<View> {
 }
 
 fn run_mutation(cli: &Cli, m: Mutation, unit: &str) -> Result<View> {
-    let host = cli.host.clone().unwrap_or_else(|| "localhost".into());
+    let host = cli.resolved_host();
 
     // Layer 3: protected-unit policy — before anything privileged.
     crate::safety::check_protected(unit, cli.force)?;
@@ -602,7 +602,7 @@ fn log_human_line(v: &Value) -> String {
 }
 
 fn render(cli: &Cli, result: Result<View>) -> i32 {
-    let host = cli.host.clone().unwrap_or_else(|| "localhost".into());
+    let host = cli.resolved_host();
     match result {
         Ok(view) => {
             if view.pre_rendered {
