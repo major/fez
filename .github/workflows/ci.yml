@@ -23,6 +23,10 @@ jobs:
         with:
           toolchain: "1.92"
           components: clippy, rustfmt
+      - name: Cache Rust build artifacts
+        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4  # v2.9.1
+        with:
+          key: lint
       - name: Lint
         run: make lint
 
@@ -39,6 +43,10 @@ jobs:
         with:
           toolchain: "1.92"
           components: llvm-tools-preview
+      - name: Cache Rust build artifacts
+        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4  # v2.9.1
+        with:
+          key: coverage
       - name: Install cargo-llvm-cov
         uses: taiki-e/install-action@0631aa6515c7d545823c67cfae7ef4fc7f490154  # v2.81.8
         with:
@@ -65,5 +73,9 @@ jobs:
         uses: dtolnay/rust-toolchain@5b842231ba77f5c045dba54ac5560fed2db780e2  # nightly
         with:
           toolchain: nightly
+      - name: Cache Rust build artifacts
+        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4  # v2.9.1
+        with:
+          key: docs-coverage
       - name: Check docstring coverage
         run: make docs-coverage
