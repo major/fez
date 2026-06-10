@@ -62,12 +62,15 @@ fn fake_resolve_items() -> Value {
     match std::env::var("FEZ_FAKE_PLAN").as_deref() {
         Ok("protected") => json!([removed("glibc")]),
         Ok("cascade") => {
+            // 21 = CASCADE_LIMIT (20) + 1, to trip the cascade guardrail.
             let items: Vec<Value> = (0..21).map(|i| removed(&format!("pkg{i}"))).collect();
             Value::Array(items)
         }
-        Ok("small") => json!([removed("htop")]),
+        // FEZ_FAKE_PLAN unset (the Err(_) case, the common path in tests)
+        // defaults to an install plan.
         Ok("install") | Err(_) => json!([installed("htop")]),
-        // Any other value: a single non-protected removal (guardrails pass).
+        // Any unrecognized plan (including the documented "small" case) yields
+        // a single non-protected removal (guardrails pass).
         Ok(_) => json!([removed("htop")]),
     }
 }
