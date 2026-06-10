@@ -146,6 +146,18 @@ fn fake_resolve_items() -> Value {
     }
 }
 
+/// The superuser-negotiation behavior selected by `FEZ_FAKE_SUPERUSER`.
+///
+/// - unset / `ok`: passwordless escalation succeeds (the common path).
+/// - `challenge`: sudo needs a password; the fake sends an `authorize`
+///   control challenge instead of `superuser-init-done`.
+/// - `denied`: escalation "succeeds" at init time but every privileged
+///   channel open is closed with `access-denied` (mirrors a sudoers allow
+///   list that rejects the specific command).
+fn superuser_mode() -> String {
+    std::env::var("FEZ_FAKE_SUPERUSER").unwrap_or_else(|_| "ok".into())
+}
+
 fn send_control(out: &mut impl Write, v: &Value) {
     let mut payload = serde_json::to_vec(v).unwrap();
     payload.push(b'\n');
@@ -174,14 +186,55 @@ fn main() -> io::Result<()> {
     while let Some(frame) = read_frame(&mut stdin)? {
         if frame.channel.is_empty() {
             let ctrl: Value = serde_json::from_slice(&frame.payload).unwrap_or(Value::Null);
-            // init, close, done: ignore; only `open` needs a response.
-            if let Some("open") = ctrl.get("command").and_then(Value::as_str) {
+            let command = ctrl.get("command").and_then(Value::as_str);
+            // The client's `init` carries `superuser: {id: "sudo"}`, asking the
+            // bridge to start a root peer up front. Real cockpit-bridge always
+            // finishes that negotiation with `superuser-init-done` (success or
+            // failure), optionally preceded by an `authorize` challenge when
+            // sudo needs a password. FEZ_FAKE_SUPERUSER selects which path the
+            // fake takes so the integration tests can exercise each branch.
+            if let Some("init") = command {
+                match superuser_mode().as_str() {
+                    // Sudo needs a password: send an authorize challenge. fez
+                    // refuses (it holds no password) and never sees init-done.
+                    "challenge" => {
+                        send_control(
+                            &mut stdout,
+                            &json!({
+                                "command":"authorize",
+                                "cookie":"1",
+                                "challenge":"X-Conversation fake [sudo] password for fedora:"
+                            }),
+                        );
+                    }
+                    // Passwordless success ("ok"/unset) and the downstream
+                    // "denied" case both complete the negotiation; "denied"
+                    // diverges later when a privileged channel is opened.
+                    _ => {
+                        send_control(&mut stdout, &json!({"command":"superuser-init-done"}));
+                    }
+                }
+                continue;
+            }
+            // close, done: ignore; only `open` needs a response.
+            if let Some("open") = command {
                 let channel = ctrl
                     .get("channel")
                     .and_then(Value::as_str)
                     .unwrap_or("")
                     .to_string();
                 let payload = ctrl.get("payload").and_then(Value::as_str).unwrap_or("");
+                // A privileged channel (`superuser: "require"`) when sudo
+                // escalation failed: the bridge cannot route it to root, so it
+                // closes the channel with `access-denied` instead of `ready`.
+                let privileged = ctrl.get("superuser").and_then(Value::as_str) == Some("require");
+                if privileged && superuser_mode() == "denied" {
+                    send_control(
+                        &mut stdout,
+                        &json!({"command":"close","channel":channel,"problem":"access-denied"}),
+                    );
+                    continue;
+                }
                 send_control(&mut stdout, &json!({"command":"ready","channel":channel}));
                 if payload == "stream" {
                     let mut blob = serde_json::to_vec(&json!({
