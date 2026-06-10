@@ -10,15 +10,32 @@ use std::time::Duration;
 
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(30);
 
+/// Object path of the bridge's superuser controller on the internal bus.
+///
+/// cockpit-bridge exports `SuperuserRoutingRule` at `/superuser` on its
+/// in-process internal bus (`bridge.py`:
+/// `self.internal_bus.export('/superuser', self.superuser_rule)`), with
+/// interface [`SUPERUSER_IFACE`].
+const SUPERUSER_PATH: &str = "/superuser";
+
+/// D-Bus interface of the bridge's superuser controller.
+///
+/// Defined in cockpit's `superuser.py`
+/// (`SuperuserRoutingRule(..., interface='cockpit.Superuser')`). It exposes the
+/// `Bridges` property (`as`, the ordered list of viable escalation mechanisms)
+/// and the `Start(s)` method (start a named mechanism).
+const SUPERUSER_IFACE: &str = "cockpit.Superuser";
+
 /// Guidance returned when privilege escalation to root fails.
 ///
-/// Two distinct causes produce the bridge's `access-denied`: (1) the standalone
-/// bridge has no superuser bridge configured at all (only `cockpit-bridge` is
-/// installed, so the `sudo`/`pkexec` bridge definitions from `cockpit-system`'s
-/// shell manifest are absent), or (2) escalation is configured but sudo wants a
-/// password fez does not supply. Cover both; the package gap is the common one
-/// on minimal hosts.
-const SUDO_REMEDIATION: &str = "the target bridge cannot escalate to root: install the cockpit-system package (it ships the sudo/pkexec superuser bridge definitions) and ensure this user has passwordless sudo (NOPASSWD); fez does not supply sudo passwords";
+/// fez tries every escalation mechanism the bridge advertises (sudo, polkit)
+/// and only reports this after all of them fail. The common causes: the
+/// standalone bridge ships no superuser bridge definitions (install
+/// `cockpit-system`), sudo wants a password fez does not supply (configure
+/// passwordless sudo), or no polkit rule grants this user the privileged
+/// action. The message names both mechanisms so the operator knows either path
+/// is viable.
+const ESCALATION_REMEDIATION: &str = "fez could not escalate to root: no superuser mechanism succeeded. Install the cockpit-system package (it ships the sudo/pkexec superuser bridge definitions), then either configure passwordless sudo (NOPASSWD) for this user or grant a polkit rule allowing this user the privileged cockpit action, and retry. fez does not supply sudo passwords";
 
 /// A live connection to a spawned bridge process, multiplexing D-Bus and
 /// stream channels over its stdio.
@@ -28,6 +45,9 @@ pub struct BridgeClient {
     rx: Receiver<Frame>,
     host: String,
     next_channel: u64,
+    /// Whether a root peer has been brought up via `cockpit.Superuser.Start`.
+    /// Escalation is performed lazily and at most once per connection.
+    escalated: bool,
 }
 
 impl BridgeClient {
@@ -60,13 +80,15 @@ impl BridgeClient {
             rx,
             host: transport.host_label(),
             next_channel: 1,
+            escalated: false,
         };
         client.send_control(&Control::Init {
             version: 1,
             host: "localhost".into(),
-            // Start the sudo superuser peer up front so later
-            // `superuser: "require"` channels (mutations) can route to root.
-            superuser: Some(json!({"id": "sudo"})),
+            // Defer escalation: bring up no root peer at init. fez selects a
+            // working mechanism later via `escalate()` (cockpit.Superuser.Start)
+            // so it can fall through sudo -> polkit instead of pinning sudo.
+            superuser: Some(json!("none")),
         })?;
         client.await_init()?;
         Ok(client)
@@ -86,13 +108,13 @@ impl BridgeClient {
 
     /// Complete the bridge handshake.
     ///
-    /// Waits for the bridge's `init`, then drives the superuser negotiation to
-    /// completion. Because we sent `init` with `superuser: {id: "sudo"}`, the
-    /// bridge tries to start a root peer immediately and always finishes with a
-    /// `superuser-init-done` control message (success or failure). If the sudo
-    /// peer needs a password, the bridge first sends an `authorize` challenge;
-    /// fez does not hold sudo credentials, so we refuse and fail fast with
-    /// `AccessDenied` rather than hanging on a prompt that can never be answered.
+    /// Waits for the bridge's `init`, then for `superuser-init-done`. Because we
+    /// send `init` with `superuser: "none"`, the bridge brings up no root peer
+    /// and the superuser negotiation completes trivially: there is no init-time
+    /// credential prompt to answer. Escalation is deferred to [`escalate`], run
+    /// lazily before the first privileged channel open.
+    ///
+    /// [`escalate`]: BridgeClient::escalate
     fn await_init(&mut self) -> Result<()> {
         let mut saw_init = false;
         loop {
@@ -106,18 +128,8 @@ impl BridgeClient {
                 "init" => {
                     saw_init = true;
                 }
-                // The bridge is asking us to answer a credential prompt (sudo
-                // password). fez intentionally does not handle passwords yet, so
-                // refuse instead of hanging on an unanswerable challenge.
-                "authorize" => {
-                    return Err(FezError::AccessDenied {
-                        remediation: SUDO_REMEDIATION.into(),
-                    });
-                }
-                // Superuser negotiation finished. The root peer may or may not
-                // have started; if it did not, privileged channels will close
-                // with `access-denied` later (handled in `open_dbus`). Either
-                // way the handshake is done and we can proceed.
+                // Superuser negotiation finished (trivially, since we deferred
+                // escalation). The handshake is done; proceed.
                 "superuser-init-done" if saw_init => {
                     return Ok(());
                 }
@@ -144,6 +156,12 @@ impl BridgeClient {
     }
 
     fn open_dbus(&mut self, name: &str, privileged: bool) -> Result<String> {
+        // A privileged channel routes to a root peer, which only exists once we
+        // have escalated. Drive escalation lazily before the first such open;
+        // reads (privileged == false) never escalate.
+        if privileged && !self.escalated {
+            self.escalate()?;
+        }
         let channel = self.alloc_channel();
         let mut open = Control::open(&channel, "dbus-json3")
             .opt("bus", json!("system"))
@@ -153,6 +171,134 @@ impl BridgeClient {
         }
         self.send_control(&open)?;
         Ok(channel)
+    }
+
+    /// Bring up a root peer by selecting a working escalation mechanism.
+    ///
+    /// With init sent as `superuser: "none"`, no root peer exists until fez
+    /// asks for one. This reads the bridge's advertised mechanisms
+    /// ([`BridgeClient::superuser_bridges`]) and tries each via
+    /// [`BridgeClient::superuser_start`] in order until one succeeds, so a host
+    /// with password-only sudo but a working polkit rule still escalates. The
+    /// `FEZ_ESCALATION` environment variable overrides the default loop:
+    /// `off` disables escalation, and any other value forces that single
+    /// mechanism (no fall-through). Idempotent: a no-op once escalated.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`FezError::AccessDenied`] (exit 11) when no mechanism succeeds,
+    /// when the host advertises none, or when `FEZ_ESCALATION=off`. Propagates
+    /// any non-`Dbus` transport error encountered while talking to the bridge.
+    pub fn escalate(&mut self) -> Result<()> {
+        if self.escalated {
+            return Ok(());
+        }
+        let denied = || FezError::AccessDenied {
+            remediation: ESCALATION_REMEDIATION.into(),
+        };
+        match std::env::var("FEZ_ESCALATION").ok().as_deref() {
+            // Never escalate. Mutations fail; reads are unaffected because they
+            // never call escalate().
+            Some("off") => return Err(denied()),
+            // Force a single named mechanism with no fall-through.
+            Some(name) if !name.is_empty() => {
+                return match self.superuser_start(name) {
+                    Ok(()) => {
+                        self.escalated = true;
+                        Ok(())
+                    }
+                    Err(FezError::Dbus { .. }) => Err(denied()),
+                    Err(e) => Err(e),
+                };
+            }
+            // Empty or unset: default transparent loop below.
+            _ => {}
+        }
+        let names = self.superuser_bridges()?;
+        for name in names {
+            match self.superuser_start(&name) {
+                Ok(()) => {
+                    self.escalated = true;
+                    return Ok(());
+                }
+                // This mechanism could not start (e.g. it needs an unanswerable
+                // credential); try the next advertised one.
+                Err(FezError::Dbus { .. }) => continue,
+                Err(e) => return Err(e),
+            }
+        }
+        Err(denied())
+    }
+
+    /// Open a D-Bus channel to the bridge's internal bus.
+    ///
+    /// The internal bus hosts the bridge's own controllers (notably
+    /// `cockpit.Superuser`). It carries no `name` (the bridge is the peer) and
+    /// is never privileged: the controller decides escalation, it is not itself
+    /// reached through a root peer (cockpit `dbus.py`: `bus == 'internal'`).
+    fn open_dbus_internal(&mut self) -> Result<String> {
+        let channel = self.alloc_channel();
+        let open = Control::open(&channel, "dbus-json3").opt("bus", json!("internal"));
+        self.send_control(&open)?;
+        Ok(channel)
+    }
+
+    /// List the escalation mechanisms the bridge considers viable on this host.
+    ///
+    /// Reads the `cockpit.Superuser` `Bridges` property (signature `as`) over
+    /// the internal bus. The list is the bridge's own ordered, validity-filtered
+    /// set of mechanism names (e.g. `["sudo", "pkexec"]`); an empty list means
+    /// the host has no usable escalation mechanism.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`FezError::Dbus`] if the property read fails, or any transport
+    /// error from opening the internal channel or reading the reply.
+    pub fn superuser_bridges(&mut self) -> Result<Vec<String>> {
+        let channel = self.open_dbus_internal()?;
+        let out = self.dbus_call(
+            &channel,
+            SUPERUSER_PATH,
+            "org.freedesktop.DBus.Properties",
+            "Get",
+            json!([SUPERUSER_IFACE, "Bridges"]),
+        )?;
+        // `dbus_call` returns the out-argument array (`reply[0]`). Properties.Get
+        // has a single out-arg (the variant), so the `as` value is `out[0]`.
+        let names = out
+            .as_array()
+            .and_then(|args| args.first())
+            .and_then(Value::as_array)
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str().map(str::to_owned))
+                    .collect()
+            })
+            .unwrap_or_default();
+        Ok(names)
+    }
+
+    /// Ask the bridge to start the named escalation mechanism.
+    ///
+    /// Calls `cockpit.Superuser.Start(name)` over the internal bus. On success
+    /// the bridge has brought up a root peer, and subsequent
+    /// `superuser: "require"` channels route to it. A mechanism that needs a
+    /// credential fez cannot supply surfaces as a D-Bus error, not a hang.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`FezError::Dbus`] when the bridge rejects the start (e.g. the
+    /// mechanism needs an unanswerable credential), or any transport error.
+    pub fn superuser_start(&mut self, name: &str) -> Result<()> {
+        let channel = self.open_dbus_internal()?;
+        self.dbus_call(
+            &channel,
+            SUPERUSER_PATH,
+            SUPERUSER_IFACE,
+            "Start",
+            json!([name]),
+        )?;
+        Ok(())
     }
 
     /// Returns the out-argument array (`reply[0]`). Index `[0]` for the first return value.
@@ -264,7 +410,7 @@ impl Drop for BridgeClient {
 fn close_problem_to_error(problem: Option<String>) -> FezError {
     match problem {
         Some(p) if p == "access-denied" => FezError::AccessDenied {
-            remediation: SUDO_REMEDIATION.into(),
+            remediation: ESCALATION_REMEDIATION.into(),
         },
         Some(p) => FezError::Problem(p),
         None => FezError::Problem("channel-closed".into()),

@@ -146,16 +146,35 @@ fn fake_resolve_items() -> Value {
     }
 }
 
-/// The superuser-negotiation behavior selected by `FEZ_FAKE_SUPERUSER`.
+/// The host's escalation mechanisms as modeled by `FEZ_FAKE_BRIDGES`.
 ///
-/// - unset / `ok`: passwordless escalation succeeds (the common path).
-/// - `challenge`: sudo needs a password; the fake sends an `authorize`
-///   control challenge instead of `superuser-init-done`.
-/// - `denied`: escalation "succeeds" at init time but every privileged
-///   channel open is closed with `access-denied` (mirrors a sudoers allow
-///   list that rejects the specific command).
-fn superuser_mode() -> String {
-    std::env::var("FEZ_FAKE_SUPERUSER").unwrap_or_else(|_| "ok".into())
+/// Real cockpit-bridge exposes a `cockpit.Superuser.Bridges` property (the
+/// ordered, validity-filtered mechanism names) and a `Start(name)` method that
+/// brings up the named root peer. The fake models that surface so escalation
+/// can be driven deterministically.
+///
+/// Grammar: comma-separated `name:outcome` pairs, outcome `ok` or `err`, e.g.
+/// `sudo:ok`, `sudo:err,polkit:ok`. Order is preserved (it is the `Bridges`
+/// order fez iterates). A bare `name` with no `:outcome` defaults to `ok`.
+///
+/// Default (var unset) models a normal passwordless-sudo host (`[("sudo",
+/// true)]`), so the bulk of the integration tests escalate without ceremony.
+/// An explicitly empty value (`FEZ_FAKE_BRIDGES=""`) means the host advertises
+/// no mechanism, so privileged channels are denied: that is how the
+/// escalation-failure cases opt in.
+fn fake_bridges() -> Vec<(String, bool)> {
+    let raw = match std::env::var("FEZ_FAKE_BRIDGES") {
+        Ok(v) => v,
+        // Unset: default to a passwordless-sudo host.
+        Err(_) => return vec![("sudo".to_string(), true)],
+    };
+    raw.split(',')
+        .filter(|s| !s.is_empty())
+        .map(|entry| {
+            let (name, outcome) = entry.split_once(':').unwrap_or((entry, "ok"));
+            (name.to_string(), outcome == "ok")
+        })
+        .collect()
 }
 
 fn send_control(out: &mut impl Write, v: &Value) {
@@ -181,39 +200,23 @@ fn main() -> io::Result<()> {
     let mut stdin = io::stdin().lock();
     let mut stdout = io::stdout().lock();
 
+    let bridges = fake_bridges();
+    // Tracks whether a cockpit.Superuser.Start has succeeded, i.e. a root peer
+    // is "up". A `superuser: "require"` open succeeds only after that.
+    let mut escalated = false;
+
     send_control(&mut stdout, &json!({"command":"init","version":1}));
 
     while let Some(frame) = read_frame(&mut stdin)? {
         if frame.channel.is_empty() {
             let ctrl: Value = serde_json::from_slice(&frame.payload).unwrap_or(Value::Null);
             let command = ctrl.get("command").and_then(Value::as_str);
-            // The client's `init` carries `superuser: {id: "sudo"}`, asking the
-            // bridge to start a root peer up front. Real cockpit-bridge always
-            // finishes that negotiation with `superuser-init-done` (success or
-            // failure), optionally preceded by an `authorize` challenge when
-            // sudo needs a password. FEZ_FAKE_SUPERUSER selects which path the
-            // fake takes so the integration tests can exercise each branch.
+            // The client's `init` carries `superuser: "none"`, so the bridge
+            // brings up no root peer at init and just completes the handshake.
+            // Escalation happens later, driven by the client via
+            // cockpit.Superuser.Start over the internal bus.
             if let Some("init") = command {
-                match superuser_mode().as_str() {
-                    // Sudo needs a password: send an authorize challenge. fez
-                    // refuses (it holds no password) and never sees init-done.
-                    "challenge" => {
-                        send_control(
-                            &mut stdout,
-                            &json!({
-                                "command":"authorize",
-                                "cookie":"1",
-                                "challenge":"X-Conversation fake [sudo] password for fedora:"
-                            }),
-                        );
-                    }
-                    // Passwordless success ("ok"/unset) and the downstream
-                    // "denied" case both complete the negotiation; "denied"
-                    // diverges later when a privileged channel is opened.
-                    _ => {
-                        send_control(&mut stdout, &json!({"command":"superuser-init-done"}));
-                    }
-                }
+                send_control(&mut stdout, &json!({"command":"superuser-init-done"}));
                 continue;
             }
             // close, done: ignore; only `open` needs a response.
@@ -224,11 +227,20 @@ fn main() -> io::Result<()> {
                     .unwrap_or("")
                     .to_string();
                 let payload = ctrl.get("payload").and_then(Value::as_str).unwrap_or("");
-                // A privileged channel (`superuser: "require"`) when sudo
-                // escalation failed: the bridge cannot route it to root, so it
-                // closes the channel with `access-denied` instead of `ready`.
+                // A privileged channel (`superuser: "require"`) the bridge
+                // cannot route to root closes with `access-denied` instead of
+                // `ready`: that means no cockpit.Superuser.Start has succeeded
+                // yet (no root peer exists).
                 let privileged = ctrl.get("superuser").and_then(Value::as_str) == Some("require");
-                if privileged && superuser_mode() == "denied" {
+                // FEZ_FAKE_DENY_PRIVILEGED models a host where escalation
+                // succeeds but the sudoers/polkit policy still rejects the
+                // specific privileged channel mid-operation: the bridge closes
+                // it with access-denied even after a successful Start.
+                let force_deny = std::env::var_os("FEZ_FAKE_DENY_PRIVILEGED").is_some();
+                // A privileged channel routes to root, which only exists after a
+                // successful cockpit.Superuser.Start (escalated).
+                let deny_privileged = !escalated || force_deny;
+                if privileged && deny_privileged {
                     send_control(
                         &mut stdout,
                         &json!({"command":"close","channel":channel,"problem":"access-denied"}),
@@ -291,6 +303,30 @@ fn main() -> io::Result<()> {
                     dnf_reply(method, iface, &id)
                 } else {
                     match method {
+                        // cockpit.Superuser.Bridges property read via
+                        // org.freedesktop.DBus.Properties.Get(iface, "Bridges").
+                        // Returns the FEZ_FAKE_BRIDGES mechanism names as an
+                        // `as` array (the variant out-arg unwrapped to its value).
+                        "Get" => {
+                            let names: Vec<Value> = bridges.iter().map(|(n, _)| json!(n)).collect();
+                            json!({"reply":[[names]],"id":id})
+                        }
+                        // cockpit.Superuser.Start(name): bring up the named
+                        // mechanism. `ok` succeeds (record escalated); `err`
+                        // returns a D-Bus error (mirrors a mechanism whose
+                        // credential prompt fez cannot answer).
+                        "Start" => {
+                            let name = args.first().and_then(Value::as_str).unwrap_or("");
+                            match bridges.iter().find(|(n, _)| n == name) {
+                                Some((_, true)) => {
+                                    escalated = true;
+                                    json!({"reply":[[]],"id":id})
+                                }
+                                _ => json!({"error":[
+                                    "cockpit.Superuser.Error",
+                                    [format!("mechanism {name:?} cannot start")]],"id":id}),
+                            }
+                        }
                         // reply[0][0] = units array
                         "ListUnits" => json!({"reply":[[[
                         ["sshd.service","OpenSSH server daemon","loaded","active","running","",

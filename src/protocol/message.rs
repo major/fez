@@ -12,12 +12,11 @@ pub enum Control {
         version: u32,
         /// Host label.
         host: String,
-        /// Eagerly start a privileged superuser peer at init time. cockpit
-        /// only routes `superuser: "require"` channels once such a peer exists;
-        /// without this the bridge denies every privileged channel
-        /// (`access-denied`). `{"id": "sudo"}` selects the sudo escalation
-        /// bridge, which works headlessly when the invoking user has
-        /// passwordless sudo.
+        /// Superuser negotiation mode at init time. fez sends `"none"` to
+        /// defer escalation: the bridge brings up no root peer at init, and fez
+        /// later selects a working mechanism itself via
+        /// `cockpit.Superuser.Start` (sudo, falling through to polkit). Omitted
+        /// entirely when `None`.
         #[serde(skip_serializing_if = "Option::is_none")]
         superuser: Option<Value>,
     },
@@ -184,10 +183,6 @@ pub struct IncomingControl {
     /// Problem kind when the command reports a failure.
     #[serde(default)]
     pub problem: Option<String>,
-    /// Authorization challenge string on an `authorize` control command
-    /// (e.g. a sudo password prompt the bridge wants the client to answer).
-    #[serde(default)]
-    pub challenge: Option<String>,
 }
 
 #[cfg(test)]
@@ -208,18 +203,20 @@ mod tests {
     }
 
     #[test]
-    fn serializes_init_with_superuser() {
+    fn serializes_init_superuser_none() {
+        // fez defers escalation by sending superuser:"none" (a string), not a
+        // mechanism-pinning object. Escalation happens later via Start.
         let v = serde_json::to_value(Control::Init {
             version: 1,
             host: "localhost".into(),
-            superuser: Some(json!({"id": "sudo"})),
+            superuser: Some(json!("none")),
         })
         .unwrap();
         assert_eq!(
             v,
             json!({
                 "command":"init","version":1,"host":"localhost",
-                "superuser":{"id":"sudo"}
+                "superuser":"none"
             })
         );
     }
@@ -237,6 +234,24 @@ mod tests {
                 "bus":"system","name":"org.freedesktop.systemd1"
             })
         );
+    }
+
+    #[test]
+    fn serializes_internal_bus_open() {
+        // The internal-bus open (used to reach cockpit.Superuser) carries
+        // bus:"internal", no name, and is never privileged.
+        let open = Control::open("ch9", "dbus-json3").opt("bus", json!("internal"));
+        let v = serde_json::to_value(open).unwrap();
+        assert_eq!(
+            v,
+            json!({
+                "command":"open","channel":"ch9","payload":"dbus-json3",
+                "bus":"internal"
+            })
+        );
+        let obj = v.as_object().unwrap();
+        assert!(!obj.contains_key("name"));
+        assert!(!obj.contains_key("superuser"));
     }
 
     #[test]
