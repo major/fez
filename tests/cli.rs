@@ -168,3 +168,28 @@ fn services_start_help_shows_examples_and_long() {
         .stdout(contains("Examples:"))
         .stdout(contains("--force"));
 }
+
+#[test]
+fn guide_text_mentions_discovery_loop_and_exit_codes() {
+    Command::cargo_bin("fez")
+        .unwrap()
+        .arg("guide")
+        .assert()
+        .success()
+        .stdout(contains("capabilities"))
+        .stdout(contains("describe"))
+        .stdout(contains("protected-unit"))
+        .stdout(contains("fez/v1"));
+}
+
+#[test]
+fn guide_json_emits_agent_guide_envelope() {
+    Command::cargo_bin("fez")
+        .unwrap()
+        .args(["guide", "--json"])
+        .assert()
+        .success()
+        .stdout(contains("\"apiVersion\": \"fez/v1\""))
+        .stdout(contains("AgentGuide"))
+        .stdout(contains("exitCodes"));
+}

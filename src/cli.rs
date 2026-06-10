@@ -55,6 +55,8 @@ pub enum TopCommand {
         /// Dotted capability id to describe (e.g. `services.start`).
         capability: String,
     },
+    /// Print the agent contract: discovery loop, envelope, exit codes, env vars.
+    Guide,
     /// Manage systemd services.
     Services {
         /// The `services` action to perform.

@@ -17,6 +17,8 @@ mod dispatch;
 pub mod envelope;
 /// Crate-wide error type and exit-code mapping.
 pub mod error;
+/// The agent bootstrap contract printed by `fez guide`.
+pub mod guide;
 /// Model Context Protocol server support.
 pub mod mcp;
 /// Wire protocol between fez and the bridge.

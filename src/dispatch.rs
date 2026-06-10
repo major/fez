@@ -38,6 +38,7 @@ pub fn run(cli: Cli) -> i32 {
                 4
             }
         },
+        TopCommand::Guide => crate::guide::run(&host, cli.json),
         TopCommand::Services { .. } => crate::capabilities::services::dispatch(&cli),
         TopCommand::Mcp => crate::mcp::run(),
     }
