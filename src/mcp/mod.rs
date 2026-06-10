@@ -32,6 +32,7 @@ pub fn run() -> i32 {
         }
         if let Some(resp) = handle_line(&line) {
             let Ok(json) = serde_json::to_string(&resp) else {
+                eprintln!("MCP response serialization failed");
                 return 2;
             };
             if writeln!(stdout, "{json}").is_err() {

@@ -115,12 +115,17 @@ impl DbusCall {
     }
     /// Serialize the call body to JSON bytes.
     ///
-    /// Returns an empty array on serialization failure. The bridge will
-    /// interpret this as a no-op JSON value rather than receiving malformed
-    /// bytes.
+    /// Returns a valid no-op DbusCallBody on serialization failure so the
+    /// bridge receives well-formed JSON instead of malformed bytes.
     pub fn to_json(&self) -> Vec<u8> {
-        serde_json::to_vec(&self.body)
-            .unwrap_or_else(|_| serde_json::json!([]).to_string().into_bytes())
+        serde_json::to_vec(&self.body).unwrap_or_else(|_| {
+            serde_json::json!({
+                "call": ["", "", "", []],
+                "id": "serialize-error"
+            })
+            .to_string()
+            .into_bytes()
+        })
     }
 }
 
