@@ -359,3 +359,81 @@ fn services_disable_human_output() {
         .success()
         .stdout(contains("disabled chronyd.service"));
 }
+
+// --- Privilege escalation (superuser) handshake ---------------------------
+//
+// The fake bridge's FEZ_FAKE_SUPERUSER knob selects how the superuser
+// negotiation behaves: "ok" (default) completes with superuser-init-done,
+// "challenge" sends an authorize password prompt, "denied" closes privileged
+// channels with access-denied. fez holds no sudo password, so any path that
+// needs one must fail fast with exit 11 (access-denied), never hang.
+
+#[test]
+fn mutation_succeeds_with_passwordless_superuser() {
+    // "ok" is the default, but assert it explicitly: a mutation that opens a
+    // privileged channel completes when the bridge escalates without a prompt.
+    fez_fake()
+        .env("FEZ_AUDIT", "off")
+        .env("FEZ_FAKE_SUPERUSER", "ok")
+        .args(["services", "restart", "chronyd.service", "--json"])
+        .assert()
+        .success()
+        .stdout(contains("\"kind\":\"ServiceMutation\""));
+}
+
+#[test]
+fn authorize_challenge_fails_fast_with_access_denied() {
+    // sudo wants a password. fez refuses the authorize challenge instead of
+    // hanging, and reports exit 11 with remediation. Any operation trips this
+    // because the handshake happens at connect time before any channel opens.
+    fez_fake()
+        .env("FEZ_AUDIT", "off")
+        .env("FEZ_FAKE_SUPERUSER", "challenge")
+        .args(["services", "restart", "chronyd.service", "--json"])
+        .assert()
+        .code(11)
+        .stdout(contains("\"code\":\"access-denied\""))
+        .stdout(contains("NOPASSWD"));
+}
+
+#[test]
+fn read_fails_fast_when_challenge_required() {
+    // Prove the handshake fails at connect time even for an unprivileged read:
+    // a "challenge" the client cannot answer denies the connection before any
+    // channel opens, so even `services list` exits 11.
+    fez_fake()
+        .env("FEZ_AUDIT", "off")
+        .env("FEZ_FAKE_SUPERUSER", "challenge")
+        .args(["services", "list", "--json"])
+        .assert()
+        .code(11)
+        .stdout(contains("\"code\":\"access-denied\""))
+        .stdout(contains("NOPASSWD"));
+}
+
+#[test]
+fn privileged_channel_denied_maps_to_access_denied() {
+    // Escalation "succeeds" at init time but the sudoers allow list rejects the
+    // command: the privileged channel closes with access-denied mid-operation.
+    // fez surfaces that as exit 11, not a generic channel problem.
+    fez_fake()
+        .env("FEZ_AUDIT", "off")
+        .env("FEZ_FAKE_SUPERUSER", "denied")
+        .args(["services", "restart", "chronyd.service", "--json"])
+        .assert()
+        .code(11)
+        .stdout(contains("\"code\":\"access-denied\""));
+}
+
+#[test]
+fn read_path_unaffected_by_downstream_denial() {
+    // A read opens an unprivileged channel, so the "denied" downstream policy
+    // (privileged-only) does not touch it: listing still succeeds.
+    fez_fake()
+        .env("FEZ_AUDIT", "off")
+        .env("FEZ_FAKE_SUPERUSER", "denied")
+        .args(["services", "list", "--json"])
+        .assert()
+        .success()
+        .stdout(contains("\"kind\":\"ServiceList\""));
+}

@@ -10,6 +10,16 @@ use std::time::Duration;
 
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(30);
 
+/// Guidance returned when privilege escalation to root fails.
+///
+/// Two distinct causes produce the bridge's `access-denied`: (1) the standalone
+/// bridge has no superuser bridge configured at all (only `cockpit-bridge` is
+/// installed, so the `sudo`/`pkexec` bridge definitions from `cockpit-system`'s
+/// shell manifest are absent), or (2) escalation is configured but sudo wants a
+/// password fez does not supply. Cover both; the package gap is the common one
+/// on minimal hosts.
+const SUDO_REMEDIATION: &str = "the target bridge cannot escalate to root: install the cockpit-system package (it ships the sudo/pkexec superuser bridge definitions) and ensure this user has passwordless sudo (NOPASSWD); fez does not supply sudo passwords";
+
 /// A live connection to a spawned bridge process, multiplexing D-Bus and
 /// stream channels over its stdio.
 pub struct BridgeClient {
@@ -74,15 +84,44 @@ impl BridgeClient {
         }
     }
 
+    /// Complete the bridge handshake.
+    ///
+    /// Waits for the bridge's `init`, then drives the superuser negotiation to
+    /// completion. Because we sent `init` with `superuser: {id: "sudo"}`, the
+    /// bridge tries to start a root peer immediately and always finishes with a
+    /// `superuser-init-done` control message (success or failure). If the sudo
+    /// peer needs a password, the bridge first sends an `authorize` challenge;
+    /// fez does not hold sudo credentials, so we refuse and fail fast with
+    /// `AccessDenied` rather than hanging on a prompt that can never be answered.
     fn await_init(&mut self) -> Result<()> {
+        let mut saw_init = false;
         loop {
             let frame = self.recv()?;
-            if frame.channel.is_empty() {
-                let c: IncomingControl =
-                    serde_json::from_slice(&frame.payload).map_err(FezError::Decode)?;
-                if c.command == "init" {
+            if !frame.channel.is_empty() {
+                continue;
+            }
+            let c: IncomingControl =
+                serde_json::from_slice(&frame.payload).map_err(FezError::Decode)?;
+            match c.command.as_str() {
+                "init" => {
+                    saw_init = true;
+                }
+                // The bridge is asking us to answer a credential prompt (sudo
+                // password). fez intentionally does not handle passwords yet, so
+                // refuse instead of hanging on an unanswerable challenge.
+                "authorize" => {
+                    return Err(FezError::AccessDenied {
+                        remediation: SUDO_REMEDIATION.into(),
+                    });
+                }
+                // Superuser negotiation finished. The root peer may or may not
+                // have started; if it did not, privileged channels will close
+                // with `access-denied` later (handled in `open_dbus`). Either
+                // way the handshake is done and we can proceed.
+                "superuser-init-done" if saw_init => {
                     return Ok(());
                 }
+                _ => {}
             }
         }
     }
@@ -133,9 +172,7 @@ impl BridgeClient {
                 let c: IncomingControl =
                     serde_json::from_slice(&frame.payload).map_err(FezError::Decode)?;
                 if c.command == "close" && c.channel.as_deref() == Some(channel) {
-                    return Err(FezError::Problem(
-                        c.problem.unwrap_or_else(|| "channel-closed".into()),
-                    ));
+                    return Err(close_problem_to_error(c.problem));
                 }
                 continue;
             }
@@ -170,10 +207,8 @@ impl BridgeClient {
                 let c: IncomingControl =
                     serde_json::from_slice(&frame.payload).map_err(FezError::Decode)?;
                 if c.channel.as_deref() == Some(&channel) {
-                    if c.command == "close" {
-                        if let Some(p) = c.problem {
-                            return Err(FezError::Problem(p));
-                        }
+                    if c.command == "close" && c.problem.is_some() {
+                        return Err(close_problem_to_error(c.problem));
                     }
                     if c.command == "done" || c.command == "close" {
                         return Ok(buf);
@@ -195,10 +230,8 @@ impl BridgeClient {
                 let c: IncomingControl =
                     serde_json::from_slice(&frame.payload).map_err(FezError::Decode)?;
                 if c.channel.as_deref() == Some(&channel) {
-                    if c.command == "close" {
-                        if let Some(p) = c.problem {
-                            return Err(FezError::Problem(p));
-                        }
+                    if c.command == "close" && c.problem.is_some() {
+                        return Err(close_problem_to_error(c.problem));
                     }
                     if c.command == "done" || c.command == "close" {
                         return Ok(());
@@ -218,5 +251,22 @@ impl Drop for BridgeClient {
     fn drop(&mut self) {
         let _ = self.child.kill();
         let _ = self.child.wait();
+    }
+}
+
+/// Convert a channel-close `problem` into the matching [`FezError`].
+///
+/// A privileged channel that the bridge could not escalate closes with
+/// `problem: "access-denied"`; surface that as the dedicated [`FezError::AccessDenied`]
+/// (exit 11, with remediation) instead of a generic channel problem (exit 4),
+/// so privilege failures are distinguishable from missing resources. Any other
+/// problem string keeps the generic [`FezError::Problem`] mapping.
+fn close_problem_to_error(problem: Option<String>) -> FezError {
+    match problem {
+        Some(p) if p == "access-denied" => FezError::AccessDenied {
+            remediation: SUDO_REMEDIATION.into(),
+        },
+        Some(p) => FezError::Problem(p),
+        None => FezError::Problem("channel-closed".into()),
     }
 }

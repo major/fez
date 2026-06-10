@@ -69,6 +69,13 @@ pub enum FezError {
     /// The user declined a confirmation prompt.
     #[error("aborted by user")]
     Aborted,
+    /// Privilege escalation to root failed (the bridge could not become root,
+    /// e.g. sudo requires a password fez does not supply).
+    #[error("access denied: {remediation}")]
+    AccessDenied {
+        /// Actionable guidance to enable privilege escalation and retry.
+        remediation: String,
+    },
 }
 
 /// One documented exit code in the agent-facing contract.
@@ -126,6 +133,11 @@ pub const EXIT_CODES: &[ExitCodeDoc] = &[
         label: "dangerous-transaction",
         meaning: "Resolved transaction refused by guardrails (protected package or cascade) without --force.",
     },
+    ExitCodeDoc {
+        code: 11,
+        label: "access-denied",
+        meaning: "Privilege escalation to root failed (e.g. sudo requires a password fez does not supply).",
+    },
 ];
 
 impl FezError {
@@ -144,6 +156,7 @@ impl FezError {
             FezError::DependencyMissing { .. } => "dependency-missing",
             FezError::DangerousTransaction { .. } => "dangerous-transaction",
             FezError::Aborted => "aborted",
+            FezError::AccessDenied { .. } => "access-denied",
         }
     }
     /// Process exit code to use when this error is fatal.
@@ -156,6 +169,7 @@ impl FezError {
             FezError::Protected { .. } => 8,
             FezError::DependencyMissing { .. } => 9,
             FezError::DangerousTransaction { .. } => 10,
+            FezError::AccessDenied { .. } => 11,
             _ => 1,
         }
     }
@@ -204,6 +218,10 @@ mod tests {
             FezError::DangerousTransaction {
                 reason: "r".into(),
                 removed: vec![],
+            }
+            .exit_code(),
+            FezError::AccessDenied {
+                remediation: "r".into(),
             }
             .exit_code(),
         ];
@@ -284,6 +302,16 @@ mod tests {
     fn aborted_maps_code_and_exit() {
         assert_eq!(FezError::Aborted.code(), "aborted");
         assert_eq!(FezError::Aborted.exit_code(), 1);
+    }
+
+    #[test]
+    fn access_denied_maps_code_and_exit() {
+        let e = FezError::AccessDenied {
+            remediation: "configure NOPASSWD sudo".into(),
+        };
+        assert_eq!(e.code(), "access-denied");
+        assert_eq!(e.exit_code(), 11);
+        assert!(e.to_string().contains("configure NOPASSWD sudo"));
     }
 
     #[test]

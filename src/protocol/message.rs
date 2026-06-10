@@ -184,6 +184,10 @@ pub struct IncomingControl {
     /// Problem kind when the command reports a failure.
     #[serde(default)]
     pub problem: Option<String>,
+    /// Authorization challenge string on an `authorize` control command
+    /// (e.g. a sudo password prompt the bridge wants the client to answer).
+    #[serde(default)]
+    pub challenge: Option<String>,
 }
 
 #[cfg(test)]
