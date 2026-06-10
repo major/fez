@@ -30,7 +30,7 @@ Use the Makefile, not raw cargo, for gated work. `make` defaults to `check`.
   - `make deny` - `cargo deny check` (RUSTSEC advisories, license policy, banned/duplicate crates, source allow-list; config in `deny.toml`). Install: `cargo install cargo-deny --locked`
   - `make machete` - `cargo machete` (unused declared deps). Install: `cargo install cargo-machete --locked`
 - `make msrv` - `cargo +1.92 check --all-targets`; proves the crate compiles on the pinned MSRV, not just stable. Requires `rustup toolchain install 1.92`
-- Single test: `cargo test --test services name_of_test` (integration files are `tests/cli.rs`, `tests/mcp.rs`, `tests/services.rs`)
+- Single test: `cargo test --test services name_of_test` (integration files are `tests/cli.rs`, `tests/mcp.rs`, `tests/packages.rs`, `tests/services.rs`)
 
 ## Gates (CI: `.github/workflows/ci.yml`, `.github/workflows/codeql.yml`)
 
@@ -51,23 +51,24 @@ Thin binaries over a library (`src/lib.rs` owns the module tree; `run()` is the 
 
 - `protocol/` - wire protocol to the bridge: `frame` (framed JSON), `message`, `client`
 - `transport/` - `local` (spawns the bridge) and `ssh` (OpenSSH client) ways to reach it
-- `capabilities/` - the actual commands fez runs (e.g. `services`); `capability/` holds machine-readable descriptors of that surface
+- `capabilities/` - the actual commands fez runs (e.g. `services`, `packages`); `capability/` holds machine-readable descriptors of that surface
 - `dispatch.rs` - routes parsed CLI to capabilities (private module)
 - `cli.rs` - clap definitions plus `command()`/`parse()` (the registry-enriched command tree) and `raw_command()` (the bare derived tree). New top-level verbs beyond the capability commands: `fez guide` (agent contract; `--json` emits an `AgentGuide` envelope), `fez completions <shell>` (bash/zsh/fish), and hidden `fez man` (emits the `fez.1` roff page; packaging runs it during `%build`). `envelope.rs` - the `fez/v1` JSON response envelope
 - `safety.rs` - guardrails: protected units refuse mutation without `--force`
 - `audit.rs` - JSON-lines audit log of attempted + completed mutations (each executed mutation writes two records: attempt + result)
 - `mcp/` - MCP server (`fez mcp`, JSON-RPC 2.0 over stdio)
 
-Errors: single `FezError` enum (`src/error.rs`) with stable string `code()` and `exit_code()` mappings. Exit codes are part of the contract (e.g. protected-unit = 8, timeout = 5, bridge spawn/closed = 6, dbus = 7). E2E and integration tests assert on them; update tests when you touch the mapping.
+Errors: single `FezError` enum (`src/error.rs`) with stable string `code()` and `exit_code()` mappings. Exit codes are part of the contract (e.g. protected-unit = 8, timeout = 5, bridge spawn/closed = 6, dbus = 7, dependency-missing = 9, dangerous-transaction = 10). E2E and integration tests assert on them; update tests when you touch the mapping.
 
 ## Testing quirks
 
 - Integration tests drive a **fake bridge binary** (`src/bin/fake_bridge.rs`, built as `fez-fake-bridge`) instead of a real `cockpit-bridge`. Tests point fez at it via the `FEZ_BRIDGE` env var set to `env!("CARGO_BIN_EXE_fez-fake-bridge")`. The fake reports `chronyd` inactive and `sshd` active; assertions depend on that.
+- Packages integration tests (`tests/packages.rs`) drive the same fake bridge over `org.rpm.dnf.v0` (dnf5daemon). `FEZ_FAKE_PLAN` selects the staged transaction plan the fake returns from `Goal.resolve` (`install`/`small`/`protected`/`cascade`, exercising the removal guardrails); `FEZ_FAKE_NO_DNF5` makes the fake report the daemon absent (`ServiceUnknown`) to exercise the exit-9 `dependency-missing` path.
 - E2E (`test/e2e/run.sh`) provisions a real cloud host via Terraform, installs `cockpit-bridge`, and exercises the real transport. Expensive and destructive (auto-`destroy` on exit). It auto-`tee`s every run to `test/e2e/logs/run-<ts>.log` (gitignored) with a `last-run.log` symlink; read the log on failure. It pins SSH config with `FEZ_SSH_CONFIG` (`ssh -F`), not `HOME`, because OpenSSH ignores `$HOME/.ssh/config` non-interactively.
 
 ## Env vars
 
-Runtime knobs read from the environment: `FEZ_BRIDGE` (bridge binary path, used by tests), `FEZ_AUDIT` (audit sink, e.g. `file:/path/audit.jsonl`), `FEZ_SSH_CONFIG` (ssh `-F` config). Audit records also carry `FEZ_ACTOR`, `FEZ_CORRELATION_ID`, `FEZ_TARGET_HOST`, `FEZ_OPERATION`, `FEZ_UNIT`, etc.
+Runtime knobs read from the environment: `FEZ_BRIDGE` (bridge binary path, used by tests), `FEZ_AUDIT` (audit sink, e.g. `file:/path/audit.jsonl`), `FEZ_SSH_CONFIG` (ssh `-F` config). Audit records also carry `FEZ_ACTOR`, `FEZ_CORRELATION_ID`, `FEZ_TARGET_HOST`, `FEZ_OPERATION`, `FEZ_UNIT`, etc. Test-only fake-bridge knobs: `FEZ_FAKE_PLAN` (selects the canned dnf5daemon `Goal.resolve` plan: `install`/`small`/`protected`/`cascade`) and `FEZ_FAKE_NO_DNF5` (simulates dnf5daemon being absent).
 
 ## Conventions
 
@@ -82,4 +83,5 @@ Runtime knobs read from the environment: `FEZ_BRIDGE` (bridge binary path, used 
 
 ## Notes
 
+- The `packages` capability drives **dnf5daemon** (`org.rpm.dnf.v0`) over the bridge. The target must have `dnf5daemon` installed and activatable (Fedora 41+, RHEL 10). When it is absent, fez returns exit 9 (`dependency-missing`) with remediation in the envelope `detail`.
 - README links a design spec at `docs/superpowers/specs/2026-06-09-agentic-os-design.md` that is **not present** in the repo (`docs/superpowers/` only has the release-process and coverage-enforcement specs/plans). Do not trust that link.

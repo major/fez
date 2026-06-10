@@ -86,6 +86,12 @@ pub enum TopCommand {
         #[command(subcommand)]
         action: ServicesAction,
     },
+    /// Manage RPM packages (via dnf5daemon).
+    Packages {
+        /// The `packages` action to perform.
+        #[command(subcommand)]
+        action: PackagesAction,
+    },
     /// Run as an MCP server (JSON-RPC 2.0 over stdio): a frugal gateway exposing
     /// list_capabilities, describe_capability, and invoke meta-tools.
     Mcp,
@@ -157,6 +163,64 @@ pub enum ServicesAction {
         /// Also stop the unit immediately.
         #[arg(long)]
         now: bool,
+    },
+}
+
+/// Actions under the `packages` subcommand.
+#[derive(Subcommand, Debug)]
+pub enum PackagesAction {
+    /// List packages.
+    List {
+        /// List only installed packages (the default).
+        #[arg(long, conflicts_with = "available")]
+        installed: bool,
+        /// List available packages instead of installed.
+        #[arg(long)]
+        available: bool,
+        /// Restrict to packages from these repositories.
+        #[arg(long = "repo")]
+        repo: Vec<String>,
+    },
+    /// Show one package's full attributes.
+    Info {
+        /// Package spec to describe.
+        spec: String,
+    },
+    /// Search packages by name, summary, or provides.
+    Search {
+        /// Pattern to match.
+        pattern: String,
+    },
+    /// List available upgrades.
+    CheckUpdate,
+    /// List repositories and their enabled state.
+    Repolist {
+        /// Show only enabled repositories (the default).
+        #[arg(long, conflicts_with_all = ["disabled", "all"])]
+        enabled: bool,
+        /// Show only disabled repositories.
+        #[arg(long, conflicts_with = "all")]
+        disabled: bool,
+        /// Show all repositories.
+        #[arg(long)]
+        all: bool,
+    },
+    /// Install packages.
+    Install {
+        /// Package specs to install.
+        #[arg(required = true)]
+        specs: Vec<String>,
+    },
+    /// Remove packages.
+    Remove {
+        /// Package specs to remove.
+        #[arg(required = true)]
+        specs: Vec<String>,
+    },
+    /// Upgrade packages (all if none given).
+    Upgrade {
+        /// Package specs to upgrade; empty means upgrade everything.
+        specs: Vec<String>,
     },
 }
 

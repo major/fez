@@ -48,6 +48,24 @@ pub enum FezError {
         /// The protected unit that was refused.
         unit: String,
     },
+    /// A required target dependency (e.g. dnf5daemon) is absent or not activatable.
+    #[error("missing dependency {component} on target: {remediation}")]
+    DependencyMissing {
+        /// Human-facing name of the missing component (e.g. `dnf5daemon`).
+        component: String,
+        /// The D-Bus name that failed to activate (e.g. `org.rpm.dnf.v0`).
+        dbus_name: String,
+        /// Actionable guidance to install/enable the dependency and retry.
+        remediation: String,
+    },
+    /// A resolved transaction was refused by removal guardrails without `--force`.
+    #[error("refused: dangerous transaction ({reason}); use --force to override")]
+    DangerousTransaction {
+        /// Why the transaction was refused (protected package or cascade size).
+        reason: String,
+        /// Package names the resolved plan would remove.
+        removed: Vec<String>,
+    },
     /// The user declined a confirmation prompt.
     #[error("aborted by user")]
     Aborted,
@@ -98,6 +116,16 @@ pub const EXIT_CODES: &[ExitCodeDoc] = &[
         label: "protected-unit",
         meaning: "Protected unit refused without --force.",
     },
+    ExitCodeDoc {
+        code: 9,
+        label: "dependency-missing",
+        meaning: "Required target dependency (dnf5daemon) is absent or not activatable.",
+    },
+    ExitCodeDoc {
+        code: 10,
+        label: "dangerous-transaction",
+        meaning: "Resolved transaction refused by guardrails (protected package or cascade) without --force.",
+    },
 ];
 
 impl FezError {
@@ -113,6 +141,8 @@ impl FezError {
             FezError::Dbus { .. } => "dbus-error",
             FezError::NotFound(_) => "not-found",
             FezError::Protected { .. } => "protected-unit",
+            FezError::DependencyMissing { .. } => "dependency-missing",
+            FezError::DangerousTransaction { .. } => "dangerous-transaction",
             FezError::Aborted => "aborted",
         }
     }
@@ -124,6 +154,8 @@ impl FezError {
             FezError::Spawn { .. } | FezError::BridgeClosed => 6,
             FezError::Dbus { .. } => 7,
             FezError::Protected { .. } => 8,
+            FezError::DependencyMissing { .. } => 9,
+            FezError::DangerousTransaction { .. } => 10,
             _ => 1,
         }
     }
@@ -137,6 +169,12 @@ fn problem_code(p: &str) -> &'static str {
         "not-supported" => "not-supported",
         _ => "channel-problem",
     }
+}
+
+/// Whether a D-Bus error name indicates the service is not activatable (the
+/// signal that a required daemon like dnf5daemon is not installed/running).
+pub fn is_service_unknown(name: &str) -> bool {
+    name.contains("ServiceUnknown") || name.contains("NameHasNoOwner")
 }
 
 #[cfg(test)]
@@ -157,6 +195,17 @@ mod tests {
             }
             .exit_code(),
             FezError::Protected { unit: "u".into() }.exit_code(),
+            FezError::DependencyMissing {
+                component: "c".into(),
+                dbus_name: "n".into(),
+                remediation: "r".into(),
+            }
+            .exit_code(),
+            FezError::DangerousTransaction {
+                reason: "r".into(),
+                removed: vec![],
+            }
+            .exit_code(),
         ];
         for code in produced {
             if code != 1 {
@@ -197,6 +246,38 @@ mod tests {
         };
         assert_eq!(e.code(), "protected-unit");
         assert_eq!(e.exit_code(), 8);
+    }
+
+    #[test]
+    fn dependency_missing_maps_code_and_exit() {
+        let e = FezError::DependencyMissing {
+            component: "dnf5daemon".into(),
+            dbus_name: "org.rpm.dnf.v0".into(),
+            remediation: "install it".into(),
+        };
+        assert_eq!(e.code(), "dependency-missing");
+        assert_eq!(e.exit_code(), 9);
+    }
+
+    #[test]
+    fn dangerous_transaction_maps_code_and_exit() {
+        let e = FezError::DangerousTransaction {
+            reason: "removes protected package glibc".into(),
+            removed: vec!["glibc".into()],
+        };
+        assert_eq!(e.code(), "dangerous-transaction");
+        assert_eq!(e.exit_code(), 10);
+    }
+
+    #[test]
+    fn is_service_unknown_detects_activation_failure() {
+        assert!(is_service_unknown(
+            "org.freedesktop.DBus.Error.ServiceUnknown"
+        ));
+        assert!(is_service_unknown(
+            "org.freedesktop.DBus.Error.NameHasNoOwner"
+        ));
+        assert!(!is_service_unknown("org.freedesktop.systemd1.NoSuchUnit"));
     }
 
     #[test]
@@ -294,6 +375,23 @@ mod tests {
             FezError::Decode(serde_json::from_str::<i32>("x").unwrap_err())
                 .to_string()
                 .starts_with("protocol decode error")
+        );
+        assert_eq!(
+            FezError::DependencyMissing {
+                component: "dnf5daemon".into(),
+                dbus_name: "org.rpm.dnf.v0".into(),
+                remediation: "install it".into(),
+            }
+            .to_string(),
+            "missing dependency dnf5daemon on target: install it"
+        );
+        assert_eq!(
+            FezError::DangerousTransaction {
+                reason: "removes glibc".into(),
+                removed: vec!["glibc".into()],
+            }
+            .to_string(),
+            "refused: dangerous transaction (removes glibc); use --force to override"
         );
     }
 }
