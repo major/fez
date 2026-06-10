@@ -41,7 +41,7 @@ All enforced; do not regress:
 - `clippy -D warnings` and `cargo fmt --check`. Never add `#![deny(warnings)]` to source; that lint pressure lives in CI flags only.
 - **MSRV build** (`msrv` job): `cargo +1.92 check --all-targets` must pass. The pinned MSRV is a contract, not a declaration.
 - **Supply chain** (`security` job): `cargo deny check` (advisories/licenses/bans/sources via `deny.toml`) + `cargo machete` (unused deps). License allow-list is tight (Apache-2.0/MIT/Unicode-3.0/Unlicense); a dep with an unlisted license fails CI on purpose.
-- **CodeQL** (separate `codeql.yml`, build-mode `manual`): runs on push/PR to `main` and weekly. Results land in the Security tab. Not part of the `make check` gate (needs the GitHub CodeQL runner), so it cannot be reproduced locally.
+- **CodeQL** (separate `codeql.yml`, build-mode `none`): runs on push/PR to `main` and weekly. Rust's CodeQL extractor only supports buildless (`none`) extraction; `manual`/`autobuild` are rejected at init. Results land in the Security tab. Not part of the `make check` gate (needs the GitHub CodeQL runner), so it cannot be reproduced locally.
 
 CI actions are SHA-pinned. When bumping an action, pin the new commit SHA and keep the `# vX.Y.Z` comment accurate.
 
