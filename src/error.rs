@@ -53,6 +53,53 @@ pub enum FezError {
     Aborted,
 }
 
+/// One documented exit code in the agent-facing contract.
+pub struct ExitCodeDoc {
+    /// Numeric process exit code.
+    pub code: i32,
+    /// Stable label tying the code to its error category.
+    pub label: &'static str,
+    /// One-line human meaning.
+    pub meaning: &'static str,
+}
+
+/// The agent-facing exit-code contract. `fez guide` renders this; a test
+/// asserts every fatal code `exit_code()` can produce appears here. The
+/// `exit_code()` match below stays the compile-time-exhaustive source for
+/// per-variant mapping.
+pub const EXIT_CODES: &[ExitCodeDoc] = &[
+    ExitCodeDoc {
+        code: 1,
+        label: "general",
+        meaning: "Unclassified failure (I/O, decode, aborted).",
+    },
+    ExitCodeDoc {
+        code: 4,
+        label: "not-found",
+        meaning: "Target resource (e.g. a unit) does not exist.",
+    },
+    ExitCodeDoc {
+        code: 5,
+        label: "timeout",
+        meaning: "The bridge did not respond before the deadline.",
+    },
+    ExitCodeDoc {
+        code: 6,
+        label: "bridge",
+        meaning: "Bridge could not be spawned or the connection closed.",
+    },
+    ExitCodeDoc {
+        code: 7,
+        label: "dbus",
+        meaning: "A D-Bus call returned an error.",
+    },
+    ExitCodeDoc {
+        code: 8,
+        label: "protected-unit",
+        meaning: "Protected unit refused without --force.",
+    },
+];
+
 impl FezError {
     /// Stable machine-readable error code for this error.
     pub fn code(&self) -> &'static str {
@@ -95,6 +142,40 @@ fn problem_code(p: &str) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn exit_code_table_documents_every_nonone_code() {
+        use std::collections::HashSet;
+        let documented: HashSet<i32> = EXIT_CODES.iter().map(|e| e.code).collect();
+        let produced = [
+            FezError::NotFound("x".into()).exit_code(),
+            FezError::Timeout.exit_code(),
+            FezError::BridgeClosed.exit_code(),
+            FezError::Dbus {
+                name: "n".into(),
+                message: "m".into(),
+            }
+            .exit_code(),
+            FezError::Protected { unit: "u".into() }.exit_code(),
+        ];
+        for code in produced {
+            if code != 1 {
+                assert!(
+                    documented.contains(&code),
+                    "exit code {code} undocumented in EXIT_CODES"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn exit_code_table_is_nonempty_and_sorted() {
+        assert!(!EXIT_CODES.is_empty());
+        let codes: Vec<i32> = EXIT_CODES.iter().map(|e| e.code).collect();
+        let mut sorted = codes.clone();
+        sorted.sort_unstable();
+        assert_eq!(codes, sorted, "EXIT_CODES should be ascending by code");
+    }
 
     #[test]
     fn maps_problem_to_code() {
