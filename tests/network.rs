@@ -1,12 +1,8 @@
-use assert_cmd::Command as AssertCommand;
 use predicates::prelude::PredicateBooleanExt;
 use predicates::str::contains;
 
-fn fez_fake() -> AssertCommand {
-    let mut c = AssertCommand::cargo_bin("fez").unwrap();
-    c.env("FEZ_BRIDGE", env!("CARGO_BIN_EXE_fez-fake-bridge"));
-    c
-}
+mod common;
+use common::fez_fake;
 
 // `network list --json` shows the managed/physical devices and excludes the
 // unmanaged container veth by default. enp1s0/enp2s0 (ethernet) and lo

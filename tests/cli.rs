@@ -1,9 +1,7 @@
-use assert_cmd::Command;
 use predicates::str::contains;
 
-fn fez() -> Command {
-    Command::cargo_bin("fez").unwrap()
-}
+mod common;
+use common::fez_plain as fez;
 
 #[test]
 fn prints_version() {

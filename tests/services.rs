@@ -5,11 +5,8 @@ use predicates::prelude::PredicateBooleanExt;
 use predicates::str::contains;
 use serde_json::json;
 
-fn fez_fake() -> AssertCommand {
-    let mut c = AssertCommand::cargo_bin("fez").unwrap();
-    c.env("FEZ_BRIDGE", env!("CARGO_BIN_EXE_fez-fake-bridge"));
-    c
-}
+mod common;
+use common::{fez_fake, AuditLog};
 
 fn fez_without_bridge() -> AssertCommand {
     let mut c = AssertCommand::cargo_bin("fez").unwrap();
@@ -304,24 +301,20 @@ fn services_restart_has_no_reverse_hint() {
 
 #[test]
 fn mutation_writes_attempt_and_result_audit_records() {
-    let path = std::env::temp_dir().join(format!("fez-audit-it-{}.jsonl", std::process::id()));
-    let _ = std::fs::remove_file(&path);
+    let audit = AuditLog::new("audit-it");
     fez_fake()
-        .env("FEZ_AUDIT", format!("file:{}", path.display()))
+        .env("FEZ_AUDIT", audit.env_value())
         .args(["services", "start", "chronyd.service", "--json"])
         .assert()
         .success();
-    let body = std::fs::read_to_string(&path).unwrap();
-    let lines: Vec<&str> = body.lines().collect();
-    assert_eq!(lines.len(), 2, "expected attempt + result records");
-    let attempt: serde_json::Value = serde_json::from_str(lines[0]).unwrap();
-    let result: serde_json::Value = serde_json::from_str(lines[1]).unwrap();
+    let records = audit.records();
+    assert_eq!(records.len(), 2, "expected attempt + result records");
+    let (attempt, result) = (&records[0], &records[1]);
     assert_eq!(attempt["result"], "attempt");
     assert_eq!(result["result"], "ok");
     assert_eq!(attempt["correlation_id"], result["correlation_id"]);
     assert_eq!(result["operation"], "start");
     assert_eq!(result["unit"], "chronyd.service");
-    let _ = std::fs::remove_file(&path);
 }
 
 #[test]
