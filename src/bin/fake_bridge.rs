@@ -322,7 +322,10 @@ const FW_CONFIG_PATH: &str = "/org/fedoraproject/FirewallD1/config";
 /// its per-zone children), mirroring how the NM arm dispatches by path rather
 /// than method name. Seeds a `public`/`internal`/`drop` topology where runtime
 /// `public` carries `9090/tcp` that permanent `public` lacks, so drift is
-/// non-empty out of the box (`status` reports `+port 9090/tcp`). `FEZ_FAKE_PANIC`
+/// non-empty out of the box (`status` reports `+port 9090/tcp`). Runtime
+/// `public` masquerade is likewise seeded on while permanent is off, so
+/// masquerade drift (`+masquerade`) is non-empty out of the box alongside
+/// `9090/tcp`. `FEZ_FAKE_PANIC`
 /// starts panic mode on; `FEZ_FAKE_NO_FIREWALLD` makes every call report the
 /// service absent (ServiceUnknown).
 fn fw_reply(path: &str, method: &str, args: &[Value], id: &Value) -> Value {
@@ -338,6 +341,9 @@ fn fw_reply(path: &str, method: &str, args: &[Value], id: &Value) -> Value {
         return match method {
             "getServices" => json!({"reply":[[["ssh", "dhcpv6-client"]]],"id": id}),
             "getPorts" => json!({"reply":[[[]]],"id": id}),
+            // Permanent `public` masquerade is off; runtime is on, so masquerade
+            // drift is non-empty out of the box alongside the 9090/tcp port.
+            "getMasquerade" => json!({"reply":[[false]],"id": id}),
             other => fw_unknown(other, id),
         };
     }
@@ -377,8 +383,18 @@ fn fw_reply(path: &str, method: &str, args: &[Value], id: &Value) -> Value {
             }
         }
         "getSources" => json!({"reply":[[[]]],"id": id}),
+        // Runtime per-zone masquerade. `public` is seeded on (permanent is off),
+        // so masquerade drift is non-empty out of the box.
+        "getMasquerade" => {
+            if zone == "public" {
+                json!({"reply":[[true]],"id": id})
+            } else {
+                json!({"reply":[[false]],"id": id})
+            }
+        }
         // Mutations return the affected zone name (or void for reload/confirm).
-        "addService" | "removeService" | "addPort" | "removePort" => {
+        "addService" | "removeService" | "addPort" | "removePort" | "addMasquerade"
+        | "removeMasquerade" => {
             json!({"reply":[[zone]],"id": id})
         }
         "setDefaultZone" | "reload" | "runtimeToPermanent" | "enablePanicMode"
