@@ -139,6 +139,7 @@ resource "aws_instance" "e2e" {
   vpc_security_group_ids = [aws_security_group.e2e.id]
   user_data = templatefile("${path.module}/user_data.sh", {
     login_user = local.ssh_user
+    os_family  = var.os == "rhel10" ? "rhel" : "fedora"
   })
   tags = merge(local.tags, { Name = "fez-e2e" })
 

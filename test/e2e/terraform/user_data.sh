@@ -12,11 +12,33 @@ set -eux
 #
 # This file is rendered by Terraform's templatefile(): a single-$ $${login_user}
 # is substituted with the template variable's value, while a double-$$
-# $${login_user} renders as the literal text. (Both tokens here are escaped as
-# $$ so this comment is not itself interpolated.) The dnf/sudoers code below
-# uses the single-$ form so Terraform fills in the login user; there are no
-# runtime shell $${VAR} expansions that need escaping.
-dnf -y install cockpit-bridge cockpit-system dnf5daemon-server firewalld
+# $${login_user} renders as the literal text. (Tokens that should reach the
+# guest as literal shell are escaped as $$.) The interpolated values used below
+# are ${login_user} and ${os_family}; runtime shell $$VAR expansions are escaped
+# so Terraform does not try to resolve them.
+
+# Always-present surface: bridge, superuser bridges, and firewalld. These exist
+# on every target, so a failure here is a real provisioning fault and SHOULD
+# abort (set -e) and fail the host.
+dnf -y install cockpit-bridge cockpit-system firewalld
+
+# packages backend (dnf5daemon-server) is OPTIONAL and OS-dependent:
+#   - Fedora 41+ ships it; we hard-require it so a silent install regression
+#     surfaces as a real failure (host never readies -> infra fail), not a
+#     false "skip" that would hide a broken packages capability.
+#   - RHEL 10 does NOT ship it: RHEL 10 uses dnf4 as the system manager and
+#     dnf5/dnf5daemon target RHEL 11 (upstream dnf5 PR #780 explicitly blocks
+#     dnf5 from replacing dnf on RHEL 10). The package is absent from
+#     BaseOS/AppStream, so installing it best-effort lets the host still ready
+#     and run services/network/firewall; `fez packages` then returns exit 9
+#     (dependency-missing) and the capability harness records "skip", not
+#     "fail" (issue #50).
+if [ "${os_family}" = "rhel" ]; then
+  dnf -y install dnf5daemon-server || \
+    echo "fez-e2e: dnf5daemon-server unavailable on ${os_family}; packages capability will be skipped" >&2
+else
+  dnf -y install dnf5daemon-server
+fi
 
 # firewalld is not enabled by default on cloud images; the firewall capability
 # needs the daemon running to exercise reads + runtime mutations.
