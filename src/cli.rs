@@ -319,6 +319,18 @@ pub enum FirewallAction {
         #[arg(value_parser = ["on", "off"])]
         state: String,
     },
+    /// Enable or disable masquerade (SNAT) for a zone (runtime only; confirm to persist).
+    Masquerade {
+        /// Masquerade state to set.
+        #[arg(value_parser = ["on", "off"])]
+        state: String,
+        /// Zone to change (defaults to the default zone).
+        #[arg(long)]
+        zone: Option<String>,
+        /// Auto-revert the runtime rule after this many seconds (ignored for `off`).
+        #[arg(long)]
+        timeout: Option<u32>,
+    },
 }
 
 #[cfg(test)]
@@ -354,5 +366,39 @@ mod tests {
             cli(&["fez", "--host", "fedora@box.example", "services", "list"]).resolved_host(),
             "fedora@box.example"
         );
+    }
+
+    #[test]
+    fn firewall_masquerade_parses_state_zone_timeout() {
+        let c = cli(&[
+            "fez",
+            "firewall",
+            "masquerade",
+            "on",
+            "--zone",
+            "public",
+            "--timeout",
+            "60",
+        ]);
+        match c.command {
+            TopCommand::Firewall {
+                action:
+                    FirewallAction::Masquerade {
+                        state,
+                        zone,
+                        timeout,
+                    },
+            } => {
+                assert_eq!(state, "on");
+                assert_eq!(zone.as_deref(), Some("public"));
+                assert_eq!(timeout, Some(60));
+            }
+            other => panic!("unexpected parse: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn firewall_masquerade_rejects_bad_state() {
+        assert!(Cli::try_parse_from(["fez", "firewall", "masquerade", "maybe"]).is_err());
     }
 }
