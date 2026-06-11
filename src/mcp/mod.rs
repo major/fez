@@ -521,6 +521,11 @@ mod tests {
         serde_json::to_value(handle_line(line).expect("response")).unwrap()
     }
 
+    fn expanded_call(line: &str) -> Value {
+        let context = ServerContext::new("localhost".to_string(), true);
+        serde_json::to_value(handle_line_with_context(line, &context).expect("response")).unwrap()
+    }
+
     #[test]
     fn initialize_returns_server_info_and_echoes_version() {
         let v = call(
@@ -585,6 +590,57 @@ mod tests {
     fn unknown_method_is_method_not_found() {
         let v = call(r#"{"jsonrpc":"2.0","id":6,"method":"frobnicate"}"#);
         assert_eq!(v["error"]["code"], -32601);
+    }
+
+    #[test]
+    fn unknown_expanded_tool_is_invalid_params() {
+        let v = expanded_call(
+            r#"{"jsonrpc":"2.0","id":7,"method":"tools/call","params":{"name":"not_a_tool","arguments":{}}}"#,
+        );
+        assert_eq!(v["error"]["code"], -32602);
+        assert_eq!(v["error"]["message"], "unknown tool: not_a_tool");
+    }
+
+    #[test]
+    fn input_schema_includes_default_and_choices() {
+        let descriptor = capability::Descriptor {
+            id: "test.input".into(),
+            summary: "test".into(),
+            long: "test".into(),
+            privileged: false,
+            output_kind: "Test".into(),
+            inputs: vec![],
+            flags: vec![],
+            examples: vec!["fez test".into()],
+        };
+        let input = capability::Input {
+            name: "mode".into(),
+            ty: "string".into(),
+            required: false,
+            default: Some("safe".into()),
+            choices: Some(vec!["safe".into(), "fast".into()]),
+        };
+        assert_eq!(
+            input_schema(&descriptor, &input),
+            json!({"type":"string","default":"safe","enum":["safe","fast"]})
+        );
+    }
+
+    #[test]
+    fn flag_schema_includes_choices() {
+        let flag = capability::FlagSchema {
+            name: "--mode".into(),
+            ty: "string".into(),
+            description: "Mode to use.".into(),
+            repeatable: false,
+            default: None,
+            choices: Some(vec!["safe".into(), "fast".into()]),
+            conflicts_with: vec![],
+        };
+        assert_eq!(
+            flag_schema(&flag),
+            json!({"type":"string","description":"Mode to use.","enum":["safe","fast"]})
+        );
     }
 
     #[test]
