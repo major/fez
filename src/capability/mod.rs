@@ -40,6 +40,47 @@ pub struct Descriptor {
     pub examples: Vec<String>,
 }
 
+impl Descriptor {
+    /// Render the descriptor as a complete plain-text block for `fez describe`
+    /// (no `--json`).
+    ///
+    /// Top-level help promises `describe` prints inputs, output kind, flags,
+    /// and privileged status; this carries the same essential metadata the
+    /// JSON form does so an agent reading text output can act safely without
+    /// switching to JSON (issue #62).
+    #[must_use]
+    pub fn render_text(&self) -> String {
+        let mut s = format!("{}: {}\n\n{}\n\n", self.id, self.summary, self.long);
+        s.push_str(&format!("privileged: {}\n", self.privileged));
+        s.push_str(&format!("output: {}\n", self.output_kind));
+
+        if !self.inputs.is_empty() {
+            s.push_str("\ninputs:\n");
+            for i in &self.inputs {
+                let req = if i.required { "required" } else { "optional" };
+                s.push_str(&format!("  {}: {} {}", i.name, i.ty, req));
+                if let Some(default) = &i.default {
+                    s.push_str(&format!(" (default: {default})"));
+                }
+                s.push('\n');
+            }
+        }
+
+        if !self.flags.is_empty() {
+            s.push_str("\nflags:\n");
+            for f in &self.flags {
+                s.push_str(&format!("  {f}\n"));
+            }
+        }
+
+        s.push_str("\nexamples:\n");
+        for ex in &self.examples {
+            s.push_str(&format!("  {ex}\n"));
+        }
+        s
+    }
+}
+
 fn input(name: &str, required: bool) -> Input {
     Input {
         name: name.into(),
@@ -612,6 +653,49 @@ mod tests {
                 d.examples.iter().any(|e| e.contains("--now")),
                 "{id}: needs --now example"
             );
+        }
+    }
+
+    #[test]
+    fn render_text_includes_all_metadata() {
+        let d = find("services.start").unwrap();
+        let text = d.render_text();
+        assert!(text.contains("services.start: Start a unit"));
+        assert!(text.contains("privileged: true"));
+        assert!(text.contains("output: ServiceMutation"));
+        assert!(text.contains("inputs:"));
+        assert!(text.contains("unit: string required"));
+        assert!(text.contains("flags:"));
+        assert!(text.contains("--force"));
+        assert!(text.contains("examples:"));
+        assert!(text.contains("fez services start sshd.service --json"));
+    }
+
+    #[test]
+    fn render_text_marks_readonly_not_privileged() {
+        let d = find("services.list").unwrap();
+        let text = d.render_text();
+        assert!(text.contains("privileged: false"));
+        assert!(text.contains("output: ServiceList"));
+    }
+
+    #[test]
+    fn render_text_optional_input_shows_default() {
+        // Find any descriptor with an optional input carrying a default, and
+        // confirm the rendered line annotates it. If none exists this is a
+        // no-op (the format is still covered by the required-input case).
+        for d in registry() {
+            for i in &d.inputs {
+                if let Some(default) = &i.default {
+                    let text = d.render_text();
+                    assert!(
+                        text.contains(&format!("(default: {default})")),
+                        "{}: optional input {} default not rendered",
+                        d.id,
+                        i.name
+                    );
+                }
+            }
         }
     }
 }
