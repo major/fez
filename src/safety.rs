@@ -171,6 +171,26 @@ pub fn check_firewall_panic_on(force: bool) -> Result<()> {
     Ok(())
 }
 
+/// Refuse to disable masquerade without `--force`.
+///
+/// Disabling masquerade drops SNAT for forwarded traffic, which can silently
+/// break a gateway host's forwarded clients. It does not touch the fez
+/// session's own input path (that is not forwarded), so this is a flat
+/// deliberate-action gate, not a session-criticality check. Enabling
+/// masquerade is unguarded.
+///
+/// # Errors
+///
+/// Returns [`FezError::Protected`] (exit 8) when `force` is false.
+pub fn check_firewall_masquerade_off(force: bool) -> Result<()> {
+    if !force {
+        return Err(FezError::Protected {
+            unit: "firewall masquerade disable".into(),
+        });
+    }
+    Ok(())
+}
+
 /// Refuse a reload that would discard uncommitted runtime drift, unless `force`
 /// is set. With no drift the reload is harmless and always allowed.
 ///
@@ -343,6 +363,19 @@ mod tests {
     #[test]
     fn firewall_allows_panic_on_with_force() {
         assert!(check_firewall_panic_on(true).is_ok());
+    }
+
+    #[test]
+    fn firewall_masquerade_off_requires_force() {
+        assert_eq!(
+            check_firewall_masquerade_off(false).unwrap_err().code(),
+            "protected-unit"
+        );
+    }
+
+    #[test]
+    fn firewall_masquerade_off_allowed_with_force() {
+        assert!(check_firewall_masquerade_off(true).is_ok());
     }
 
     #[test]
