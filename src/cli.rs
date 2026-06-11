@@ -98,6 +98,12 @@ pub enum TopCommand {
         #[command(subcommand)]
         action: NetworkAction,
     },
+    /// Manage the firewall (via firewalld).
+    Firewall {
+        /// The `firewall` action to perform.
+        #[command(subcommand)]
+        action: FirewallAction,
+    },
     /// Run as an MCP server (JSON-RPC 2.0 over stdio): a frugal gateway exposing
     /// list_capabilities, describe_capability, and invoke meta-tools.
     Mcp,
@@ -243,6 +249,75 @@ pub enum NetworkAction {
     Show {
         /// Device interface name to inspect (e.g. `enp1s0`).
         device: String,
+    },
+}
+
+/// Actions under the `firewall` subcommand.
+#[derive(Subcommand, Debug)]
+pub enum FirewallAction {
+    /// Show firewall state, default zone, panic mode, and pending changes.
+    Status,
+    /// List zones with a per-zone summary.
+    List,
+    /// Show one zone's full detail.
+    Show {
+        /// Zone to inspect (e.g. `public`).
+        zone: String,
+    },
+    /// List the service catalog firewalld knows about.
+    Services,
+    /// Add a service to a zone (runtime only; confirm to persist).
+    AddService {
+        /// Service name to add (e.g. `http`).
+        service: String,
+        /// Zone to add to (defaults to the default zone).
+        #[arg(long)]
+        zone: Option<String>,
+        /// Auto-revert the runtime rule after this many seconds.
+        #[arg(long)]
+        timeout: Option<u32>,
+    },
+    /// Remove a service from a zone (runtime only; confirm to persist).
+    RemoveService {
+        /// Service name to remove.
+        service: String,
+        /// Zone to remove from (defaults to the default zone).
+        #[arg(long)]
+        zone: Option<String>,
+    },
+    /// Add a port to a zone (runtime only; confirm to persist).
+    AddPort {
+        /// Port spec as `port/proto` (e.g. `8080/tcp`).
+        port: String,
+        /// Zone to add to (defaults to the default zone).
+        #[arg(long)]
+        zone: Option<String>,
+        /// Auto-revert the runtime rule after this many seconds.
+        #[arg(long)]
+        timeout: Option<u32>,
+    },
+    /// Remove a port from a zone (runtime only; confirm to persist).
+    RemovePort {
+        /// Port spec as `port/proto` (e.g. `8080/tcp`).
+        port: String,
+        /// Zone to remove from (defaults to the default zone).
+        #[arg(long)]
+        zone: Option<String>,
+    },
+    /// Set the default zone (gated: requires --force).
+    SetDefaultZone {
+        /// Zone to make default.
+        zone: String,
+    },
+    /// Reload permanent config into runtime (discards uncommitted runtime changes).
+    Reload,
+    /// Persist the current runtime config to permanent (runtimeToPermanent).
+    Confirm,
+    /// Toggle panic mode (drops all traffic when on).
+    Panic {
+        /// Panic state to set.
+        #[arg(value_parser = ["on", "off"])]
+        state: String,
     },
 }
 
