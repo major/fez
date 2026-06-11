@@ -96,6 +96,48 @@ fn describe_enable_lists_now_flag() {
 }
 
 #[test]
+fn describe_json_includes_typed_flag_schema() {
+    fez()
+        .args(["describe", "services.logs", "--json"])
+        .assert()
+        .success()
+        .stdout(contains("\"flag_schema\""))
+        .stdout(contains("\"name\":\"--lines\""))
+        .stdout(contains("\"type\":\"integer\""))
+        .stdout(contains("\"name\":\"--follow\""))
+        .stdout(contains("\"type\":\"boolean\""));
+}
+
+#[test]
+fn describe_json_marks_repeatable_and_conflicting_flags() {
+    fez()
+        .args(["describe", "packages.list", "--json"])
+        .assert()
+        .success()
+        .stdout(contains("\"name\":\"--repo\""))
+        .stdout(contains("\"repeatable\":true"))
+        .stdout(contains("\"name\":\"--installed\""))
+        .stdout(contains("\"conflicts_with\":[\"--available\"]"));
+
+    fez()
+        .args(["describe", "packages.repolist", "--json"])
+        .assert()
+        .success()
+        .stdout(contains("\"name\":\"--enabled\""))
+        .stdout(contains("\"conflicts_with\":[\"--disabled\",\"--all\"]"));
+}
+
+#[test]
+fn describe_json_includes_input_choices() {
+    fez()
+        .args(["describe", "firewall.panic", "--json"])
+        .assert()
+        .success()
+        .stdout(contains("\"name\":\"state\""))
+        .stdout(contains("\"choices\":[\"on\",\"off\"]"));
+}
+
+#[test]
 fn services_help_lists_mutation_verbs() {
     fez()
         .args(["services", "--help"])
