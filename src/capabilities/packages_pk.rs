@@ -155,6 +155,453 @@ fn check_stream(signals: &[(String, Vec<Value>)]) -> Result<()> {
     Ok(())
 }
 
+/// Column order for PackageKit list/search payloads, identical to the
+/// dnf5daemon backend's `PKG_COLUMNS` so the two schemas line up, except
+/// `install_size` is always JSON `null` here (PackageKit reports no size).
+const PK_COLUMNS: &[&str] = &["name", "evr", "arch", "repo_id", "install_size", "summary"];
+
+/// Column order for the PackageKit `RepoList` payload, matching the dnf
+/// backend's `REPO_COLUMNS`.
+const PK_REPO_COLUMNS: &[&str] = &["id", "name", "enabled"];
+
+/// Open an (optionally privileged) channel to the PackageKit bus name.
+///
+/// Reads use an unprivileged channel; mutations pass `privileged = true` so the
+/// bridge escalates to root (which bypasses PackageKit's `auth_admin` polkit
+/// actions).
+///
+/// # Errors
+///
+/// Propagates transport / channel-open errors.
+fn open_pk(client: &mut BridgeClient, privileged: bool) -> Result<String> {
+    if privileged {
+        client.dbus_open_privileged(PK_NAME)
+    } else {
+        client.dbus_open(PK_NAME)
+    }
+}
+
+/// Create a fresh PackageKit transaction object on `channel`.
+///
+/// Each PackageKit transaction is single-use (it is gone once `Finished`
+/// fires), so callers create one per operation. A ServiceUnknown D-Bus error
+/// here means PackageKit itself is absent; the caller maps that to
+/// dependency-missing.
+///
+/// # Errors
+///
+/// Propagates the `CreateTransaction` call error (including ServiceUnknown when
+/// PackageKit is not installed).
+fn new_tx(client: &mut BridgeClient, channel: &str) -> Result<String> {
+    let out = client.dbus_call(channel, PK_PATH, PK_IFACE, "CreateTransaction", json!([]))?;
+    Ok(out
+        .as_array()
+        .and_then(|a| a.first())
+        .or(Some(&out))
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_string())
+}
+
+/// The envelope hint every PackageKit payload carries, flagging the degraded
+/// schema (no sizes) and the active backend.
+fn pk_hints() -> Option<Value> {
+    Some(json!({
+        "backend": "packagekit",
+        "note": "Running via the PackageKit fallback backend; install/download sizes are unavailable on this backend.",
+    }))
+}
+
+/// One positional row aligned to [`PK_COLUMNS`]; `install_size` is `null`.
+fn row(p: &PkPackage) -> Value {
+    json!([p.name, p.version, p.arch, p.repo(), Value::Null, p.summary,])
+}
+
+/// Human-readable NAME/VERSION/ARCH/REPO table for list output.
+fn human_table(pkgs: &[&PkPackage]) -> String {
+    let mut s = format!(
+        "{:<24} {:<20} {:<10} {}\n",
+        "NAME", "VERSION", "ARCH", "REPO"
+    );
+    for p in pkgs {
+        s.push_str(&format!(
+            "{:<24} {:<20} {:<10} {}\n",
+            p.name,
+            p.version,
+            p.arch,
+            p.repo()
+        ));
+    }
+    s
+}
+
+/// `packages list`: `GetPackages` with the INSTALLED or NEWEST filter.
+///
+/// # Errors
+///
+/// Propagates transport, transaction, or PackageKit stream errors.
+pub fn list(client: &mut BridgeClient, available: bool, repos: &[String]) -> Result<PkView> {
+    let channel = open_pk(client, false)?;
+    let tx = new_tx(client, &channel)?;
+    let filter = if available {
+        FILTER_NEWEST
+    } else {
+        FILTER_INSTALLED
+    };
+    let signals =
+        client.dbus_call_collect(&channel, &tx, TX_IFACE, "GetPackages", json!([filter]))?;
+    check_stream(&signals)?;
+    let pkgs = packages_from(&signals);
+    let filtered: Vec<&PkPackage> = pkgs
+        .iter()
+        .filter(|p| repos.is_empty() || repos.iter().any(|r| r == p.repo()))
+        .collect();
+    let rows: Vec<Value> = filtered.iter().map(|p| row(p)).collect();
+    let mut data = crate::envelope::table_data(PK_COLUMNS, rows);
+    data["scope"] = json!(if available { "available" } else { "installed" });
+    data["repos"] = json!(repos);
+    data["backend"] = json!("packagekit");
+    let human = human_table(&filtered);
+    Ok(PkView {
+        kind: "PackageList",
+        data,
+        human,
+        hints: pk_hints(),
+    })
+}
+
+/// `packages info <spec>`: `Resolve` the spec and render the first match.
+///
+/// # Errors
+///
+/// Returns [`FezError::NotFound`] when the spec resolves to nothing, or
+/// propagates transport / stream errors.
+pub fn info(client: &mut BridgeClient, spec: &str) -> Result<PkView> {
+    let channel = open_pk(client, false)?;
+    let tx = new_tx(client, &channel)?;
+    let signals = client.dbus_call_collect(
+        &channel,
+        &tx,
+        TX_IFACE,
+        "Resolve",
+        json!([FILTER_NEWEST, [spec]]),
+    )?;
+    check_stream(&signals)?;
+    let pkgs = packages_from(&signals);
+    let p = pkgs
+        .first()
+        .ok_or_else(|| FezError::NotFound(spec.to_string()))?;
+    let data = json!({
+        "name": p.name,
+        "evr": p.version,
+        "arch": p.arch,
+        "repo_id": p.repo(),
+        "install_size": Value::Null,
+        "summary": p.summary,
+        "backend": "packagekit",
+    });
+    let human = format!(
+        "Name        : {}\nVersion     : {}\nArch        : {}\nRepo        : {}\nInstall size: (unavailable)\nSummary     : {}\n",
+        p.name,
+        p.version,
+        p.arch,
+        p.repo(),
+        p.summary,
+    );
+    Ok(PkView {
+        kind: "PackageInfo",
+        data,
+        human,
+        hints: pk_hints(),
+    })
+}
+
+/// `packages search <pattern>`: `SearchNames` over available packages.
+///
+/// # Errors
+///
+/// Propagates transport, transaction, or PackageKit stream errors.
+pub fn search(client: &mut BridgeClient, pattern: &str) -> Result<PkView> {
+    let channel = open_pk(client, false)?;
+    let tx = new_tx(client, &channel)?;
+    let signals = client.dbus_call_collect(
+        &channel,
+        &tx,
+        TX_IFACE,
+        "SearchNames",
+        json!([FILTER_NEWEST, [pattern]]),
+    )?;
+    check_stream(&signals)?;
+    let pkgs = packages_from(&signals);
+    let refs: Vec<&PkPackage> = pkgs.iter().collect();
+    let rows: Vec<Value> = refs.iter().map(|p| row(p)).collect();
+    let mut data = crate::envelope::table_data(PK_COLUMNS, rows);
+    data["pattern"] = json!(pattern);
+    data["backend"] = json!("packagekit");
+    let mut human = String::new();
+    for p in &refs {
+        human.push_str(&format!("{} - {}\n", p.name, p.summary));
+    }
+    Ok(PkView {
+        kind: "PackageSearch",
+        data,
+        human,
+        hints: pk_hints(),
+    })
+}
+
+/// `packages check-update`: `GetUpdates` reports the available upgrades.
+///
+/// # Errors
+///
+/// Propagates transport, transaction, or PackageKit stream errors.
+pub fn check_update(client: &mut BridgeClient) -> Result<PkView> {
+    let channel = open_pk(client, false)?;
+    let tx = new_tx(client, &channel)?;
+    let signals =
+        client.dbus_call_collect(&channel, &tx, TX_IFACE, "GetUpdates", json!([FILTER_NONE]))?;
+    check_stream(&signals)?;
+    let pkgs = packages_from(&signals);
+    let refs: Vec<&PkPackage> = pkgs.iter().collect();
+    let rows: Vec<Value> = refs.iter().map(|p| row(p)).collect();
+    let mut data = crate::envelope::table_data(PK_COLUMNS, rows);
+    data["backend"] = json!("packagekit");
+    let mut human = format!("{:<24} {:<20} {}\n", "NAME", "VERSION", "REPO");
+    for p in &refs {
+        human.push_str(&format!("{:<24} {:<20} {}\n", p.name, p.version, p.repo()));
+    }
+    Ok(PkView {
+        kind: "PackageUpdates",
+        data,
+        human,
+        hints: pk_hints(),
+    })
+}
+
+/// `packages repolist`: `GetRepoList` plus the enabled/disabled/all filter.
+///
+/// `accepts` mirrors the dnf backend's `RepoFilter::accepts`: `enabled` keeps
+/// only enabled repos, `disabled` only disabled, `all` keeps everything.
+///
+/// # Errors
+///
+/// Propagates transport, transaction, or PackageKit stream errors.
+pub fn repolist(client: &mut BridgeClient, accepts: impl Fn(bool) -> bool) -> Result<PkView> {
+    let channel = open_pk(client, false)?;
+    let tx = new_tx(client, &channel)?;
+    let signals =
+        client.dbus_call_collect(&channel, &tx, TX_IFACE, "GetRepoList", json!([FILTER_NONE]))?;
+    check_stream(&signals)?;
+    let mut rows = Vec::new();
+    let mut human = format!("{:<24} {:<10} {}\n", "REPO ID", "ENABLED", "NAME");
+    for (member, args) in &signals {
+        if member != "RepoDetail" {
+            continue;
+        }
+        let id = args.first().and_then(Value::as_str).unwrap_or("");
+        let name = args.get(1).and_then(Value::as_str).unwrap_or("");
+        let enabled = args.get(2).and_then(Value::as_bool).unwrap_or(false);
+        if !accepts(enabled) {
+            continue;
+        }
+        human.push_str(&format!("{id:<24} {enabled:<10} {name}\n"));
+        rows.push(json!([id, name, enabled]));
+    }
+    let mut data = crate::envelope::table_data(PK_REPO_COLUMNS, rows);
+    data["backend"] = json!("packagekit");
+    Ok(PkView {
+        kind: "RepoList",
+        data,
+        human,
+        hints: pk_hints(),
+    })
+}
+
+/// A mutation plan parsed from a SIMULATE transaction's `Package` signals,
+/// bucketed by the `info` enum (mirrors the dnf backend's `ResolvedPlan`).
+struct PkPlan {
+    install: Vec<String>,
+    remove: Vec<String>,
+    upgrade: Vec<String>,
+    downgrade: Vec<String>,
+    remove_names: Vec<String>,
+}
+
+/// Bucket a SIMULATE stream's packages by their `info` enum into a [`PkPlan`].
+fn plan_from(signals: &[(String, Vec<Value>)]) -> PkPlan {
+    let mut plan = PkPlan {
+        install: vec![],
+        remove: vec![],
+        upgrade: vec![],
+        downgrade: vec![],
+        remove_names: vec![],
+    };
+    for p in packages_from(signals) {
+        match p.info {
+            INFO_INSTALLING => plan.install.push(p.label()),
+            INFO_UPDATING => plan.upgrade.push(p.label()),
+            INFO_DOWNGRADING => plan.downgrade.push(p.label()),
+            INFO_REMOVING | INFO_OBSOLETING => {
+                plan.remove_names.push(p.name.clone());
+                plan.remove.push(p.label());
+            }
+            _ => {}
+        }
+    }
+    plan
+}
+
+/// The PackageKit method name and argument array for each mutation verb.
+fn method_for(verb: &str, flags: u64, ids: &[String]) -> (&'static str, Value) {
+    match verb {
+        "install" => ("InstallPackages", json!([flags, ids])),
+        "upgrade" => ("UpdatePackages", json!([flags, ids])),
+        // RemovePackages(flags, ids, allow_deps=true, autoremove=false)
+        "remove" => ("RemovePackages", json!([flags, ids, true, false])),
+        other => unreachable!("unknown mutation verb {other}"),
+    }
+}
+
+/// Resolve specs to full package_ids (mutations need them, not bare names).
+///
+/// # Errors
+///
+/// Propagates transport / stream errors. An empty resolve yields an empty id
+/// list, which the caller surfaces as not-found.
+fn resolve_ids(client: &mut BridgeClient, channel: &str, specs: &[String]) -> Result<Vec<String>> {
+    let tx = new_tx(client, channel)?;
+    let signals = client.dbus_call_collect(
+        channel,
+        &tx,
+        TX_IFACE,
+        "Resolve",
+        json!([FILTER_NEWEST, specs]),
+    )?;
+    check_stream(&signals)?;
+    Ok(packages_from(&signals)
+        .iter()
+        .map(PkPackage::package_id)
+        .collect())
+}
+
+/// `packages install|remove|upgrade` over PackageKit.
+///
+/// Opens a privileged channel (cockpit escalates the bridge to root, which
+/// bypasses PackageKit's `auth_admin` polkit actions), SIMULATEs to build a
+/// plan, applies removal guardrails, audits, and executes. Honors `dry_run` and
+/// `force` exactly like the dnf5daemon backend.
+///
+/// # Errors
+///
+/// Returns [`FezError::NotFound`] when the specs resolve to nothing,
+/// [`FezError::DangerousTransaction`] (exit 8) when a removal guardrail fires
+/// without `force`, [`FezError::AccessDenied`] (exit 11) when PackageKit denies
+/// the operation, or propagates transport / stream errors.
+pub fn mutate(
+    client: &mut BridgeClient,
+    verb: &str,
+    specs: &[String],
+    host: &str,
+    dry_run: bool,
+    force: bool,
+) -> Result<PkView> {
+    let channel = open_pk(client, true)?;
+    let ids = resolve_ids(client, &channel, specs)?;
+    if ids.is_empty() {
+        return Err(FezError::NotFound(specs.join(", ")));
+    }
+
+    // SIMULATE to build the plan (separate single-use transaction).
+    let sim_tx = new_tx(client, &channel)?;
+    let (m, args) = method_for(verb, TF_SIMULATE, &ids);
+    let sim = client.dbus_call_collect(&channel, &sim_tx, TX_IFACE, m, args)?;
+    check_stream(&sim)?;
+    let plan = plan_from(&sim);
+
+    if dry_run {
+        return Ok(plan_view(verb, host, specs, &plan, true));
+    }
+    crate::safety::check_removal_plan(&plan.remove_names, force)?;
+
+    let sink = crate::audit::sink_from_env();
+    let audit = crate::audit::AuditContext::new(
+        &crate::audit::actor(),
+        host,
+        verb,
+        &specs.join(","),
+        &crate::audit::correlation_id(),
+    );
+    sink.write(&audit.record(crate::audit::Outcome::Attempt));
+    let (m, args) = method_for(verb, TF_NONE, &ids);
+    let exec_tx = new_tx(client, &channel)?;
+    let exec = client
+        .dbus_call_collect(&channel, &exec_tx, TX_IFACE, m, args)
+        .and_then(|s| check_stream(&s));
+    match &exec {
+        Ok(()) => sink.write(&audit.record(crate::audit::Outcome::Ok)),
+        Err(e) => sink.write(&audit.record(crate::audit::Outcome::Error(e.to_string()))),
+    }
+    exec?;
+    Ok(plan_view(verb, host, specs, &plan, false))
+}
+
+/// Build a [`PkView`] for a plan (dry-run preview or executed mutation),
+/// schema-compatible with the dnf5daemon backend's plan payload but with a
+/// `null` `install_size_total` and a `"backend":"packagekit"` marker.
+fn plan_view(verb: &str, host: &str, specs: &[String], plan: &PkPlan, dry_run: bool) -> PkView {
+    let kind = if dry_run {
+        "PackagePlan"
+    } else {
+        "PackageMutation"
+    };
+    let data = json!({
+        "operation": verb,
+        "specs": specs,
+        "dry_run": dry_run,
+        "backend": "packagekit",
+        "install": plan.install,
+        "remove": plan.remove,
+        "upgrade": plan.upgrade,
+        "downgrade": plan.downgrade,
+        "install_size_total": Value::Null,
+        "counts": {
+            "install": plan.install.len(),
+            "remove": plan.remove.len(),
+            "upgrade": plan.upgrade.len(),
+            "downgrade": plan.downgrade.len(),
+        },
+    });
+    let human = if dry_run {
+        format!(
+            "DRY-RUN: {} {} on {} would install {}, remove {}, upgrade {}, downgrade {} package(s)\n",
+            verb,
+            specs.join(" "),
+            host,
+            plan.install.len(),
+            plan.remove.len(),
+            plan.upgrade.len(),
+            plan.downgrade.len(),
+        )
+    } else {
+        format!(
+            "{} {} on {}: installed {}, removed {}, upgraded {}, downgraded {} package(s)\n",
+            verb,
+            specs.join(" "),
+            host,
+            plan.install.len(),
+            plan.remove.len(),
+            plan.upgrade.len(),
+            plan.downgrade.len(),
+        )
+    };
+    PkView {
+        kind,
+        data,
+        human,
+        hints: pk_hints(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -215,5 +662,58 @@ mod tests {
             ("Finished".to_string(), vec![json!(1), json!(20)]),
         ];
         assert!(check_stream(&signals).is_ok());
+    }
+
+    #[test]
+    fn plan_buckets_by_info_enum() {
+        let signals = vec![
+            (
+                "Package".to_string(),
+                vec![json!(8), json!("nginx;1;x86_64;fedora"), json!("")],
+            ),
+            (
+                "Package".to_string(),
+                vec![json!(9), json!("htop;1;x86_64;installed"), json!("")],
+            ),
+            (
+                "Package".to_string(),
+                vec![json!(7), json!("bash;2;x86_64;updates"), json!("")],
+            ),
+            ("Finished".to_string(), vec![json!(1), json!(20)]),
+        ];
+        let plan = plan_from(&signals);
+        assert_eq!(plan.install, vec!["nginx-1.x86_64"]);
+        assert_eq!(plan.remove, vec!["htop-1.x86_64"]);
+        assert_eq!(plan.remove_names, vec!["htop"]);
+        assert_eq!(plan.upgrade, vec!["bash-2.x86_64"]);
+        assert!(plan.downgrade.is_empty());
+    }
+
+    #[test]
+    fn method_for_maps_verbs() {
+        let ids = vec!["nginx;1;x86_64;fedora".to_string()];
+        assert_eq!(method_for("install", TF_NONE, &ids).0, "InstallPackages");
+        assert_eq!(method_for("upgrade", TF_NONE, &ids).0, "UpdatePackages");
+        let (m, args) = method_for("remove", TF_SIMULATE, &ids);
+        assert_eq!(m, "RemovePackages");
+        // RemovePackages carries (flags, ids, allow_deps, autoremove).
+        assert_eq!(args.as_array().unwrap().len(), 4);
+    }
+
+    #[test]
+    fn dry_run_plan_view_has_null_size_and_backend() {
+        let plan = PkPlan {
+            install: vec!["nginx-1.x86_64".into()],
+            remove: vec![],
+            upgrade: vec![],
+            downgrade: vec![],
+            remove_names: vec![],
+        };
+        let view = plan_view("install", "host", &["nginx".to_string()], &plan, true);
+        assert_eq!(view.kind, "PackagePlan");
+        assert_eq!(view.data["backend"], json!("packagekit"));
+        assert_eq!(view.data["install_size_total"], Value::Null);
+        assert_eq!(view.data["dry_run"], json!(true));
+        assert_eq!(view.data["counts"]["install"], json!(1));
     }
 }
