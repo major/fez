@@ -21,6 +21,24 @@ if [[ -z "${FEZ_E2E_LOGGING:-}" ]]; then
   exit "$status"
 fi
 
+# Preflight: prove AWS credentials resolve before provisioning. Without this,
+# terraform's AWS provider falls through to EC2 IMDS and burns a multi-minute
+# timeout per OS before failing with a cryptic "no EC2 IMDS role found". One
+# cheap STS call up front turns that into an immediate, actionable error.
+if ! aws sts get-caller-identity >/dev/null 2>&1; then
+  cat >&2 <<EOF
+ERROR: no usable AWS credentials.
+
+  terraform needs AWS credentials to provision the e2e hosts. None resolved
+  (checked env vars, AWS_PROFILE, and ~/.aws). Set a working profile, e.g.:
+
+    AWS_PROFILE=<profile> $0 $*
+
+  Verify with: AWS_PROFILE=<profile> aws sts get-caller-identity
+EOF
+  exit 2
+fi
+
 # OS matrix: default fedora + rhel10, overridable via FEZ_E2E_OS (space list).
 read -r -a OSES <<<"${FEZ_E2E_OS:-fedora rhel10}"
 
@@ -33,22 +51,41 @@ export FEZ_BIN FEZ_VERSION RESULT_FILE HERE TF_SRC
 source "$HERE/lib/assertions.sh"
 # shellcheck source=test/e2e/lib/capabilities.sh
 source "$HERE/lib/capabilities.sh"
-# shellcheck source=test/e2e/lib/issue.sh
-source "$HERE/lib/issue.sh"
 # shellcheck source=test/e2e/lib/per_os_job.sh
 source "$HERE/lib/per_os_job.sh"
 
 # Fan out: one backgrounded subshell per OS, each tee'd to its own log.
 # The subshell isolates run_os_job's EXIT trap to that job.
-pids=()
+#
+# Logs are always written per-OS. FEZ_E2E_VERBOSE=1 also streams each job's
+# output to the console live (prefixed with the OS so interleaved jobs stay
+# legible); unset, the per-OS chatter stays in the file and only the matrix
+# table at the end hits the console. Either way the paths are printed up
+# front so you can `tail -f` them from another terminal.
+verbose="${FEZ_E2E_VERBOSE:-}"
+echo "Per-OS logs (tail -f to watch live):"
+declare -A OS_LOG
 for os in "${OSES[@]}"; do
   os_log_dir="$LOG_DIR/$os"
   mkdir -p "$os_log_dir"
   os_log="$os_log_dir/run-$(date +%Y%m%d-%H%M%S).log"
+  OS_LOG[$os]="$os_log"
+  echo "  $os: $os_log"
+done
+
+pids=()
+for os in "${OSES[@]}"; do
+  os_log_dir="$LOG_DIR/$os"
+  os_log="${OS_LOG[$os]}"
   (
     # `|| true` so a failing run_os_job pipeline (set -e/pipefail is inherited)
     # never skips the symlink update; failures are recorded in RESULT_FILE.
-    run_os_job "$os" 2>&1 | tee "$os_log" || true
+    if [[ -n "$verbose" ]]; then
+      # Stream to console (prefixed) and to the per-OS log at once.
+      run_os_job "$os" 2>&1 | tee "$os_log" | sed -u "s/^/[$os] /" || true
+    else
+      run_os_job "$os" >"$os_log" 2>&1 || true
+    fi
     ln -sf "$(basename "$os_log")" "$os_log_dir/last-run.log"
   ) &
   pids+=("$!")
@@ -73,7 +110,7 @@ echo "============================"
 rm -f "$RESULT_FILE"
 
 if [[ "$fail_count" -gt 0 ]]; then
-  echo "E2E MATRIX FAILED ($fail_count failing cells; issues filed)"
+  echo "E2E MATRIX FAILED ($fail_count failing cells; see per-OS logs above)"
   exit 1
 fi
 echo "E2E MATRIX PASSED"

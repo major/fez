@@ -2,7 +2,20 @@
 # One OS job: provision -> wait -> run capabilities -> record -> teardown.
 # Run in a subshell by run.sh so the EXIT trap is job-scoped.
 # Caller globals: HERE, TF_SRC, FEZ_BIN, FEZ_VERSION, RESULT_FILE.
-# Sourced libs: assertions.sh, capabilities.sh, issue.sh.
+# Sourced libs: assertions.sh, capabilities.sh.
+#
+# Failures are never auto-filed as issues; they are recorded in RESULT_FILE
+# (surfaced in the final matrix table) and the forensic detail is echoed
+# inline before teardown wipes $WORK, so the per-OS log is the record. File
+# tickets by hand from that output when a real failure warrants one.
+
+# emit_forensics <header> <file>: echo a labeled forensic block to stdout
+# (the per-OS log) before teardown removes the temp dir holding <file>.
+emit_forensics() {
+  echo "---- $1 ----"
+  cat "$2" 2>/dev/null || true
+  echo "----------------------------"
+}
 
 run_os_job() {
   OS="$1"
@@ -10,7 +23,6 @@ run_os_job() {
   local TF="$WORK/tf"
   STEP_LOG="$WORK/steps.log"; : >"$STEP_LOG"
   local infra_log="$WORK/infra.log"
-  AMI_NAME="unknown"
 
   # shellcheck disable=SC2329  # cleanup is invoked indirectly via `trap cleanup EXIT` below.
   cleanup() {
@@ -31,19 +43,17 @@ run_os_job() {
 
   if ! terraform -chdir="$TF" init -input=false >>"$infra_log" 2>&1; then
     echo "$OS infra fail" >>"$RESULT_FILE"
-    file_infra_issue "terraform init failed" "$infra_log"; return 0
+    emit_forensics "$OS infra: terraform init failed" "$infra_log"; return 0
   fi
   if ! terraform -chdir="$TF" apply -auto-approve -input=false -var "os=$OS" >>"$infra_log" 2>&1; then
     echo "$OS infra fail" >>"$RESULT_FILE"
-    file_infra_issue "terraform apply failed" "$infra_log"; return 0
+    emit_forensics "$OS infra: terraform apply failed" "$infra_log"; return 0
   fi
 
   local IP USER KEY
   IP="$(terraform -chdir="$TF" output -raw public_ip)"
   USER="$(terraform -chdir="$TF" output -raw ssh_user)"
   KEY="$TF/$(terraform -chdir="$TF" output -raw key_path)"
-  # shellcheck disable=SC2034  # AMI_NAME is consumed by issue.sh (file_*_issue), a sibling sourced lib.
-  AMI_NAME="$(terraform -chdir="$TF" output -raw ami_name)"
 
   # Hermetic SSH config pinned via FEZ_SSH_CONFIG (ssh -F), never HOME.
   mkdir -p "$WORK/.ssh"
@@ -74,11 +84,11 @@ EOF
       'cloud-init status --long 2>&1; sudo tail -n 40 /var/log/cloud-init-output.log 2>&1' \
       >>"$infra_log" 2>&1 || true
     echo "$OS infra fail" >>"$RESULT_FILE"
-    file_infra_issue "host never became ready (no /var/lib/fez-e2e-ready after 5m)" "$infra_log"
+    emit_forensics "$OS infra: host never became ready (no /var/lib/fez-e2e-ready after 5m)" "$infra_log"
     return 0
   fi
 
-  # Run each capability; record status; file an issue per capability failure.
+  # Run each capability; record status; echo forensics inline on failure.
   # Capture the full per-step output to a temp so the PASS/FAIL banners land in
   # the job log (this stdout is tee'd by run.sh), then read the terminal status
   # line. Echoing the banners is what makes a failure debuggable after teardown.
@@ -92,11 +102,8 @@ EOF
     status="$(tail -n1 "$capout")"
     echo "$OS $cap $status" >>"$RESULT_FILE"
     if [[ "$status" == "fail" ]]; then
-      # Also surface the forensic step log inline before teardown wipes it.
-      echo "---- $OS $cap forensics ----"
-      cat "$STEP_LOG"
-      echo "----------------------------"
-      file_capability_issue "$cap" "$STEP_LOG"
+      # Surface the forensic step log inline before teardown wipes it.
+      emit_forensics "$OS $cap forensics" "$STEP_LOG"
     fi
   done
 }
