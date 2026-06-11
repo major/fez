@@ -1,3 +1,4 @@
+use predicates::prelude::PredicateBooleanExt;
 use predicates::str::contains;
 
 mod common;
@@ -102,23 +103,55 @@ fn add_port_bad_spec_exits_4() {
         .code(4);
 }
 
-// Removing the session-critical ssh service without --force is protected (exit 8).
+// A protected op (removing the session-critical ssh service) is refused without
+// --force: exit 8 and the envelope carries the stable protected-unit code. This
+// pins the without-force half of the guard contract on its own.
 #[test]
-fn remove_ssh_service_without_force_exits_8() {
+fn protected_op_refused_without_force() {
     fez_fake()
-        .args(["firewall", "remove-service", "ssh"])
+        .args(["firewall", "remove-service", "ssh", "--json"])
         .assert()
-        .code(8);
+        .code(8)
+        .stdout(contains("\"code\":\"protected-unit\""));
 }
 
-// With --force the ssh removal succeeds.
+// The same protected op succeeds with --force: exit 0 and the mutation envelope.
+// This pins the with-force half independently of the refusal case.
 #[test]
-fn remove_ssh_service_with_force_succeeds() {
+fn protected_op_allowed_with_force() {
     fez_fake()
         .args(["firewall", "remove-service", "ssh", "--force", "--json"])
         .assert()
         .success()
         .stdout(contains("\"kind\":\"FirewallChange\""));
+}
+
+// remove-port on a non-session-critical port succeeds runtime-only with the
+// confirm hint (no SSH_CONNECTION in the test env, so 9090/tcp is not gated).
+#[test]
+fn remove_port_succeeds() {
+    fez_fake()
+        .args(["firewall", "remove-port", "9090/tcp", "--json"])
+        .assert()
+        .success()
+        .stdout(contains("\"kind\":\"FirewallChange\""))
+        .stdout(contains("\"persisted\":false"))
+        .stdout(contains("fez firewall confirm"));
+}
+
+// After a removal, a follow-up runtime read no longer lists the port. The fake
+// bridge models the post-removal runtime state via FEZ_FAKE_PORT_REMOVED, so the
+// drift port 9090/tcp is gone from the public zone.
+#[test]
+fn remove_port_gone_from_runtime_after_removal() {
+    fez_fake()
+        .env("FEZ_FAKE_PORT_REMOVED", "1")
+        .args(["firewall", "show", "public", "--json"])
+        .assert()
+        .success()
+        .stdout(contains("\"kind\":\"FirewallZone\""))
+        .stdout(contains("ssh"))
+        .stdout(contains("9090/tcp").not());
 }
 
 // set-default-zone without --force is gated (exit 8); with --force it succeeds.

@@ -327,7 +327,8 @@ const FW_CONFIG_PATH: &str = "/org/fedoraproject/FirewallD1/config";
 /// masquerade drift (`+masquerade`) is non-empty out of the box alongside
 /// `9090/tcp`. `FEZ_FAKE_PANIC`
 /// starts panic mode on; `FEZ_FAKE_NO_FIREWALLD` makes every call report the
-/// service absent (ServiceUnknown).
+/// service absent (ServiceUnknown); `FEZ_FAKE_PORT_REMOVED` drops 9090/tcp from
+/// the runtime `public` zone to model the state after a `remove-port`.
 fn fw_reply(path: &str, method: &str, args: &[Value], id: &Value) -> Value {
     if std::env::var_os("FEZ_FAKE_NO_FIREWALLD").is_some() {
         return json!({"error":[
@@ -366,10 +367,14 @@ fn fw_reply(path: &str, method: &str, args: &[Value], id: &Value) -> Value {
             let on = std::env::var_os("FEZ_FAKE_PANIC").is_some();
             json!({"reply":[[on]],"id": id})
         }
-        // Runtime per-zone reads. `public` carries the drift port 9090/tcp.
+        // Runtime per-zone reads. `public` carries the drift port 9090/tcp,
+        // unless FEZ_FAKE_PORT_REMOVED models the post-removal state where the
+        // port is gone from the runtime zone (a follow-up read after
+        // `remove-port 9090/tcp`).
         "getServices" => json!({"reply":[[["ssh", "dhcpv6-client"]]],"id": id}),
         "getPorts" => {
-            if zone == "public" {
+            let removed = std::env::var_os("FEZ_FAKE_PORT_REMOVED").is_some();
+            if zone == "public" && !removed {
                 json!({"reply":[[[["9090", "tcp"]]]],"id": id})
             } else {
                 json!({"reply":[[[]]],"id": id})
