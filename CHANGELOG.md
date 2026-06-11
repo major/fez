@@ -7,6 +7,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0](https://github.com/major/fez/compare/v0.3.0...v0.4.0) - 2026-06-11
+
+### Added
+
+- *(mcp)* add expanded capability tools
+- *(describe)* expose typed argument metadata
+- *(packages)* fall back to PackageKit when dnf5daemon is absent
+- *(packages)* PackageKit read and mutation operations
+- *(packages)* add PackageKit backend skeleton + signal parsing
+- *(protocol)* add dbus_call_collect for signal-driven PackageKit calls
+- *(protocol)* add DbusSignal parse type for signal frames
+
+### Fixed
+
+- *(capability)* expose output schemas
+- *(firewall)* map dependency and unsupported-API failures to actionable errors
+- *(cli)* emit fez/v1 error envelopes for --json usage and discovery errors
+- *(cli)* hide --dry-run/--force on read-only command help
+- *(describe)* complete plain-text output and generalize --force help
+- *(capability)* include required <UNIT> in service mutation examples
+- *(e2e)* don't abort RHEL 10 provisioning when dnf5daemon-server is absent
+
+### Other
+
+- Merge remote-tracking branch 'origin/main' into agents-progressive-discovery
+- Merge pull request #81 from major/issue-57-expanded-mcp-tools
+- Merge pull request #77 from major/dedup-tier1
+- Merge pull request #78 from major/fix-54-typed-describe
+- Merge pull request #75 from major/packagekit-fallback
+- document the PackageKit fallback backend and test knobs
+- *(packages)* integration suite for the PackageKit fallback backend
+- *(fake-bridge)* add signal-emitting PackageKit arm and scenario knobs
+- Merge pull request #72 from major/fix-52-json-errors
+- Merge pull request #69 from major/fix-62-63-describe
+
 ## [0.3.0](https://github.com/major/fez/compare/v0.2.0...v0.3.0) - 2026-06-11
 
 ### Added
