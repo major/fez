@@ -6,8 +6,8 @@
 //! runtime-vs-permanent split that guards against lockout is firewalld's own,
 //! read live each call and committed only via `runtimeToPermanent`.
 
+use crate::capabilities::{render_with_hints, View};
 use crate::cli::{Cli, FirewallAction};
-use crate::envelope::{ApiError, Envelope};
 use crate::error::{is_service_unknown, FezError, Result};
 use crate::protocol::client::BridgeClient;
 use crate::transport;
@@ -21,19 +21,32 @@ const FW_CONFIG_PATH: &str = "/org/fedoraproject/FirewallD1/config";
 const FW_CONFIG_IFACE: &str = "org.fedoraproject.FirewallD1.config";
 const FW_CONFIG_ZONE_IFACE: &str = "org.fedoraproject.FirewallD1.config.zone";
 
-/// A rendered capability result: the JSON payload plus its human form.
-struct View {
-    kind: &'static str,
-    host: String,
-    data: Value,
-    human: String,
-    hints: Option<Value>,
-}
-
 /// Route a parsed `firewall` action to its handler and return the exit code.
 pub fn dispatch(cli: &Cli, action: &FirewallAction) -> i32 {
     let view = run(cli, action);
-    render(cli, view)
+    render_with_hints(cli, view, error_hints)
+}
+
+/// Safe read-only follow-up hints for an actionable firewall error (issue #60).
+///
+/// A `dependency-missing` failure points at the service-status check (fez
+/// cannot tell absent from stopped, so the hint covers both); an
+/// `unsupported-api` failure tells the caller the feature is unavailable on
+/// this firewalld and not to retry. Other errors carry no firewall-specific
+/// hint.
+fn error_hints(e: &FezError) -> Option<Value> {
+    match e {
+        FezError::DependencyMissing { .. } => Some(json!({
+            "checkService": "fez services status firewalld.service --json",
+            "install": "dnf install firewalld",
+        })),
+        FezError::UnsupportedApi(method) => Some(json!({
+            "unsupported": format!(
+                "firewalld on this host does not expose {method}; treat the feature as unsupported"
+            ),
+        })),
+        _ => None,
+    }
 }
 
 /// The [`FezError::DependencyMissing`] returned when firewalld is absent.
@@ -417,13 +430,7 @@ fn status(client: &mut BridgeClient, channel: &str, host: String) -> Result<View
             }))
         }
     };
-    Ok(View {
-        kind: "FirewallStatus",
-        host,
-        data,
-        human,
-        hints,
-    })
+    Ok(View::new("FirewallStatus", host, data, human).with_hints_opt(hints))
 }
 
 /// `firewall list`: every zone with a per-zone summary.
@@ -475,13 +482,12 @@ fn list(client: &mut BridgeClient, channel: &str, host: String) -> Result<View> 
             interfaces.join(","),
         ]));
     }
-    Ok(View {
-        kind: "FirewallZoneList",
+    Ok(View::new(
+        "FirewallZoneList",
         host,
-        data: crate::envelope::table_data(&columns, rows),
+        crate::envelope::table_data(&columns, rows),
         human,
-        hints: None,
-    })
+    ))
 }
 
 /// `firewall show <zone>`: one zone's full detail.
@@ -527,13 +533,7 @@ fn show(client: &mut BridgeClient, channel: &str, host: String, zone: &str) -> R
         sources.join(", "),
         if masquerade { "on" } else { "off" },
     );
-    Ok(View {
-        kind: "FirewallZone",
-        host,
-        data,
-        human,
-        hints: None,
-    })
+    Ok(View::new("FirewallZone", host, data, human))
 }
 
 /// `firewall services`: the service catalog firewalld knows about.
@@ -551,13 +551,12 @@ fn services(client: &mut BridgeClient, channel: &str, host: String) -> Result<Vi
         human.push_str(s);
         human.push('\n');
     }
-    Ok(View {
-        kind: "FirewallServiceCatalog",
+    Ok(View::new(
+        "FirewallServiceCatalog",
         host,
-        data: json!({ "services": catalog }),
+        json!({ "services": catalog }),
         human,
-        hints: None,
-    })
+    ))
 }
 
 /// The set of firewall services treated as session-critical (always `ssh`).
@@ -876,46 +875,37 @@ fn change_view(host: String, op: &str, zone: &str, what: &str, timeout: Option<u
         data["timeout"] = json!(t);
     }
     let human = format!("{op} {what} in zone {zone} (runtime only)\n");
-    View {
-        kind: "FirewallChange",
-        host,
-        data,
-        human,
-        hints: Some(confirm_hint()),
-    }
+    View::new("FirewallChange", host, data, human).with_hints(confirm_hint())
 }
 
 /// Build the `FirewallChange` view for `reload`.
 fn reload_view(host: String) -> View {
-    View {
-        kind: "FirewallChange",
+    View::new(
+        "FirewallChange",
         host,
-        data: json!({"operation": "reload", "persisted": true}),
-        human: "reloaded permanent config into runtime\n".into(),
-        hints: None,
-    }
+        json!({"operation": "reload", "persisted": true}),
+        "reloaded permanent config into runtime\n".into(),
+    )
 }
 
 /// Build the `FirewallConfirm` view for `confirm`.
 fn confirm_view(host: String) -> View {
-    View {
-        kind: "FirewallConfirm",
+    View::new(
+        "FirewallConfirm",
         host,
-        data: json!({"operation": "confirm", "persisted": true}),
-        human: "runtime config committed to permanent\n".into(),
-        hints: None,
-    }
+        json!({"operation": "confirm", "persisted": true}),
+        "runtime config committed to permanent\n".into(),
+    )
 }
 
 /// Build the `FirewallChange` view for `panic on|off`.
 fn panic_view(host: String, on: bool) -> View {
-    View {
-        kind: "FirewallChange",
+    View::new(
+        "FirewallChange",
         host,
-        data: json!({"operation": "panic", "panic_mode": on, "persisted": false}),
-        human: format!("panic mode {}\n", if on { "enabled" } else { "disabled" }),
-        hints: None,
-    }
+        json!({"operation": "panic", "panic_mode": on, "persisted": false}),
+        format!("panic mode {}\n", if on { "enabled" } else { "disabled" }),
+    )
 }
 
 /// Build the `FirewallChange` view for `masquerade on|off`.
@@ -934,91 +924,7 @@ fn masquerade_view(host: String, zone: &str, on: bool, timeout: Option<u32>) -> 
         "masquerade {} in zone {zone} (runtime only)\n",
         if on { "enabled" } else { "disabled" }
     );
-    View {
-        kind: "FirewallChange",
-        host,
-        data,
-        human,
-        hints: Some(confirm_hint()),
-    }
-}
-
-/// Render a [`View`] (or error) to stdout/stderr and return the exit code.
-fn render(cli: &Cli, result: Result<View>) -> i32 {
-    let host = cli.resolved_host();
-    match result {
-        Ok(view) => {
-            if cli.json {
-                let mut env = Envelope::ok(view.kind, &view.host, view.data);
-                if let Some(h) = view.hints {
-                    env = env.with_hints(h);
-                }
-                println!("{}", env.to_json_string());
-            } else {
-                print!("{}", view.human);
-            }
-            0
-        }
-        Err(e) => {
-            if cli.json {
-                let mut env = Envelope::error(
-                    "Error",
-                    &host,
-                    ApiError {
-                        code: e.code().into(),
-                        message: e.to_string(),
-                        detail: error_detail(&e),
-                    },
-                );
-                if let Some(h) = error_hints(&e) {
-                    env = env.with_hints(h);
-                }
-                println!("{}", env.to_json_string());
-            } else {
-                eprintln!("error: {e}");
-            }
-            e.exit_code()
-        }
-    }
-}
-
-/// Safe read-only follow-up hints for an actionable firewall error (issue #60).
-///
-/// A `dependency-missing` failure points at the service-status check (fez
-/// cannot tell absent from stopped, so the hint covers both); an
-/// `unsupported-api` failure tells the caller the feature is unavailable on
-/// this firewalld and not to retry. Other errors carry no firewall-specific
-/// hint.
-fn error_hints(e: &FezError) -> Option<Value> {
-    match e {
-        FezError::DependencyMissing { .. } => Some(json!({
-            "checkService": "fez services status firewalld.service --json",
-            "install": "dnf install firewalld",
-        })),
-        FezError::UnsupportedApi(method) => Some(json!({
-            "unsupported": format!(
-                "firewalld on this host does not expose {method}; treat the feature as unsupported"
-            ),
-        })),
-        _ => None,
-    }
-}
-
-/// Structured `detail` for the error envelope, for errors that carry one.
-fn error_detail(e: &FezError) -> Option<Value> {
-    match e {
-        FezError::DependencyMissing {
-            component,
-            dbus_name,
-            remediation,
-        } => Some(json!({
-            "component": component,
-            "dbusName": dbus_name,
-            "remediation": remediation,
-        })),
-        FezError::UnsupportedApi(method) => Some(json!({ "method": method })),
-        _ => None,
-    }
+    View::new("FirewallChange", host, data, human).with_hints(confirm_hint())
 }
 
 #[cfg(test)]

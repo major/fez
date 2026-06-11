@@ -6,8 +6,8 @@
 //! `network show <device>` (full per-device detail). Read-only: no mutation,
 //! no privilege escalation.
 
+use crate::capabilities::{render, View};
 use crate::cli::{Cli, NetworkAction};
-use crate::envelope::{ApiError, Envelope};
 use crate::error::{FezError, Result};
 use crate::protocol::client::BridgeClient;
 use crate::transport;
@@ -22,14 +22,6 @@ const IP4_IFACE: &str = "org.freedesktop.NetworkManager.IP4Config";
 const IP6_IFACE: &str = "org.freedesktop.NetworkManager.IP6Config";
 const ACTIVE_IFACE: &str = "org.freedesktop.NetworkManager.Connection.Active";
 const DHCP4_IFACE: &str = "org.freedesktop.NetworkManager.DHCP4Config";
-
-/// A rendered capability result: the JSON payload plus its human form.
-struct View {
-    kind: &'static str,
-    host: String,
-    data: Value,
-    human: String,
-}
 
 /// Route a parsed `network` action to its handler and render the result.
 ///
@@ -52,40 +44,6 @@ fn run(cli: &Cli, action: &NetworkAction) -> Result<View> {
 }
 
 /// Render a [`View`] (or error) to stdout/stderr and return the exit code.
-fn render(cli: &Cli, result: Result<View>) -> i32 {
-    let host = cli.resolved_host();
-    match result {
-        Ok(view) => {
-            if cli.json {
-                println!(
-                    "{}",
-                    Envelope::ok(view.kind, &view.host, view.data).to_json_string()
-                );
-            } else {
-                print!("{}", view.human);
-            }
-            0
-        }
-        Err(e) => {
-            if cli.json {
-                let env = Envelope::error(
-                    "Error",
-                    &host,
-                    ApiError {
-                        code: e.code().into(),
-                        message: e.to_string(),
-                        detail: None,
-                    },
-                );
-                println!("{}", env.to_json_string());
-            } else {
-                eprintln!("error: {e}");
-            }
-            e.exit_code()
-        }
-    }
-}
-
 /// Decode an `NMDeviceType` (`u`) to its short string.
 ///
 /// Mirrors the upstream `NMDeviceType` enum. Unrecognized values render as
@@ -322,12 +280,12 @@ fn list(client: &mut BridgeClient, channel: &str, host: String, all: bool) -> Re
         .iter()
         .map(|d| Value::Array(columns.iter().map(|c| d[*c].clone()).collect()))
         .collect();
-    Ok(View {
-        kind: "NetworkDeviceList",
+    Ok(View::new(
+        "NetworkDeviceList",
         host,
-        data: crate::envelope::table_data(&columns, rows),
+        crate::envelope::table_data(&columns, rows),
         human,
-    })
+    ))
 }
 
 /// Show one device's full network detail, chasing NM's object indirection.
@@ -405,12 +363,7 @@ fn show(client: &mut BridgeClient, channel: &str, host: String, device: &str) ->
     });
 
     let human = render_show_human(&data);
-    Ok(View {
-        kind: "NetworkDeviceDetail",
-        host,
-        data,
-        human,
-    })
+    Ok(View::new("NetworkDeviceDetail", host, data, human))
 }
 
 /// Flatten an `a{sv}` options map by unwrapping each variant value, so the

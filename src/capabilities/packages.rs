@@ -5,8 +5,8 @@
 //! unprivileged and render a [`View`], mutations resolve the transaction first,
 //! apply removal guardrails, audit, then execute. Every dnf5daemon session is
 //! closed best-effort on every return path so the daemon never leaks sessions.
+use crate::capabilities::{render, View};
 use crate::cli::{Cli, PackagesAction};
-use crate::envelope::{ApiError, Envelope};
 use crate::error::{is_service_unknown, FezError, Result};
 use crate::protocol::client::BridgeClient;
 use serde_json::{json, Value};
@@ -20,15 +20,6 @@ const GOAL_IFACE: &str = "org.rpm.dnf.v0.Goal";
 
 /// Package attributes requested from dnf5daemon's `Rpm.list`.
 const PKG_ATTRS: &[&str] = &["name", "evr", "arch", "repo_id", "install_size", "summary"];
-
-/// One render-ready response: a payload, a human rendering, and an envelope kind.
-struct View {
-    kind: &'static str,
-    host: String,
-    data: Value,
-    human: String,
-    hints: Option<Value>,
-}
 
 /// A staging mutation that goes through resolve-first/guardrail/execute.
 #[derive(Clone, Copy)]
@@ -339,13 +330,7 @@ fn run_read(cli: &Cli, action: ReadAction<'_>) -> Result<View> {
 
 /// Convert a PackageKit backend result into a dnf-backend [`View`].
 fn from_pk(pk: crate::capabilities::packages_pk::PkView, host: String) -> View {
-    View {
-        kind: pk.kind,
-        host,
-        data: pk.data,
-        human: pk.human,
-        hints: pk.hints,
-    }
+    View::new(pk.kind, host, pk.data, pk.human).with_hints_opt(pk.hints)
 }
 
 /// Dependency-missing error when BOTH dnf5daemon and PackageKit are absent.
@@ -445,13 +430,7 @@ fn list(
     // Echo the requested repo filter so callers can confirm what was applied.
     data["repos"] = json!(repos);
     data["backend"] = json!("dnf5daemon");
-    Ok(View {
-        kind: "PackageList",
-        host,
-        data,
-        human,
-        hints: None,
-    })
+    Ok(View::new("PackageList", host, data, human))
 }
 
 fn info(
@@ -476,13 +455,7 @@ fn info(
         sv_u64(first, "install_size"),
         sv(first, "summary"),
     );
-    Ok(View {
-        kind: "PackageInfo",
-        host,
-        data: pkg,
-        human,
-        hints: None,
-    })
+    Ok(View::new("PackageInfo", host, pkg, human))
 }
 
 fn search(
@@ -502,13 +475,7 @@ fn search(
     let mut data = crate::envelope::table_data(PKG_COLUMNS, rows);
     data["pattern"] = json!(pattern);
     data["backend"] = json!("dnf5daemon");
-    Ok(View {
-        kind: "PackageSearch",
-        host,
-        data,
-        human,
-        hints: None,
-    })
+    Ok(View::new("PackageSearch", host, data, human))
 }
 
 fn check_update(
@@ -530,13 +497,7 @@ fn check_update(
     let rows: Vec<Value> = raw.iter().map(package_row).collect();
     let mut data = crate::envelope::table_data(PKG_COLUMNS, rows);
     data["backend"] = json!("dnf5daemon");
-    Ok(View {
-        kind: "PackageUpdates",
-        host,
-        data,
-        human,
-        hints: None,
-    })
+    Ok(View::new("PackageUpdates", host, data, human))
 }
 
 /// Column order for the columnar `RepoList` payload (`enabled` stays a bool).
@@ -578,13 +539,7 @@ fn repolist(
     }
     let mut data = crate::envelope::table_data(REPO_COLUMNS, rows);
     data["backend"] = json!("dnf5daemon");
-    Ok(View {
-        kind: "RepoList",
-        host,
-        data,
-        human,
-        hints: None,
-    })
+    Ok(View::new("RepoList", host, data, human))
 }
 
 /// A resolved dnf5daemon transaction, bucketed by action for rendering and
@@ -728,22 +683,10 @@ fn mutation_inner(
     crate::safety::check_removal_plan(&plan.remove_names, cli.force)?;
 
     // 5. Audit attempt, execute, audit result.
-    let sink = crate::audit::sink_from_env();
-    let audit = crate::audit::AuditContext::new(
-        &crate::audit::actor(),
-        host,
-        m.verb(),
-        &specs.join(","),
-        &crate::audit::correlation_id(),
-    );
-    sink.write(&audit.record(crate::audit::Outcome::Attempt));
-    let exec = client.dbus_call(channel, session, GOAL_IFACE, "do_transaction", json!([{}]));
-    match &exec {
-        Ok(_) => sink.write(&audit.record(crate::audit::Outcome::Ok)),
-        Err(e) => sink.write(&audit.record(crate::audit::Outcome::Error(e.to_string()))),
-    }
-    exec?;
-    Ok(plan_view(m, host, specs, &plan, false))
+    crate::audit::run_audited(host, m.verb(), &specs.join(","), || {
+        client.dbus_call(channel, session, GOAL_IFACE, "do_transaction", json!([{}]))?;
+        Ok(plan_view(m, host, specs, &plan, false))
+    })
 }
 
 /// Build the [`View`] for a resolved plan (dry-run preview or executed mutation).
@@ -789,70 +732,7 @@ fn plan_view(
             plan.downgrade.len(),
         )
     };
-    View {
-        kind,
-        host: host.to_string(),
-        data,
-        human,
-        hints: None,
-    }
-}
-
-/// Render a [`View`] (or error) as text or a `fez/v1` envelope; return exit code.
-fn render(cli: &Cli, result: Result<View>) -> i32 {
-    let host = cli.resolved_host();
-    match result {
-        Ok(view) => {
-            if cli.json {
-                let mut env = Envelope::ok(view.kind, &view.host, view.data);
-                if let Some(h) = view.hints {
-                    env = env.with_hints(h);
-                }
-                println!("{}", env.to_json_string());
-            } else {
-                print!("{}", view.human);
-            }
-            0
-        }
-        Err(e) => {
-            if cli.json {
-                let detail = error_detail(&e);
-                let env = Envelope::error(
-                    "Error",
-                    &host,
-                    ApiError {
-                        code: e.code().into(),
-                        message: e.to_string(),
-                        detail,
-                    },
-                );
-                println!("{}", env.to_json_string());
-            } else {
-                eprintln!("error: {e}");
-            }
-            e.exit_code()
-        }
-    }
-}
-
-/// Structured `detail` for the error envelope, for errors that carry one.
-fn error_detail(e: &FezError) -> Option<Value> {
-    match e {
-        FezError::DependencyMissing {
-            component,
-            dbus_name,
-            remediation,
-        } => Some(json!({
-            "component": component,
-            "dbusName": dbus_name,
-            "remediation": remediation,
-        })),
-        FezError::DangerousTransaction { reason, removed } => Some(json!({
-            "reason": reason,
-            "removed": removed,
-        })),
-        _ => None,
-    }
+    View::new(kind, host.to_string(), data, human)
 }
 
 #[cfg(test)]
