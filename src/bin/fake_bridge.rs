@@ -366,6 +366,10 @@ fn fw_reply(
             ["The name org.fedoraproject.FirewallD1 was not provided by any .service files"]
         ],"id": id});
     }
+    if path.starts_with(FW_CONFIG_PATH) && std::env::var_os("FEZ_FAKE_CONFIG_INFO_DENIED").is_some()
+    {
+        return fw_config_info_denied(id);
+    }
     // Permanent-config per-zone object: /config/zone/<n>. Permanent `public`
     // (zone 0) lacks the runtime-only 9090/tcp, which is the seeded drift.
     // The config.zone interface is polkit-gated (PK_ACTION_CONFIG), so deny
@@ -481,6 +485,14 @@ fn fw_access_denied(id: &Value) -> Value {
     json!({"error":[
         "org.freedesktop.DBus.Error.AccessDenied",
         ["permanent config read requires authorization (PK_ACTION_CONFIG)"]],"id": id})
+}
+
+/// Real-host firewalld error when the permanent config.info polkit action is
+/// rejected even though the call arrived over a cockpit privileged channel.
+fn fw_config_info_denied(id: &Value) -> Value {
+    json!({"error":[
+        "org.fedoraproject.FirewallD1.NotAuthorizedException",
+        ["Not Authorized(polkit): org.fedoraproject.FirewallD1.config.info"]],"id": id})
 }
 
 /// The host's escalation mechanisms as modeled by `FEZ_FAKE_BRIDGES`.

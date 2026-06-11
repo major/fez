@@ -311,6 +311,21 @@ fn status_with_escalation_reports_drift() {
         .stdout(contains("fez firewall confirm"));
 }
 
+// Regression for #51: real firewalld can still reject the permanent config
+// `config.info` read after cockpit superuser routing. `status` should keep the
+// read-only runtime status usable and make the missing drift explicit.
+#[test]
+fn status_with_config_info_denied_reports_runtime_status() {
+    fez_fake()
+        .env("FEZ_FAKE_CONFIG_INFO_DENIED", "1")
+        .args(["firewall", "status", "--json"])
+        .assert()
+        .success()
+        .stdout(contains("\"kind\":\"FirewallStatus\""))
+        .stdout(contains("\"pending_changes_available\":false"))
+        .stdout(contains("permanent firewall config was not readable"));
+}
+
 // panic off when the host starts in panic mode succeeds (FEZ_FAKE_PANIC).
 #[test]
 fn panic_off_when_panic_on() {
