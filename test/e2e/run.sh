@@ -3,11 +3,13 @@ set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 TF_SRC="$HERE/terraform"
 FEZ_BIN="${FEZ_BIN:-$(cd "$HERE/../.." && pwd)/target/debug/fez}"
+# Derived unconditionally so both the parent and the re-exec'd child (which
+# skips the logging block below) can reference it under `set -u`.
+LOG_DIR="${LOG_DIR:-$HERE/logs}"
 
 # Self-re-exec through tee so the whole matrix run is captured to a log that
 # survives host teardown. last-run.log always points at the newest matrix run.
 if [[ -z "${FEZ_E2E_LOGGING:-}" ]]; then
-  LOG_DIR="${LOG_DIR:-$HERE/logs}"
   mkdir -p "$LOG_DIR"
   LOG_FILE="${LOG_FILE:-$LOG_DIR/matrix-$(date +%Y%m%d-%H%M%S).log}"
   export FEZ_E2E_LOGGING=1 LOG_FILE
