@@ -207,3 +207,87 @@ fn panic_off_when_panic_on() {
         .assert()
         .success();
 }
+
+// show <zone> reports the seeded runtime masquerade state (public is on).
+#[test]
+fn show_public_reports_masquerade_on() {
+    fez_fake()
+        .args(["firewall", "show", "public", "--json"])
+        .assert()
+        .success()
+        .stdout(contains("\"masquerade\":true"));
+}
+
+// status lists the seeded masquerade drift (runtime public on, permanent off).
+#[test]
+fn status_reports_masquerade_drift() {
+    fez_fake()
+        .args(["firewall", "status", "--json"])
+        .assert()
+        .success()
+        .stdout(contains("+masquerade"));
+}
+
+// masquerade off without --force is protected (exit 8). Default escalation is
+// available (FEZ_FAKE_BRIDGES unset = sudo:ok), so the guard, not escalation,
+// is what trips.
+#[test]
+fn masquerade_off_without_force_exits_8() {
+    fez_fake()
+        .args(["firewall", "masquerade", "off"])
+        .assert()
+        .code(8);
+}
+
+// masquerade off with --force succeeds.
+#[test]
+fn masquerade_off_with_force_succeeds() {
+    fez_fake()
+        .args(["firewall", "masquerade", "off", "--force", "--json"])
+        .assert()
+        .success()
+        .stdout(contains("\"kind\":\"FirewallChange\""))
+        .stdout(contains("\"masquerade\":false"));
+}
+
+// masquerade on is unguarded and succeeds without --force.
+#[test]
+fn masquerade_on_succeeds() {
+    fez_fake()
+        .args(["firewall", "masquerade", "on"])
+        .assert()
+        .success();
+}
+
+// masquerade on --json emits a compact FirewallChange envelope mentioning masquerade.
+#[test]
+fn masquerade_on_json_reports_change() {
+    fez_fake()
+        .args(["firewall", "masquerade", "on", "--json"])
+        .assert()
+        .success()
+        .stdout(contains("\"kind\":\"FirewallChange\""))
+        .stdout(contains("\"operation\":\"masquerade\""))
+        .stdout(contains("\"masquerade\":true"));
+}
+
+// masquerade on with a timeout succeeds and echoes the timeout.
+#[test]
+fn masquerade_on_with_timeout_echoes_timeout() {
+    fez_fake()
+        .args(["firewall", "masquerade", "on", "--timeout", "60", "--json"])
+        .assert()
+        .success()
+        .stdout(contains("\"kind\":\"FirewallChange\""))
+        .stdout(contains("\"timeout\":60"));
+}
+
+// masquerade on a host advertising no escalation mechanism -> exit 11.
+#[test]
+fn masquerade_on_without_escalation_exits_11() {
+    fez_fake()
+        .env("FEZ_FAKE_BRIDGES", "")
+        .args(["firewall", "masquerade", "on"])
+        .assert()
+        .code(11);
+}

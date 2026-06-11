@@ -540,6 +540,31 @@ until confirmed. Privileged. --force is not required for confirm itself."
                 "fez firewall panic on --force".into(),
             ],
         },
+        Descriptor {
+            id: "firewall.masquerade".into(),
+            summary: "Enable or disable masquerade (SNAT) for a zone".into(),
+            long: "Enable or disable masquerade (source NAT for forwarded traffic) on a \
+zone. Use --zone to target a zone (the default zone otherwise) and --timeout to \
+auto-revert after N seconds (ignored for `off`). Runtime only; NOT permanent until \
+`fez firewall confirm`. Enabling is unguarded; disabling is refused unless --force is \
+supplied (exit 8), because dropping SNAT can sever a gateway's forwarded clients. \
+Privileged."
+                .into(),
+            privileged: true,
+            output_kind: "FirewallChange".into(),
+            inputs: vec![input("state", true)],
+            flags: vec![
+                "--host".into(),
+                "--json".into(),
+                "--zone".into(),
+                "--timeout".into(),
+                "--force".into(),
+            ],
+            examples: vec![
+                "fez firewall masquerade on --json".into(),
+                "fez firewall masquerade off --zone public --force".into(),
+            ],
+        },
     ]
 }
 
