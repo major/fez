@@ -256,6 +256,21 @@ fn compute_drift(
     drift
 }
 
+/// Whether a permanent-config read failed because firewalld rejected the
+/// `config.info` polkit action. This is distinct from failing to open a
+/// privileged cockpit channel: the read reached firewalld, but firewalld denied
+/// the config API.
+fn is_config_info_denied(e: &FezError) -> bool {
+    match e {
+        FezError::Dbus { name, message } => {
+            name.contains("NotAuthorized")
+                || name.contains("AccessDenied")
+                || message.contains("config.info")
+        }
+        _ => false,
+    }
+}
+
 /// Read the permanent (`config`) services, ports, and masquerade for a zone,
 /// for drift.
 fn permanent_zone(
@@ -356,41 +371,51 @@ fn status(client: &mut BridgeClient, channel: &str, host: String) -> Result<View
     let (rt_services, rt_ports, rt_masq) = runtime_zone(client, channel, &default_zone)?;
     // Permanent config is polkit-gated; read it on a privileged channel.
     let priv_channel = open_channel(client, true)?;
-    let (perm_services, perm_ports, perm_masq) =
-        permanent_zone(client, &priv_channel, &default_zone)?;
-    let drift = compute_drift(
-        &rt_services,
-        &perm_services,
-        &rt_ports,
-        &perm_ports,
-        rt_masq,
-        perm_masq,
-    );
+    let drift = match permanent_zone(client, &priv_channel, &default_zone) {
+        Ok((perm_services, perm_ports, perm_masq)) => Some(compute_drift(
+            &rt_services,
+            &perm_services,
+            &rt_ports,
+            &perm_ports,
+            rt_masq,
+            perm_masq,
+        )),
+        Err(e) if is_config_info_denied(&e) => None,
+        Err(e) => return Err(e),
+    };
 
     let data = json!({
         "running": true,
         "default_zone": default_zone,
         "panic_mode": panic,
         "masquerade": rt_masq,
-        "pending_changes": drift,
+        "pending_changes": drift.clone().unwrap_or_default(),
+        "pending_changes_available": drift.is_some(),
     });
     let mut human = format!(
         "running:       yes\ndefault zone:  {default_zone}\npanic mode:    {}\nmasquerade:    {}\n",
         if panic { "on" } else { "off" },
         if rt_masq { "on" } else { "off" }
     );
-    if drift.is_empty() {
-        human.push_str("pending:       none\n");
-    } else {
-        human.push_str(&format!("pending:       {}\n", drift.join(", ")));
-    }
-    let hints = if drift.is_empty() {
-        None
-    } else {
-        Some(json!({
-            "warning": "uncommitted runtime changes; run `fez firewall confirm` to persist or `fez firewall reload` to discard",
-            "pending": drift,
-        }))
+    let hints = match drift {
+        Some(drift) if drift.is_empty() => {
+            human.push_str("pending:       none\n");
+            None
+        }
+        Some(drift) => {
+            human.push_str(&format!("pending:       {}\n", drift.join(", ")));
+            Some(json!({
+                "warning": "uncommitted runtime changes; run `fez firewall confirm` to persist or `fez firewall reload` to discard",
+                "pending": drift,
+            }))
+        }
+        None => {
+            human.push_str("pending:       unavailable (permanent config not readable)\n");
+            Some(json!({
+                "warning": "permanent firewall config was not readable; runtime status is shown but pending_changes may be incomplete",
+                "follow_up": "Check firewalld config.info authorization for the target user or run `fez firewall status` from a context allowed by polkit."
+            }))
+        }
     };
     Ok(View {
         kind: "FirewallStatus",
