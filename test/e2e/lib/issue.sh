@@ -11,7 +11,7 @@ redact() {
     -e 's/[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}/<redacted-ip>/g' \
     -e 's#/tmp/[A-Za-z0-9._/-]+#<redacted-tmp-path>#g' \
     -e 's/arn:aws[A-Za-z0-9:._/-]+/<redacted-arn>/g' \
-    -e 's/[0-9]{12}/<redacted-acct>/g'
+    -e 's/([^0-9]|^)[0-9]{12}([^0-9]|$)/\1<redacted-acct>\2/g'
 }
 
 # _marker <os> <capability> -> the hidden HTML comment used for dedupe.
@@ -60,8 +60,8 @@ file_capability_issue() {
     echo "## e2e failure: $OS / $cap"
     echo
     echo "- OS: \`$OS\`"
-    echo "- AMI: \`$AMI_NAME\`"
-    echo "- fez: \`$FEZ_VERSION\`"
+    echo "- AMI: \`${AMI_NAME:-unknown}\`"
+    echo "- fez: \`${FEZ_VERSION:-unknown}\`"
     echo
     echo "### Failed assertions"
     echo

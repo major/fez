@@ -86,7 +86,7 @@ test_services() {
 }
 
 test_packages() {
-  if _probe_present dependency-missing packages list; then :; else
+  if ! _probe_present dependency-missing packages list; then
     echo "  SKIP: dnf5daemon-server absent (exit 9 dependency-missing)"
     echo skip; return 0
   fi
@@ -123,7 +123,7 @@ test_network() {
 }
 
 test_firewall() {
-  if _probe_present dependency-missing firewall status; then :; else
+  if ! _probe_present dependency-missing firewall status; then
     echo "  SKIP: firewalld absent (exit 9 dependency-missing)"
     echo skip; return 0
   fi

@@ -46,7 +46,9 @@ for os in "${OSES[@]}"; do
   mkdir -p "$os_log_dir"
   os_log="$os_log_dir/run-$(date +%Y%m%d-%H%M%S).log"
   (
-    run_os_job "$os" 2>&1 | tee "$os_log"
+    # `|| true` so a failing run_os_job pipeline (set -e/pipefail is inherited)
+    # never skips the symlink update; failures are recorded in RESULT_FILE.
+    run_os_job "$os" 2>&1 | tee "$os_log" || true
     ln -sf "$(basename "$os_log")" "$os_log_dir/last-run.log"
   ) &
   pids+=("$!")

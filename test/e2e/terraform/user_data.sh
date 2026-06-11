@@ -10,9 +10,12 @@ set -eux
 # cockpit-bridge alone lacks) plus the package/firewall backends so every
 # capability hits a live service instead of the absent-service path.
 #
-# This file is rendered by Terraform's templatefile(); $${...} escapes a literal
-# shell brace, $${login_user} is substituted by Terraform (NetworkManager etc.
-# need no substitution and use plain shell).
+# This file is rendered by Terraform's templatefile(): a single-$ $${login_user}
+# is substituted with the template variable's value, while a double-$$
+# $${login_user} renders as the literal text. (Both tokens here are escaped as
+# $$ so this comment is not itself interpolated.) The dnf/sudoers code below
+# uses the single-$ form so Terraform fills in the login user; there are no
+# runtime shell $${VAR} expansions that need escaping.
 dnf -y install cockpit-bridge cockpit-system dnf5daemon-server firewalld
 
 # firewalld is not enabled by default on cloud images; the firewall capability
