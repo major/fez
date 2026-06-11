@@ -210,6 +210,25 @@ fn describe_text_marks_readonly_not_privileged() {
         .stdout(contains("output: ServiceList"));
 }
 
+#[test]
+fn packages_list_help_and_descriptor_document_pagination_filters() {
+    fez()
+        .args(["packages", "list", "--help"])
+        .assert()
+        .success()
+        .stdout(contains("--limit"))
+        .stdout(contains("--offset"))
+        .stdout(contains("--name"));
+
+    fez()
+        .args(["describe", "packages.list", "--json"])
+        .assert()
+        .success()
+        .stdout(contains("--limit"))
+        .stdout(contains("--offset"))
+        .stdout(contains("--name"));
+}
+
 // Issue #52: under --json the unknown-capability discovery error emits a fez/v1
 // error envelope on stdout (still exit 4), instead of a bare stderr line. That
 // path is covered by json_unknown_capability_emits_envelope below (which also

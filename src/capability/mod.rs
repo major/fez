@@ -468,9 +468,10 @@ stop it immediately. Privileged. Protected units are refused unless --force is s
             id: "packages.list".into(),
             summary: "List packages".into(),
             long: "List installed (default) or available packages. Use --available to list \
-available packages. --repo restricts to packages whose repo id exactly matches the given \
-value; it is repeatable and unions (a package is kept if its repo id equals any given \
-value). The applied filter is echoed back in the `repos` field. Read-only."
+available packages. Use --name to keep packages whose name contains the given substring, \
+and --repo to restrict packages by exact repo id (repeatable union). Use --limit and \
+--offset to page large results; JSON output echoes filters plus total, returned, limit, \
+offset, and next_offset metadata. Read-only."
                 .into(),
             privileged: false,
             output_kind: "PackageList".into(),
@@ -481,10 +482,14 @@ value). The applied filter is echoed back in the `repos` field. Read-only."
                 "--installed".into(),
                 "--available".into(),
                 "--repo".into(),
+                "--name".into(),
+                "--limit".into(),
+                "--offset".into(),
             ],
             examples: vec![
                 "fez packages list --json".into(),
-                "fez packages list --available --repo fedora".into(),
+                "fez packages list --available --name nginx --limit 20".into(),
+                "fez packages list --available --repo fedora --offset 20 --limit 20".into(),
             ],
         },
         Descriptor {

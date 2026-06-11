@@ -240,7 +240,14 @@ fn human_table(pkgs: &[&PkPackage]) -> String {
 /// # Errors
 ///
 /// Propagates transport, transaction, or PackageKit stream errors.
-pub fn list(client: &mut BridgeClient, available: bool, repos: &[String]) -> Result<PkView> {
+pub fn list(
+    client: &mut BridgeClient,
+    available: bool,
+    repos: &[String],
+    name: Option<&str>,
+    limit: Option<usize>,
+    offset: usize,
+) -> Result<PkView> {
     let channel = open_pk(client, false)?;
     let tx = new_tx(client, &channel)?;
     let filter = if available {
@@ -255,18 +262,42 @@ pub fn list(client: &mut BridgeClient, available: bool, repos: &[String]) -> Res
     let filtered: Vec<&PkPackage> = pkgs
         .iter()
         .filter(|p| repos.is_empty() || repos.iter().any(|r| r == p.repo()))
+        .filter(|p| name.is_none_or(|pattern| p.name.contains(pattern)))
         .collect();
-    let rows: Vec<Value> = filtered.iter().map(|p| row(p)).collect();
+    let total = filtered.len();
+    let start = offset.min(total);
+    let end = match limit {
+        Some(limit) => (start + limit).min(total),
+        None => total,
+    };
+    let page = &filtered[start..end];
+    let rows: Vec<Value> = page.iter().map(|p| row(p)).collect();
     let mut data = crate::envelope::table_data(PK_COLUMNS, rows);
     data["scope"] = json!(if available { "available" } else { "installed" });
     data["repos"] = json!(repos);
+    data["name"] = json!(name);
+    data["total"] = json!(total);
+    data["returned"] = json!(end - start);
+    data["limit"] = json!(limit);
+    data["offset"] = json!(offset);
+    data["next_offset"] = json!((end < total).then_some(end));
     data["backend"] = json!("packagekit");
-    let human = human_table(&filtered);
+    let human = human_table(page);
+    let hints = if limit.is_none() && total > 1000 {
+        Some(json!([
+            pk_hints().expect("PackageKit hint is always present"),
+            format!(
+                "This response has {total} rows. Prefer packages search <pattern>, use --name, or use --limit."
+            )
+        ]))
+    } else {
+        pk_hints()
+    };
     Ok(PkView {
         kind: "PackageList",
         data,
         human,
-        hints: pk_hints(),
+        hints,
     })
 }
 

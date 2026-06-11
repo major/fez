@@ -56,20 +56,21 @@ impl Mutation {
 /// variant here maps to a handler, so adding one is a compile error rather than
 /// a runtime panic.
 enum ReadAction<'a> {
-    List {
-        available: bool,
-        repos: &'a [String],
-    },
-    Info {
-        spec: &'a str,
-    },
-    Search {
-        pattern: &'a str,
-    },
+    List(ListFilters<'a>),
+    Info { spec: &'a str },
+    Search { pattern: &'a str },
     CheckUpdate,
-    Repolist {
-        filter: RepoFilter,
-    },
+    Repolist { filter: RepoFilter },
+}
+
+/// Client-side filters and pagination for `packages list`.
+#[derive(Clone, Copy)]
+struct ListFilters<'a> {
+    available: bool,
+    repos: &'a [String],
+    name: Option<&'a str>,
+    limit: Option<usize>,
+    offset: usize,
 }
 
 /// Which repositories `repolist` should report.
@@ -119,10 +120,16 @@ fn classify(action: &PackagesAction) -> Plan<'_> {
             installed: _installed,
             available,
             repo,
-        } => Plan::Read(ReadAction::List {
+            name,
+            limit,
+            offset,
+        } => Plan::Read(ReadAction::List(ListFilters {
             available: *available,
             repos: repo,
-        }),
+            name: name.as_deref(),
+            limit: *limit,
+            offset: *offset,
+        })),
         PackagesAction::Info { spec } => Plan::Read(ReadAction::Info { spec }),
         PackagesAction::Search { pattern } => Plan::Read(ReadAction::Search { pattern }),
         PackagesAction::CheckUpdate => Plan::Read(ReadAction::CheckUpdate),
@@ -316,9 +323,7 @@ fn run_read(cli: &Cli, action: ReadAction<'_>) -> Result<View> {
         Err(e) => return Err(e),
     };
     let result = match action {
-        ReadAction::List { available, repos } => {
-            list(&mut client, &channel, &session, host, available, repos)
-        }
+        ReadAction::List(filters) => list(&mut client, &channel, &session, host, filters),
         ReadAction::Info { spec } => info(&mut client, &channel, &session, host, spec),
         ReadAction::Search { pattern } => search(&mut client, &channel, &session, host, pattern),
         ReadAction::CheckUpdate => check_update(&mut client, &channel, &session, host),
@@ -351,7 +356,14 @@ fn read_via_packagekit(
 ) -> Result<View> {
     use crate::capabilities::packages_pk as pk;
     let result = match action {
-        ReadAction::List { available, repos } => pk::list(client, available, repos),
+        ReadAction::List(filters) => pk::list(
+            client,
+            filters.available,
+            filters.repos,
+            filters.name,
+            filters.limit,
+            filters.offset,
+        ),
         ReadAction::Info { spec } => pk::info(client, spec),
         ReadAction::Search { pattern } => pk::search(client, pattern),
         ReadAction::CheckUpdate => pk::check_update(client),
@@ -398,10 +410,13 @@ fn list(
     channel: &str,
     session: &str,
     host: String,
-    available: bool,
-    repos: &[String],
+    filters: ListFilters<'_>,
 ) -> Result<View> {
-    let scope = if available { "available" } else { "installed" };
+    let scope = if filters.available {
+        "available"
+    } else {
+        "installed"
+    };
     let raw = rpm_list(client, channel, session, scope, &[])?;
     // dnf5daemon's Rpm.list has no server-side repo filter (only install/upgrade
     // accept `repo_ids`, for resolution), so we filter client-side on the exact
@@ -409,13 +424,27 @@ fn list(
     // the requested set. An empty set means no filter (issue #59).
     let filtered: Vec<&Value> = raw
         .iter()
-        .filter(|p| repos.is_empty() || repos.iter().any(|r| r == &sv(p, "repo_id")))
+        .filter(|p| {
+            filters.repos.is_empty() || filters.repos.iter().any(|r| r == &sv(p, "repo_id"))
+        })
+        .filter(|p| {
+            filters
+                .name
+                .is_none_or(|pattern| sv(p, "name").contains(pattern))
+        })
         .collect();
+    let total = filtered.len();
+    let start = filters.offset.min(total);
+    let end = match filters.limit {
+        Some(limit) => (start + limit).min(total),
+        None => total,
+    };
+    let page = &filtered[start..end];
     let mut human = format!(
         "{:<24} {:<20} {:<10} {}\n",
         "NAME", "VERSION", "ARCH", "REPO"
     );
-    for p in &filtered {
+    for p in page {
         human.push_str(&format!(
             "{:<24} {:<20} {:<10} {}\n",
             sv(p, "name"),
@@ -424,13 +453,26 @@ fn list(
             sv(p, "repo_id"),
         ));
     }
-    let rows: Vec<Value> = filtered.iter().map(|p| package_row(p)).collect();
+    let rows: Vec<Value> = page.iter().map(|p| package_row(p)).collect();
     let mut data = crate::envelope::table_data(PKG_COLUMNS, rows);
     data["scope"] = json!(scope);
     // Echo the requested repo filter so callers can confirm what was applied.
-    data["repos"] = json!(repos);
+    data["repos"] = json!(filters.repos);
+    data["name"] = json!(filters.name);
+    data["total"] = json!(total);
+    data["returned"] = json!(end - start);
+    data["limit"] = json!(filters.limit);
+    data["offset"] = json!(filters.offset);
+    data["next_offset"] = json!((end < total).then_some(end));
     data["backend"] = json!("dnf5daemon");
-    Ok(View::new("PackageList", host, data, human))
+    let hints = if filters.limit.is_none() && total > 1000 {
+        Some(json!([format!(
+            "This response has {total} rows. Prefer packages search <pattern>, use --name, or use --limit."
+        )]))
+    } else {
+        None
+    };
+    Ok(View::new("PackageList", host, data, human).with_hints_opt(hints))
 }
 
 fn info(

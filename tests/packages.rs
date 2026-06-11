@@ -1,8 +1,20 @@
 use predicates::prelude::PredicateBooleanExt;
 use predicates::str::contains;
+use serde_json::Value;
 
 mod common;
 use common::{fez_fake, AuditLog, PKG_COLUMNS};
+
+fn package_list_json(args: &[&str]) -> Value {
+    let output = fez_fake().args(args).output().expect("run fez");
+    assert!(
+        output.status.success(),
+        "fez failed: stdout={} stderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    serde_json::from_slice(&output.stdout).expect("valid JSON envelope")
+}
 
 #[test]
 fn packages_list_json_has_packages() {
@@ -94,6 +106,64 @@ fn packages_list_no_repo_returns_all() {
         .success()
         .stdout(contains("bash"))
         .stdout(contains("vim-enhanced"));
+}
+
+#[test]
+fn packages_list_limit_offset_returns_page_metadata() {
+    let envelope = package_list_json(&[
+        "packages", "list", "--limit", "2", "--offset", "1", "--json",
+    ]);
+    let data = &envelope["data"];
+    let rows = data["rows"].as_array().expect("rows array");
+    let names: Vec<&str> = rows
+        .iter()
+        .map(|row| row[0].as_str().expect("package name"))
+        .collect();
+
+    assert_eq!(names, ["htop", "nginx"]);
+    assert_eq!(data["count"], 2);
+    assert_eq!(data["total"], 4);
+    assert_eq!(data["returned"], 2);
+    assert_eq!(data["limit"], 2);
+    assert_eq!(data["offset"], 1);
+    assert_eq!(data["next_offset"], 3);
+}
+
+#[test]
+fn packages_list_name_filter_reduces_available_rows() {
+    let envelope =
+        package_list_json(&["packages", "list", "--available", "--name", "ngi", "--json"]);
+    let data = &envelope["data"];
+    let rows = data["rows"].as_array().expect("rows array");
+
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0][0], "nginx");
+    assert_eq!(data["name"], "ngi");
+    assert_eq!(data["total"], 1);
+}
+
+#[test]
+fn packages_list_large_unpaginated_response_hints_to_filter() {
+    let output = fez_fake()
+        .env("FEZ_FAKE_PACKAGE_COUNT", "1001")
+        .args(["packages", "list", "--available", "--json"])
+        .output()
+        .expect("run fez");
+    assert!(output.status.success());
+    let envelope: Value = serde_json::from_slice(&output.stdout).expect("valid JSON envelope");
+
+    assert_eq!(envelope["data"]["total"], 1001);
+    assert_eq!(envelope["data"]["limit"], Value::Null);
+    assert!(
+        envelope["hints"]
+            .as_array()
+            .expect("hints array")
+            .iter()
+            .any(|hint| hint
+                .as_str()
+                .is_some_and(|h| h.contains("use --limit") && h.contains("--name"))),
+        "expected pagination/filter hint in {envelope}"
+    );
 }
 
 #[test]
