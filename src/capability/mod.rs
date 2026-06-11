@@ -1,6 +1,7 @@
 //! Machine-readable descriptions of every capability fez exposes, used to
 //! advertise the command surface (ids, inputs, flags, examples) to agents.
-use serde::Serialize;
+use serde::ser::SerializeStruct;
+use serde::{Serialize, Serializer};
 
 pub mod help;
 
@@ -17,10 +18,28 @@ pub struct Input {
     /// Default value used when the input is omitted, if any.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub default: Option<String>,
+    /// Allowed values for constrained inputs, if any.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub choices: Option<Vec<String>>,
+}
+
+#[derive(Serialize, Clone)]
+struct FlagSchema {
+    name: String,
+    #[serde(rename = "type")]
+    ty: String,
+    description: String,
+    repeatable: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    default: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    choices: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    conflicts_with: Vec<String>,
 }
 
 /// A complete description of one capability.
-#[derive(Serialize, Clone)]
+#[derive(Clone)]
 pub struct Descriptor {
     /// Dotted capability id (e.g. `services.start`).
     pub id: String,
@@ -38,6 +57,25 @@ pub struct Descriptor {
     pub flags: Vec<String>,
     /// Example invocations (maps to clap `after_help`).
     pub examples: Vec<String>,
+}
+
+impl Serialize for Descriptor {
+    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let mut s = serializer.serialize_struct("Descriptor", 10)?;
+        s.serialize_field("id", &self.id)?;
+        s.serialize_field("summary", &self.summary)?;
+        s.serialize_field("long", &self.long)?;
+        s.serialize_field("privileged", &self.privileged)?;
+        s.serialize_field("output_kind", &self.output_kind)?;
+        s.serialize_field("inputs", &self.inputs)?;
+        s.serialize_field("flags", &self.flags)?;
+        s.serialize_field("flag_schema", &self.flag_schema())?;
+        s.serialize_field("examples", &self.examples)?;
+        s.end()
+    }
 }
 
 impl Descriptor {
@@ -62,6 +100,9 @@ impl Descriptor {
                 if let Some(default) = &i.default {
                     s.push_str(&format!(" (default: {default})"));
                 }
+                if let Some(choices) = &i.choices {
+                    s.push_str(&format!(" choices: {}", choices.join(", ")));
+                }
                 s.push('\n');
             }
         }
@@ -79,6 +120,13 @@ impl Descriptor {
         }
         s
     }
+
+    fn flag_schema(&self) -> Vec<FlagSchema> {
+        self.flags
+            .iter()
+            .map(|flag| flag_schema(&self.id, flag))
+            .collect()
+    }
 }
 
 fn input(name: &str, required: bool) -> Input {
@@ -87,6 +135,184 @@ fn input(name: &str, required: bool) -> Input {
         ty: "string".into(),
         required,
         default: None,
+        choices: None,
+    }
+}
+
+fn input_choices(name: &str, required: bool, choices: &[&str]) -> Input {
+    Input {
+        name: name.into(),
+        ty: "string".into(),
+        required,
+        default: None,
+        choices: Some(choices.iter().map(|choice| (*choice).to_string()).collect()),
+    }
+}
+
+fn flag_schema(capability_id: &str, flag: &str) -> FlagSchema {
+    let (ty, description, repeatable, default, choices, conflicts_with) = match flag {
+        "--host" => (
+            "string",
+            "Target host. Defaults to localhost.",
+            false,
+            Some("localhost"),
+            None,
+            vec![],
+        ),
+        "--json" => (
+            "boolean",
+            "Emit a fez/v1 JSON envelope.",
+            false,
+            None,
+            None,
+            vec![],
+        ),
+        "--dry-run" => (
+            "boolean",
+            "Resolve and report the planned mutation without applying it.",
+            false,
+            None,
+            None,
+            vec![],
+        ),
+        "--force" => (
+            "boolean",
+            "Override command-specific safety guardrails.",
+            false,
+            None,
+            None,
+            vec![],
+        ),
+        "--state" => ("string", "Filter by state.", false, None, None, vec![]),
+        "--since" => (
+            "string",
+            "Only include log entries since this journalctl time expression.",
+            false,
+            None,
+            None,
+            vec![],
+        ),
+        "--priority" => (
+            "string",
+            "Only include log entries at this priority or higher.",
+            false,
+            None,
+            None,
+            vec![],
+        ),
+        "--lines" => (
+            "integer",
+            "Limit log output to the last N entries.",
+            false,
+            None,
+            None,
+            vec![],
+        ),
+        "--follow" => (
+            "boolean",
+            "Stream new log entries.",
+            false,
+            None,
+            None,
+            vec![],
+        ),
+        "--now" => (
+            "boolean",
+            "Start or stop the unit immediately with the enablement change.",
+            false,
+            None,
+            None,
+            vec![],
+        ),
+        "--installed" => (
+            "boolean",
+            "List installed packages.",
+            false,
+            Some("true"),
+            None,
+            vec!["--available"],
+        ),
+        "--available" => (
+            "boolean",
+            "List available packages.",
+            false,
+            None,
+            None,
+            vec!["--installed"],
+        ),
+        "--repo" => (
+            "string",
+            "Restrict packages to this exact repository id.",
+            true,
+            None,
+            None,
+            vec![],
+        ),
+        "--enabled" => (
+            "boolean",
+            "Show only enabled repositories.",
+            false,
+            Some("true"),
+            None,
+            vec!["--disabled", "--all"],
+        ),
+        "--disabled" => (
+            "boolean",
+            "Show only disabled repositories.",
+            false,
+            None,
+            None,
+            vec!["--enabled", "--all"],
+        ),
+        "--all" if capability_id == "packages.repolist" => (
+            "boolean",
+            "Show all repositories.",
+            false,
+            None,
+            None,
+            vec!["--enabled", "--disabled"],
+        ),
+        "--all" => (
+            "boolean",
+            "Include all entries instead of the default subset.",
+            false,
+            None,
+            None,
+            vec![],
+        ),
+        "--zone" => (
+            "string",
+            "Firewall zone to target. Defaults to the target host's default zone.",
+            false,
+            None,
+            None,
+            vec![],
+        ),
+        "--timeout" => (
+            "integer",
+            "Auto-revert the runtime firewall change after this many seconds.",
+            false,
+            None,
+            None,
+            vec![],
+        ),
+        _ => (
+            "string",
+            "Capability-specific flag.",
+            false,
+            None,
+            None,
+            vec![],
+        ),
+    };
+    FlagSchema {
+        name: flag.to_string(),
+        ty: ty.to_string(),
+        description: description.to_string(),
+        repeatable,
+        default: default.map(str::to_string),
+        choices: choices.map(|values: &[&str]| values.iter().map(|v| (*v).to_string()).collect()),
+        conflicts_with: conflicts_with.into_iter().map(str::to_string).collect(),
     }
 }
 
@@ -581,7 +807,7 @@ until confirmed. Privileged. --force is not required for confirm itself."
                 .into(),
             privileged: true,
             output_kind: "FirewallChange".into(),
-            inputs: vec![input("state", true)],
+            inputs: vec![input_choices("state", true, &["on", "off"])],
             flags: vec!["--host".into(), "--json".into(), "--force".into()],
             examples: vec![
                 "fez firewall panic off --json".into(),
@@ -600,7 +826,7 @@ Privileged."
                 .into(),
             privileged: true,
             output_kind: "FirewallChange".into(),
-            inputs: vec![input("state", true)],
+            inputs: vec![input_choices("state", true, &["on", "off"])],
             flags: vec![
                 "--host".into(),
                 "--json".into(),
