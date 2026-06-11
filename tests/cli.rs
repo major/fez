@@ -1,3 +1,4 @@
+use predicates::prelude::PredicateBooleanExt;
 use predicates::str::contains;
 
 mod common;
@@ -135,6 +136,38 @@ fn describe_human_output_includes_example() {
         .stdout(contains("fez services status"));
 }
 
+// Issue #62: top-level help promises describe prints inputs, output kind,
+// flags, and privileged status, but plain-text describe only showed the
+// summary/long/examples. Assert the plain-text output now carries the same
+// essential metadata the --json form does, so an agent reading text output can
+// act safely without switching to JSON.
+#[test]
+fn describe_text_includes_privileged_output_inputs_flags() {
+    fez()
+        .args(["describe", "services.start"])
+        .assert()
+        .success()
+        .stdout(contains("privileged: true"))
+        .stdout(contains("output: ServiceMutation"))
+        .stdout(contains("inputs:"))
+        .stdout(contains("unit: string required"))
+        .stdout(contains("flags:"))
+        .stdout(contains("--force"))
+        .stdout(contains("--dry-run"));
+}
+
+// A read-only capability is not privileged and takes no required inputs; its
+// plain-text describe should say so rather than omit the section.
+#[test]
+fn describe_text_marks_readonly_not_privileged() {
+    fez()
+        .args(["describe", "services.list"])
+        .assert()
+        .success()
+        .stdout(contains("privileged: false"))
+        .stdout(contains("output: ServiceList"));
+}
+
 #[test]
 fn describe_unknown_json_still_exits_4() {
     fez()
@@ -152,6 +185,33 @@ fn services_start_help_shows_examples_and_long() {
         .success()
         .stdout(contains("Examples:"))
         .stdout(contains("--force"));
+}
+
+// Issue #63: the global --force help was systemd-specific ("Override the
+// protected-unit policy"), but --force also gates package and firewall
+// guardrails. The top-level flag text must be generic; the per-command long
+// help keeps the precise risk wording (protected units, dangerous
+// transactions, firewall lockout).
+#[test]
+fn global_force_help_not_systemd_specific() {
+    fez()
+        .arg("--help")
+        .assert()
+        .success()
+        .stdout(contains("--force"))
+        .stdout(contains("Override command-specific safety guardrails"))
+        .stdout(contains("protected-unit policy").not());
+}
+
+// Service command help must still describe the protected-unit behavior so the
+// detailed risk wording is not lost when the global text goes generic.
+#[test]
+fn services_start_help_keeps_protected_unit_wording() {
+    fez()
+        .args(["services", "start", "--help"])
+        .assert()
+        .success()
+        .stdout(contains("Protected units"));
 }
 
 #[test]

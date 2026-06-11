@@ -21,7 +21,7 @@ pub struct Cli {
     #[arg(long, global = true)]
     pub dry_run: bool,
 
-    /// Override the protected-unit policy and skip interactive confirmation.
+    /// Override command-specific safety guardrails. See command help for exact risks.
     #[arg(long, global = true)]
     pub force: bool,
 
