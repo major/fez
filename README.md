@@ -40,6 +40,9 @@ fez --host web1 services status nginx.service --json
 
 # Run as an MCP server (JSON-RPC 2.0 over stdio) for MCP-aware agents.
 fez mcp
+
+# Also expose strict per-capability MCP tools, such as services_status.
+fez mcp --expanded-tools
 ```
 
 Every command supports `--json` (the `fez/v1` envelope), `--host` (localhost by

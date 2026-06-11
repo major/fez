@@ -24,18 +24,18 @@ pub struct Input {
 }
 
 #[derive(Serialize, Clone)]
-struct FlagSchema {
-    name: String,
+pub(crate) struct FlagSchema {
+    pub(crate) name: String,
     #[serde(rename = "type")]
-    ty: String,
-    description: String,
-    repeatable: bool,
+    pub(crate) ty: String,
+    pub(crate) description: String,
+    pub(crate) repeatable: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
-    default: Option<String>,
+    pub(crate) default: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    choices: Option<Vec<String>>,
+    pub(crate) choices: Option<Vec<String>>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
-    conflicts_with: Vec<String>,
+    pub(crate) conflicts_with: Vec<String>,
 }
 
 /// A complete description of one capability.
@@ -121,7 +121,7 @@ impl Descriptor {
         s
     }
 
-    fn flag_schema(&self) -> Vec<FlagSchema> {
+    pub(crate) fn flag_schema(&self) -> Vec<FlagSchema> {
         self.flags
             .iter()
             .map(|flag| flag_schema(&self.id, flag))
