@@ -14,6 +14,13 @@ run_os_job() {
 
   # shellcheck disable=SC2329  # cleanup is invoked indirectly via `trap cleanup EXIT` below.
   cleanup() {
+    # Powering the guest off before destroy lets EC2 release it faster than
+    # tearing down a running instance; best-effort, never blocks teardown.
+    if [[ -n "${FEZ_SSH_CONFIG:-}" ]]; then
+      ssh -F "$FEZ_SSH_CONFIG" -o BatchMode=yes -o ConnectTimeout=10 target \
+        'sudo systemctl poweroff' >/dev/null 2>&1 || true
+      sleep 5
+    fi
     terraform -chdir="$TF" destroy -auto-approve -var "os=$OS" >>"$infra_log" 2>&1 || true
     rm -rf "$WORK"
   }
@@ -72,13 +79,23 @@ EOF
   fi
 
   # Run each capability; record status; file an issue per capability failure.
-  local cap status
+  # Capture the full per-step output to a temp so the PASS/FAIL banners land in
+  # the job log (this stdout is tee'd by run.sh), then read the terminal status
+  # line. Echoing the banners is what makes a failure debuggable after teardown.
+  local cap status capout
+  capout="$WORK/cap.out"
   for cap in services packages network firewall; do
     echo "== $OS: $cap =="
     : >"$STEP_LOG"
-    status="$("test_$cap" | tail -n1)"
+    "test_$cap" >"$capout" 2>&1 || true
+    cat "$capout"
+    status="$(tail -n1 "$capout")"
     echo "$OS $cap $status" >>"$RESULT_FILE"
     if [[ "$status" == "fail" ]]; then
+      # Also surface the forensic step log inline before teardown wipes it.
+      echo "---- $OS $cap forensics ----"
+      cat "$STEP_LOG"
+      echo "----------------------------"
       file_capability_issue "$cap" "$STEP_LOG"
     fi
   done

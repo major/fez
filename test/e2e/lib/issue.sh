@@ -24,6 +24,15 @@ _find_open() {
     --jq "map(select(.body | contains(\"$1\"))) | (.[0].number // empty)"
 }
 
+# _ensure_label: create the `e2e` label if the repo lacks it. Idempotent and
+# best-effort; a missing label must not abort issue creation (gh issue create
+# hard-fails on an unknown --label, so guarantee it exists first).
+_ensure_label() {
+  gh label create e2e \
+    --description "fez end-to-end matrix failures" \
+    --color B60205 >/dev/null 2>&1 || true
+}
+
 # _file <title> <marker> <body-file>
 # Comment on the existing open issue if the marker matches, else create one.
 _file() {
@@ -35,6 +44,7 @@ _file() {
       | gh issue comment "$num" --body-file -
     echo "commented on #$num: $title"
   else
+    _ensure_label
     gh issue create --title "$title" --label e2e --body-file "$body_file" >/dev/null
     echo "created issue: $title"
   fi
