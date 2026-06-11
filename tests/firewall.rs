@@ -404,3 +404,68 @@ fn masquerade_on_without_escalation_exits_11() {
         .assert()
         .code(11);
 }
+
+// ---- issue #60: actionable firewall dependency and API errors ----
+
+// On a real host firewalld's D-Bus name may be unreachable (absent or its unit
+// failed): cockpit closes the channel with `not-found`, which previously
+// surfaced as the vague `channel problem: not-found`. It must instead map to a
+// stable dependency-missing error (exit 9) with remediation, not exit 4.
+#[test]
+fn unreachable_firewalld_maps_to_dependency_missing() {
+    fez_fake()
+        .env("FEZ_FAKE_FIREWALLD_UNREACHABLE", "1")
+        .args(["firewall", "list", "--json"])
+        .assert()
+        .code(9)
+        .stdout(contains("\"code\":\"dependency-missing\""))
+        .stdout(contains("firewalld"))
+        // The vague channel-problem wording must not leak through.
+        .stdout(contains("channel problem").not());
+}
+
+// The dependency-missing envelope carries a remediation hint for safe
+// read-only follow-up (checking the service), not just a bare message.
+#[test]
+fn unreachable_firewalld_includes_remediation_detail() {
+    fez_fake()
+        .env("FEZ_FAKE_FIREWALLD_UNREACHABLE", "1")
+        .args(["firewall", "status", "--json"])
+        .assert()
+        .code(9)
+        .stdout(contains("\"code\":\"dependency-missing\""))
+        .stdout(contains("firewalld.service"))
+        // A safe read-only follow-up hint points at the service-status check.
+        .stdout(contains("\"hints\""))
+        .stdout(contains("fez services status firewalld.service"));
+}
+
+// An older firewalld without getMasquerade returns UnknownMethod; that used to
+// leak as a raw dbus-error. It must map to the unsupported-api code (exit 12)
+// with the method name, so an LLM treats the feature as unsupported rather than
+// retrying or recommending an install.
+#[test]
+fn missing_masquerade_method_maps_to_unsupported_api() {
+    fez_fake()
+        .env("FEZ_FAKE_NO_MASQUERADE", "1")
+        .args(["firewall", "status", "--json"])
+        .assert()
+        .code(12)
+        .stdout(contains("\"code\":\"unsupported-api\""))
+        .stdout(contains("getMasquerade"))
+        // The hint tells the caller to treat the feature as unsupported.
+        .stdout(contains("unsupported"));
+}
+
+// Plain-text (no --json) still renders a single actionable error line, not the
+// raw dbus/channel internals.
+#[test]
+fn unreachable_firewalld_plain_text_is_actionable() {
+    fez_fake()
+        .env("FEZ_FAKE_FIREWALLD_UNREACHABLE", "1")
+        .args(["firewall", "list"])
+        .assert()
+        .code(9)
+        .stderr(contains("firewalld"))
+        .stderr(contains("channel problem").not());
+}

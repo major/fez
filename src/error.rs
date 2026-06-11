@@ -81,6 +81,12 @@ pub enum FezError {
         /// Actionable guidance to enable privilege escalation and retry.
         remediation: String,
     },
+    /// The managed subsystem is present but does not expose a D-Bus method fez
+    /// needs (the call returned `UnknownMethod`), e.g. an older firewalld
+    /// without `getMasquerade`. Distinct from a missing dependency: the service
+    /// is reachable but its API surface is too old.
+    #[error("unsupported API: {0} is not available on the target")]
+    UnsupportedApi(String),
 }
 
 /// One documented exit code in the agent-facing contract.
@@ -148,6 +154,11 @@ pub const EXIT_CODES: &[ExitCodeDoc] = &[
         label: "access-denied",
         meaning: "Privilege escalation to root failed (e.g. sudo requires a password fez does not supply).",
     },
+    ExitCodeDoc {
+        code: 12,
+        label: "unsupported-api",
+        meaning: "The managed subsystem is reachable but lacks a required D-Bus method (API too old).",
+    },
 ];
 
 impl FezError {
@@ -168,6 +179,7 @@ impl FezError {
             FezError::Usage(_) => "usage",
             FezError::Aborted => "aborted",
             FezError::AccessDenied { .. } => "access-denied",
+            FezError::UnsupportedApi(_) => "unsupported-api",
         }
     }
     /// Process exit code to use when this error is fatal.
@@ -184,6 +196,7 @@ impl FezError {
             FezError::DependencyMissing { .. } => 9,
             FezError::DangerousTransaction { .. } => 10,
             FezError::AccessDenied { .. } => 11,
+            FezError::UnsupportedApi(_) => 12,
             _ => 1,
         }
     }
@@ -239,6 +252,7 @@ mod tests {
             }
             .exit_code(),
             FezError::Usage("missing <UNIT>".into()).exit_code(),
+            FezError::UnsupportedApi("getMasquerade".into()).exit_code(),
         ];
         for code in produced {
             if code != 1 {
@@ -325,6 +339,14 @@ mod tests {
         assert_eq!(e.code(), "usage");
         assert_eq!(e.exit_code(), 2);
         assert!(e.to_string().contains("missing required argument"));
+    }
+
+    #[test]
+    fn unsupported_api_maps_code_and_exit() {
+        let e = FezError::UnsupportedApi("getMasquerade".into());
+        assert_eq!(e.code(), "unsupported-api");
+        assert_eq!(e.exit_code(), 12);
+        assert!(e.to_string().contains("getMasquerade"));
     }
 
     #[test]

@@ -102,8 +102,8 @@ fn fw_call(
     fw_call_path(client, channel, FW_PATH, iface, method, args)
 }
 
-/// Call a firewalld method on an explicit object path, mapping ServiceUnknown
-/// to the dependency-missing error.
+/// Call a firewalld method on an explicit object path, mapping low-level
+/// transport/D-Bus failures to actionable firewall errors via [`map_fw_error`].
 fn fw_call_path(
     client: &mut BridgeClient,
     channel: &str,
@@ -112,10 +112,39 @@ fn fw_call_path(
     method: &str,
     args: Value,
 ) -> Result<Value> {
-    match client.dbus_call(channel, path, iface, method, args) {
-        Ok(v) => Ok(v),
-        Err(FezError::Dbus { name, .. }) if is_service_unknown(&name) => Err(dependency_missing()),
-        Err(e) => Err(e),
+    client
+        .dbus_call(channel, path, iface, method, args)
+        .map_err(|e| map_fw_error(e, method))
+}
+
+/// Map a raw bridge/D-Bus failure to an actionable firewall error (issue #60).
+///
+/// firewalld is D-Bus-activated, so an absent or failed service is not
+/// observably distinct from "installed but stopped": both surface as the name
+/// being unreachable. We therefore collapse all of those to
+/// [`dependency_missing`] (whose remediation covers install **and**
+/// enable+start) rather than inventing a `service-inactive` code fez cannot
+/// reliably detect:
+/// - `Dbus { ServiceUnknown | NameHasNoOwner }`: name not activatable.
+/// - `Problem("not-found")`: cockpit closed the channel because the name could
+///   not be reached (the symptom reported in #60).
+/// - `Problem("not-supported")`: the bus refused the name.
+///
+/// A `Dbus { UnknownMethod }` means firewalld is reachable but too old to
+/// expose the method; that maps to [`FezError::UnsupportedApi`] carrying the
+/// method name, so a caller treats the feature as unsupported instead of
+/// recommending an install. All other errors pass through unchanged, so the
+/// raw cause is preserved when it is already actionable (e.g. `AccessDenied`).
+fn map_fw_error(e: FezError, method: &str) -> FezError {
+    match e {
+        FezError::Dbus { ref name, .. } if is_service_unknown(name) => dependency_missing(),
+        FezError::Dbus { ref name, .. } if name.contains("UnknownMethod") => {
+            FezError::UnsupportedApi(method.to_string())
+        }
+        FezError::Problem(ref p) if p == "not-found" || p == "not-supported" => {
+            dependency_missing()
+        }
+        other => other,
     }
 }
 
@@ -907,7 +936,7 @@ fn render(cli: &Cli, result: Result<View>) -> i32 {
         }
         Err(e) => {
             if cli.json {
-                let env = Envelope::error(
+                let mut env = Envelope::error(
                     "Error",
                     &host,
                     ApiError {
@@ -916,12 +945,37 @@ fn render(cli: &Cli, result: Result<View>) -> i32 {
                         detail: error_detail(&e),
                     },
                 );
+                if let Some(h) = error_hints(&e) {
+                    env = env.with_hints(h);
+                }
                 println!("{}", env.to_json_string());
             } else {
                 eprintln!("error: {e}");
             }
             e.exit_code()
         }
+    }
+}
+
+/// Safe read-only follow-up hints for an actionable firewall error (issue #60).
+///
+/// A `dependency-missing` failure points at the service-status check (fez
+/// cannot tell absent from stopped, so the hint covers both); an
+/// `unsupported-api` failure tells the caller the feature is unavailable on
+/// this firewalld and not to retry. Other errors carry no firewall-specific
+/// hint.
+fn error_hints(e: &FezError) -> Option<Value> {
+    match e {
+        FezError::DependencyMissing { .. } => Some(json!({
+            "checkService": "fez services status firewalld.service --json",
+            "install": "dnf install firewalld",
+        })),
+        FezError::UnsupportedApi(method) => Some(json!({
+            "unsupported": format!(
+                "firewalld on this host does not expose {method}; treat the feature as unsupported"
+            ),
+        })),
+        _ => None,
     }
 }
 
@@ -937,6 +991,7 @@ fn error_detail(e: &FezError) -> Option<Value> {
             "dbusName": dbus_name,
             "remediation": remediation,
         })),
+        FezError::UnsupportedApi(method) => Some(json!({ "method": method })),
         _ => None,
     }
 }
@@ -944,6 +999,79 @@ fn error_detail(e: &FezError) -> Option<Value> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn dbus(name: &str) -> FezError {
+        FezError::Dbus {
+            name: name.into(),
+            message: "boom".into(),
+        }
+    }
+
+    #[test]
+    fn map_fw_error_service_unknown_is_dependency_missing() {
+        let mapped = map_fw_error(
+            dbus("org.freedesktop.DBus.Error.ServiceUnknown"),
+            "getZones",
+        );
+        assert_eq!(mapped.code(), "dependency-missing");
+        assert_eq!(mapped.exit_code(), 9);
+        // NameHasNoOwner (the other activation-failure name) maps the same way.
+        assert_eq!(
+            map_fw_error(
+                dbus("org.freedesktop.DBus.Error.NameHasNoOwner"),
+                "getZones"
+            )
+            .code(),
+            "dependency-missing"
+        );
+    }
+
+    #[test]
+    fn map_fw_error_unknown_method_is_unsupported_api() {
+        let mapped = map_fw_error(
+            dbus("org.freedesktop.DBus.Error.UnknownMethod"),
+            "getMasquerade",
+        );
+        assert_eq!(mapped.code(), "unsupported-api");
+        assert_eq!(mapped.exit_code(), 12);
+        // The method name is carried for the caller.
+        assert!(matches!(
+            mapped,
+            FezError::UnsupportedApi(ref m) if m == "getMasquerade"
+        ));
+    }
+
+    #[test]
+    fn map_fw_error_channel_problem_is_dependency_missing() {
+        for problem in ["not-found", "not-supported"] {
+            let mapped = map_fw_error(FezError::Problem(problem.into()), "getZones");
+            assert_eq!(
+                mapped.code(),
+                "dependency-missing",
+                "Problem({problem}) should map to dependency-missing"
+            );
+        }
+    }
+
+    #[test]
+    fn map_fw_error_passes_through_unrelated_errors() {
+        // A channel problem that is not an activation symptom is left as-is, so
+        // its already-actionable raw cause survives (here: an unrelated
+        // "authentication-failed" -> code auth-failed, not dependency-missing).
+        assert_eq!(
+            map_fw_error(
+                FezError::Problem("authentication-failed".into()),
+                "getZones"
+            )
+            .code(),
+            "auth-failed"
+        );
+        // AccessDenied is untouched.
+        let denied = FezError::AccessDenied {
+            remediation: "enable sudo".into(),
+        };
+        assert_eq!(map_fw_error(denied, "getZones").code(), "access-denied");
+    }
 
     #[test]
     fn parse_port_spec_splits_port_and_proto() {

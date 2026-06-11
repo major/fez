@@ -438,8 +438,13 @@ fn fw_reply(
         }
         (FW_ZONE_IFACE, "getSources") => json!({"reply":[[[]]],"id": id}),
         // Runtime per-zone masquerade. `public` is seeded on (permanent is off),
-        // so masquerade drift is non-empty out of the box.
+        // so masquerade drift is non-empty out of the box. FEZ_FAKE_NO_MASQUERADE
+        // models an older firewalld that lacks the getMasquerade method: the call
+        // returns UnknownMethod, exercising the unsupported-api mapping (#60).
         (FW_ZONE_IFACE, "getMasquerade") => {
+            if std::env::var_os("FEZ_FAKE_NO_MASQUERADE").is_some() {
+                return fw_unknown("getMasquerade", id);
+            }
             if zone == "public" {
                 json!({"reply":[[true]],"id": id})
             } else {
@@ -731,6 +736,20 @@ fn main() -> io::Result<()> {
                     .unwrap_or("")
                     .to_string();
                 let payload = ctrl.get("payload").and_then(Value::as_str).unwrap_or("");
+                let open_name = ctrl.get("name").and_then(Value::as_str).unwrap_or("");
+                // FEZ_FAKE_FIREWALLD_UNREACHABLE models a real host where the
+                // firewalld D-Bus name cannot be activated (absent or its unit
+                // failed): cockpit-bridge closes the channel with `not-found`
+                // rather than a Dbus error reply, which is the symptom in #60.
+                if std::env::var_os("FEZ_FAKE_FIREWALLD_UNREACHABLE").is_some()
+                    && open_name == "org.fedoraproject.FirewallD1"
+                {
+                    send_control(
+                        &mut stdout,
+                        &json!({"command":"close","channel":channel,"problem":"not-found"}),
+                    );
+                    continue;
+                }
                 // A privileged channel (`superuser: "require"`) the bridge
                 // cannot route to root closes with `access-denied` instead of
                 // `ready`: that means no cockpit.Superuser.Start has succeeded
