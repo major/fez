@@ -1,6 +1,6 @@
 use crate::error::{FezError, Result};
 use crate::protocol::frame::{read_frame, write_frame, Frame};
-use crate::protocol::message::{Control, DbusCall, DbusResponse, IncomingControl};
+use crate::protocol::message::{Control, DbusCall, DbusResponse, DbusSignal, IncomingControl};
 use crate::transport::Transport;
 use serde_json::{json, Value};
 use std::process::{Child, Stdio};
@@ -339,6 +339,66 @@ impl BridgeClient {
                 });
             }
             return Ok(resp.out_args().cloned().unwrap_or(Value::Null));
+        }
+    }
+
+    /// Send a D-Bus method call on `channel` and collect the signals it emits
+    /// until a `Finished` signal (or a channel close) terminates the stream.
+    ///
+    /// PackageKit transactions report their result as a stream of signals on
+    /// the transaction object path rather than as a method reply, so the
+    /// request/reply [`BridgeClient::dbus_call`] cannot observe them. This sends
+    /// the call, then accumulates every `signal` frame on `channel` whose path
+    /// matches `path`, returning the raw `(member, args)` pairs in arrival
+    /// order. The method-call reply itself (an empty reply) is ignored; only
+    /// signals carry the payload. A `Finished` signal ends collection.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`FezError::BridgeClosed`] / [`FezError::Timeout`] on transport
+    /// failure, [`FezError::Decode`] on a malformed frame, or the mapped close
+    /// problem if the channel closes with an error before `Finished`.
+    pub fn dbus_call_collect(
+        &mut self,
+        channel: &str,
+        path: &str,
+        iface: &str,
+        method: &str,
+        args: Value,
+    ) -> Result<Vec<(String, Vec<Value>)>> {
+        let call = DbusCall::new(channel, path, iface, method, args);
+        write_frame(&mut self.stdin, &Frame::new(channel, call.to_json())).map_err(FezError::Io)?;
+        let mut collected: Vec<(String, Vec<Value>)> = Vec::new();
+        loop {
+            let frame = self.recv()?;
+            if frame.channel.is_empty() {
+                let c: IncomingControl =
+                    serde_json::from_slice(&frame.payload).map_err(FezError::Decode)?;
+                if c.command == "close" && c.channel.as_deref() == Some(channel) {
+                    return Err(close_problem_to_error(c.problem));
+                }
+                continue;
+            }
+            if frame.channel != channel {
+                continue;
+            }
+            // A signal frame? Decode and accumulate; stop on Finished.
+            let sig: DbusSignal =
+                serde_json::from_slice(&frame.payload).map_err(FezError::Decode)?;
+            let Some(member) = sig.member() else {
+                // Not a signal (e.g. the empty method reply); ignore.
+                continue;
+            };
+            if sig.path() != Some(path) {
+                continue; // signal from a different transaction object
+            }
+            let member = member.to_string();
+            let args = sig.args().cloned().unwrap_or_default();
+            let finished = member == "Finished";
+            collected.push((member, args));
+            if finished {
+                return Ok(collected);
+            }
         }
     }
 
