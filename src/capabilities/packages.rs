@@ -65,11 +65,20 @@ impl Mutation {
 /// variant here maps to a handler, so adding one is a compile error rather than
 /// a runtime panic.
 enum ReadAction<'a> {
-    List { available: bool },
-    Info { spec: &'a str },
-    Search { pattern: &'a str },
+    List {
+        available: bool,
+        repos: &'a [String],
+    },
+    Info {
+        spec: &'a str,
+    },
+    Search {
+        pattern: &'a str,
+    },
     CheckUpdate,
-    Repolist { filter: RepoFilter },
+    Repolist {
+        filter: RepoFilter,
+    },
 }
 
 /// Which repositories `repolist` should report.
@@ -118,9 +127,10 @@ fn classify(action: &PackagesAction) -> Plan<'_> {
         PackagesAction::List {
             installed: _installed,
             available,
-            repo: _repo,
+            repo,
         } => Plan::Read(ReadAction::List {
             available: *available,
+            repos: repo,
         }),
         PackagesAction::Info { spec } => Plan::Read(ReadAction::Info { spec }),
         PackagesAction::Search { pattern } => Plan::Read(ReadAction::Search { pattern }),
@@ -304,7 +314,9 @@ fn run_read(cli: &Cli, action: ReadAction<'_>) -> Result<View> {
     let host = client.host().to_string();
     let (channel, session) = open_session(&mut client, false)?;
     let result = match action {
-        ReadAction::List { available } => list(&mut client, &channel, &session, host, available),
+        ReadAction::List { available, repos } => {
+            list(&mut client, &channel, &session, host, available, repos)
+        }
         ReadAction::Info { spec } => info(&mut client, &channel, &session, host, spec),
         ReadAction::Search { pattern } => search(&mut client, &channel, &session, host, pattern),
         ReadAction::CheckUpdate => check_update(&mut client, &channel, &session, host),
@@ -347,14 +359,23 @@ fn list(
     session: &str,
     host: String,
     available: bool,
+    repos: &[String],
 ) -> Result<View> {
     let scope = if available { "available" } else { "installed" };
     let raw = rpm_list(client, channel, session, scope, &[])?;
+    // dnf5daemon's Rpm.list has no server-side repo filter (only install/upgrade
+    // accept `repo_ids`, for resolution), so we filter client-side on the exact
+    // `repo_id`. Multiple --repo flags union: a row is kept if its repo id is in
+    // the requested set. An empty set means no filter (issue #59).
+    let filtered: Vec<&Value> = raw
+        .iter()
+        .filter(|p| repos.is_empty() || repos.iter().any(|r| r == &sv(p, "repo_id")))
+        .collect();
     let mut human = format!(
         "{:<24} {:<20} {:<10} {}\n",
         "NAME", "VERSION", "ARCH", "REPO"
     );
-    for p in &raw {
+    for p in &filtered {
         human.push_str(&format!(
             "{:<24} {:<20} {:<10} {}\n",
             sv(p, "name"),
@@ -363,9 +384,11 @@ fn list(
             sv(p, "repo_id"),
         ));
     }
-    let rows: Vec<Value> = raw.iter().map(package_row).collect();
+    let rows: Vec<Value> = filtered.iter().map(|p| package_row(p)).collect();
     let mut data = crate::envelope::table_data(PKG_COLUMNS, rows);
     data["scope"] = json!(scope);
+    // Echo the requested repo filter so callers can confirm what was applied.
+    data["repos"] = json!(repos);
     Ok(View {
         kind: "PackageList",
         host,

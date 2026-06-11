@@ -78,10 +78,17 @@ fn dnf_reply(method: &str, iface: &str, id: &Value) -> Value {
             dnf_repo("updates-testing", "Fedora - Testing", false),
         ]]],"id": id}),
         // rpm.Rpm.list(options) -> (packages).
+        //
+        // The daemon's Rpm.list has no server-side repo filter (only `install`
+        // /`upgrade` take `repo_ids`, for resolution), so the fake always
+        // returns the full multi-repo set and the client filters by `repo_id`.
+        // `vim` lives in `updates` so `--repo fedora` must drop it and
+        // `--repo updates` must keep only it (issue #59).
         "list" => json!({"reply":[[[
             dnf_package("bash", "5.2.26-1.fc40", "x86_64", "fedora", 7340032),
             dnf_package("htop", "3.3.0-1.fc40", "x86_64", "fedora", 245760),
             dnf_package("nginx", "1.24.0-7.fc40", "x86_64", "fedora", 1572864),
+            dnf_package("vim-enhanced", "9.1.0-1.fc40", "x86_64", "updates", 3145728),
         ]]],"id": id}),
         // Staging calls: install/remove/upgrade return nothing.
         "install" | "remove" | "upgrade" => json!({"reply":[[]],"id": id}),
