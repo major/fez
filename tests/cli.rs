@@ -109,6 +109,63 @@ fn describe_json_includes_typed_flag_schema() {
 }
 
 #[test]
+fn describe_json_includes_output_schema_for_object_payloads() {
+    fez()
+        .args(["describe", "services.status", "--json"])
+        .assert()
+        .success()
+        .stdout(contains("\"output\""))
+        .stdout(contains("\"kind\":\"ServiceStatus\""))
+        .stdout(contains("\"schema\""))
+        .stdout(contains("\"id\":{\"type\":\"string\"}"))
+        .stdout(contains("\"active_state\":{\"type\":\"string\"}"))
+        .stdout(contains(
+            "\"required\":[\"id\",\"load_state\",\"active_state\",\"sub_state\"]",
+        ))
+        .stdout(contains("\"error\""))
+        .stdout(contains("\"apiVersion\":{\"type\":\"string\"}"))
+        .stdout(contains(
+            "\"status\":{\"const\":\"error\",\"type\":\"string\"}",
+        ))
+        .stdout(contains("\"code\":{\"type\":\"string\"}"));
+}
+
+#[test]
+fn describe_json_includes_output_schema_for_table_payloads() {
+    fez()
+        .args(["describe", "packages.list", "--json"])
+        .assert()
+        .success()
+        .stdout(contains("\"output\""))
+        .stdout(contains("\"kind\":\"PackageList\""))
+        .stdout(contains(
+            "\"const\":[\"name\",\"evr\",\"arch\",\"repo_id\",\"install_size\",\"summary\"]",
+        ))
+        .stdout(contains("\"prefixItems\":[{\"type\":\"string\"}"))
+        .stdout(contains("{\"type\":\"integer\"}"))
+        .stdout(contains("\"count\":{\"type\":\"integer\"}"));
+}
+
+#[test]
+fn describe_json_documents_dry_run_alternate_outputs() {
+    fez()
+        .args(["describe", "services.start", "--json"])
+        .assert()
+        .success()
+        .stdout(contains("\"alternates\""))
+        .stdout(contains("\"kind\":\"DryRun\""))
+        .stdout(contains("\"command\":{\"type\":\"string\"}"));
+
+    fez()
+        .args(["describe", "packages.install", "--json"])
+        .assert()
+        .success()
+        .stdout(contains("\"alternates\""))
+        .stdout(contains("\"kind\":\"PackagePlan\""))
+        .stdout(contains("\"dry_run\":{\"type\":\"boolean\"}"));
+}
+
+#[test]
 fn describe_json_marks_repeatable_and_conflicting_flags() {
     fez()
         .args(["describe", "packages.list", "--json"])
