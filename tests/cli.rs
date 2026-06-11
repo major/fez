@@ -157,6 +157,15 @@ fn help_lists_mcp_subcommand() {
 }
 
 #[test]
+fn mcp_help_lists_expanded_tools_flag() {
+    fez()
+        .args(["mcp", "--help"])
+        .assert()
+        .success()
+        .stdout(contains("--expanded-tools"));
+}
+
+#[test]
 fn capabilities_json_emits_envelope() {
     fez()
         .args(["capabilities", "--json"])

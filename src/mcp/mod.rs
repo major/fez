@@ -1,7 +1,7 @@
-//! A frugal MCP gateway over stdio (Section 6.1): newline-delimited JSON-RPC 2.0
-//! advertising exactly three meta-tools (`list_capabilities`,
-//! `describe_capability`, `invoke`) so MCP consumers discover capabilities on
-//! demand instead of preloading N tool schemas.
+//! An MCP gateway over stdio: newline-delimited JSON-RPC 2.0 advertising three
+//! frugal meta-tools (`list_capabilities`, `describe_capability`, `invoke`) by
+//! default, with optional expanded per-capability tools for clients that prefer
+//! strict JSON schemas up front.
 pub mod jsonrpc;
 
 use crate::capability;
@@ -20,19 +20,27 @@ const GLOBAL_FLAGS: [&str; 4] = ["--host", "--json", "--dry-run", "--force"];
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct ServerContext {
     default_host: String,
+    expanded_tools: bool,
 }
 
 impl ServerContext {
-    fn new(default_host: String) -> Self {
-        Self { default_host }
+    fn new(default_host: String, expanded_tools: bool) -> Self {
+        Self {
+            default_host,
+            expanded_tools,
+        }
     }
 
     fn default_localhost() -> Self {
-        Self::new("localhost".to_string())
+        Self::new("localhost".to_string(), false)
     }
 
     fn default_host(&self) -> &str {
         &self.default_host
+    }
+
+    fn expanded_tools(&self) -> bool {
+        self.expanded_tools
     }
 }
 
@@ -44,8 +52,11 @@ pub fn run() -> i32 {
 
 /// Run the MCP server using `default_host` for invoke calls that omit
 /// `arguments.host`.
-pub fn run_with_host(default_host: &str) -> i32 {
-    run_with_context(&ServerContext::new(default_host.to_string()))
+pub fn run_with_host(default_host: &str, expanded_tools: bool) -> i32 {
+    run_with_context(&ServerContext::new(
+        default_host.to_string(),
+        expanded_tools,
+    ))
 }
 
 fn run_with_context(context: &ServerContext) -> i32 {
@@ -125,13 +136,13 @@ fn tool_list(context: &ServerContext) -> Value {
         "Invoke a fez capability and return its fez/v1 JSON envelope. Mutations honor the full safety layer (protected units, dry-run, audit). Server default target host: {}. Set arguments.host to override it for one call.",
         context.default_host()
     );
-    json!([
-        {
+    let mut tools = vec![
+        json!({
             "name": "list_capabilities",
             "description": "List fez capability ids (e.g. services.list, services.start). On-demand discovery; nothing is preloaded.",
             "inputSchema": { "type": "object", "properties": {}, "additionalProperties": false }
-        },
-        {
+        }),
+        json!({
             "name": "describe_capability",
             "description": "Return the descriptor for one capability: summary, inputs, output kind, flags, whether it is privileged, and an example.",
             "inputSchema": {
@@ -140,8 +151,8 @@ fn tool_list(context: &ServerContext) -> Value {
                 "required": ["capability"],
                 "additionalProperties": false
             }
-        },
-        {
+        }),
+        json!({
             "name": "invoke",
             "description": invoke_description,
             "inputSchema": {
@@ -156,8 +167,137 @@ fn tool_list(context: &ServerContext) -> Value {
                 "required": ["capability"],
                 "additionalProperties": false
             }
+        }),
+    ];
+    if context.expanded_tools() {
+        tools.extend(capability::registry().into_iter().map(expanded_tool));
+    }
+    Value::Array(tools)
+}
+
+fn expanded_tool(d: capability::Descriptor) -> Value {
+    json!({
+        "name": expanded_tool_name(&d.id),
+        "description": expanded_tool_description(&d),
+        "inputSchema": expanded_tool_schema(&d),
+    })
+}
+
+fn expanded_tool_name(id: &str) -> String {
+    id.replace('.', "_")
+}
+
+fn expanded_tool_description(d: &capability::Descriptor) -> String {
+    let mut description = format!("{} {}", d.summary, d.long);
+    if d.privileged
+        || d.flags
+            .iter()
+            .any(|flag| flag == "--dry-run" || flag == "--force")
+    {
+        description.push_str(
+            " Supports dry_run to preview mutations and force to override command-specific safety guardrails when advertised in the input schema.",
+        );
+    }
+    description
+}
+
+fn expanded_tool_schema(d: &capability::Descriptor) -> Value {
+    let mut properties = serde_json::Map::new();
+    let mut required = Vec::new();
+
+    for input in &d.inputs {
+        properties.insert(input.name.clone(), input_schema(d, input));
+        if input.required {
+            required.push(Value::String(input.name.clone()));
         }
-    ])
+    }
+
+    for flag in d.flag_schema() {
+        if flag.name == "--json" {
+            continue;
+        }
+        properties.insert(flag_arg_name(&flag.name), flag_schema(&flag));
+    }
+
+    let mut schema = serde_json::Map::new();
+    schema.insert("type".to_string(), Value::String("object".to_string()));
+    schema.insert("properties".to_string(), Value::Object(properties));
+    if !required.is_empty() {
+        schema.insert("required".to_string(), Value::Array(required));
+    }
+    schema.insert("additionalProperties".to_string(), Value::Bool(false));
+    Value::Object(schema)
+}
+
+fn input_schema(d: &capability::Descriptor, input: &capability::Input) -> Value {
+    if is_variadic_input(d, input) {
+        return json!({
+            "oneOf": [
+                { "type": input.ty },
+                { "type": "array", "items": { "type": input.ty } }
+            ]
+        });
+    }
+
+    let mut schema = serde_json::Map::new();
+    schema.insert("type".to_string(), Value::String(input.ty.clone()));
+    if let Some(default) = &input.default {
+        schema.insert("default".to_string(), Value::String(default.clone()));
+    }
+    if let Some(choices) = &input.choices {
+        schema.insert(
+            "enum".to_string(),
+            Value::Array(choices.iter().cloned().map(Value::String).collect()),
+        );
+    }
+    Value::Object(schema)
+}
+
+fn is_variadic_input(d: &capability::Descriptor, input: &capability::Input) -> bool {
+    input.name == "specs" && d.id.starts_with("packages.")
+}
+
+fn flag_schema(flag: &capability::FlagSchema) -> Value {
+    let mut schema = serde_json::Map::new();
+    if flag.repeatable {
+        schema.insert("type".to_string(), Value::String("array".to_string()));
+        schema.insert("items".to_string(), json!({ "type": flag.ty }));
+    } else {
+        schema.insert("type".to_string(), Value::String(flag.ty.clone()));
+    }
+    schema.insert(
+        "description".to_string(),
+        Value::String(flag.description.clone()),
+    );
+    if flag.repeatable {
+        schema.insert("repeatable".to_string(), Value::Bool(true));
+    }
+    if let Some(default) = &flag.default {
+        schema.insert("default".to_string(), Value::String(default.clone()));
+    }
+    if let Some(choices) = &flag.choices {
+        schema.insert(
+            "enum".to_string(),
+            Value::Array(choices.iter().cloned().map(Value::String).collect()),
+        );
+    }
+    if !flag.conflicts_with.is_empty() {
+        schema.insert(
+            "conflicts_with".to_string(),
+            Value::Array(
+                flag.conflicts_with
+                    .iter()
+                    .cloned()
+                    .map(Value::String)
+                    .collect(),
+            ),
+        );
+    }
+    Value::Object(schema)
+}
+
+fn flag_arg_name(flag: &str) -> String {
+    flag.trim_start_matches("--").replace('-', "_")
 }
 
 /// Dispatch a `tools/call`. Err carries a JSON-RPC (code, message); protocol-level
@@ -195,8 +335,18 @@ fn tools_call(params: &Value, context: &ServerContext) -> Result<Value, (i64, St
                 .ok_or((-32602, "missing 'capability'".to_string()))?;
             invoke(id, &args, context)
         }
+        other if context.expanded_tools() => match capability_for_tool(other) {
+            Some(d) => invoke_expanded(&d, &args, context),
+            None => Err((-32602, format!("unknown tool: {other}"))),
+        },
         other => Err((-32602, format!("unknown tool: {other}"))),
     }
+}
+
+fn capability_for_tool(name: &str) -> Option<capability::Descriptor> {
+    capability::registry()
+        .into_iter()
+        .find(|d| expanded_tool_name(&d.id) == name)
 }
 
 fn text_result(text: &str, is_error: bool) -> Value {
@@ -234,6 +384,43 @@ fn invoke(id: &str, args: &Value, context: &ServerContext) -> Result<Value, (i64
         String::from_utf8_lossy(&out.stdout).into_owned()
     };
     Ok(text_result(&text, !out.status.success()))
+}
+
+fn invoke_expanded(
+    descriptor: &capability::Descriptor,
+    args: &Value,
+    context: &ServerContext,
+) -> Result<Value, (i64, String)> {
+    let mut inputs = serde_json::Map::new();
+    let mut wrapped = serde_json::Map::new();
+
+    for input in &descriptor.inputs {
+        if let Some(value) = args.get(&input.name) {
+            inputs.insert(input.name.clone(), value.clone());
+        }
+    }
+    for flag in &descriptor.flags {
+        match flag.as_str() {
+            "--host" | "--json" | "--dry-run" | "--force" => continue,
+            _ => {
+                let arg_name = flag_arg_name(flag);
+                if let Some(value) = args.get(&arg_name) {
+                    inputs.insert(flag.trim_start_matches("--").to_string(), value.clone());
+                }
+            }
+        }
+    }
+    wrapped.insert("inputs".to_string(), Value::Object(inputs));
+    if let Some(value) = args.get("host") {
+        wrapped.insert("host".to_string(), value.clone());
+    }
+    if let Some(value) = args.get("dry_run") {
+        wrapped.insert("dry_run".to_string(), value.clone());
+    }
+    if let Some(value) = args.get("force") {
+        wrapped.insert("force".to_string(), value.clone());
+    }
+    invoke(&descriptor.id, &Value::Object(wrapped), context)
 }
 
 /// Translate an invoke request into `fez` argv. The capability id becomes the
@@ -308,6 +495,11 @@ pub(crate) fn build_argv_with_context(
 
 fn push_flag(argv: &mut Vec<String>, flag: &str, v: &Value) {
     match v {
+        Value::Array(items) => {
+            for item in items {
+                push_flag(argv, flag, item);
+            }
+        }
         Value::Bool(true) => argv.push(flag.to_string()),
         Value::Bool(false) | Value::Null => {}
         Value::String(s) => {
@@ -411,7 +603,7 @@ mod tests {
 
     fn argv_for_with_host(id: &str, default_host: &str, args: serde_json::Value) -> Vec<String> {
         let d = capability::find(id).unwrap();
-        let context = ServerContext::new(default_host.to_string());
+        let context = ServerContext::new(default_host.to_string(), false);
         build_argv_with_context(&d, &args, &context)
     }
 
