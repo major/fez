@@ -733,8 +733,13 @@ fn mutate(
                 json!([]),
             )?);
             let (rt_s, rt_p, rt_m) = runtime_zone(client, &channel, &default_zone)?;
-            let (pm_s, pm_p, pm_m) = permanent_zone(client, &channel, &default_zone)?;
-            let has_drift = !compute_drift(&rt_s, &pm_s, &rt_p, &pm_p, rt_m, pm_m).is_empty();
+            let has_drift = match permanent_zone(client, &channel, &default_zone) {
+                Ok((pm_s, pm_p, pm_m)) => {
+                    !compute_drift(&rt_s, &pm_s, &rt_p, &pm_p, rt_m, pm_m).is_empty()
+                }
+                Err(e) if is_config_info_denied(&e) => true,
+                Err(e) => return Err(e),
+            };
             crate::safety::check_firewall_reload(has_drift, cli.force)?;
             run_audited(
                 client,
