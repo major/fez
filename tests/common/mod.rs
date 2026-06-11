@@ -59,6 +59,19 @@ pub fn fez_fake_quiet() -> AssertCommand {
     c
 }
 
+/// A `fez` command wired to the fake bridge with dnf5daemon forced absent, so
+/// the PackageKit fallback backend is exercised.
+///
+/// Inherits [`fez_fake_quiet`]'s bridge wiring and disabled audit sink, and adds
+/// `FEZ_FAKE_NO_DNF5` so `open_session` returns ServiceUnknown and fez falls
+/// back to PackageKit (the RHEL 10 path).
+#[must_use]
+pub fn fez_fake_pk() -> AssertCommand {
+    let mut c = fez_fake_quiet();
+    c.env("FEZ_FAKE_NO_DNF5", "1");
+    c
+}
+
 /// A scratch audit-log file that cleans itself up on drop.
 ///
 /// Wraps a process-unique temp path: the file is removed on construction (in
