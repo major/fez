@@ -308,11 +308,22 @@ fn package_row(p: &Value) -> Value {
 }
 
 /// Connect, open an unprivileged session, dispatch the read, and always close.
+///
+/// When dnf5daemon is absent (the `open_session` ServiceUnknown path, surfaced
+/// as [`FezError::DependencyMissing`]), the read transparently falls back to the
+/// PackageKit backend (RHEL 10). Only when PackageKit is *also* absent does the
+/// call return a dependency-missing error naming both daemons.
 fn run_read(cli: &Cli, action: ReadAction<'_>) -> Result<View> {
     let transport = crate::transport::from_host(cli.host.as_deref());
     let mut client = BridgeClient::connect(transport.as_ref())?;
     let host = client.host().to_string();
-    let (channel, session) = open_session(&mut client, false)?;
+    let (channel, session) = match open_session(&mut client, false) {
+        Ok(pair) => pair,
+        Err(FezError::DependencyMissing { .. }) => {
+            return read_via_packagekit(&mut client, host, action);
+        }
+        Err(e) => return Err(e),
+    };
     let result = match action {
         ReadAction::List { available, repos } => {
             list(&mut client, &channel, &session, host, available, repos)
@@ -324,6 +335,50 @@ fn run_read(cli: &Cli, action: ReadAction<'_>) -> Result<View> {
     };
     close_session(&mut client, &channel, &session);
     result
+}
+
+/// Convert a PackageKit backend result into a dnf-backend [`View`].
+fn from_pk(pk: crate::capabilities::packages_pk::PkView, host: String) -> View {
+    View {
+        kind: pk.kind,
+        host,
+        data: pk.data,
+        human: pk.human,
+        hints: pk.hints,
+    }
+}
+
+/// Dependency-missing error when BOTH dnf5daemon and PackageKit are absent.
+fn both_missing() -> FezError {
+    FezError::DependencyMissing {
+        component: "dnf5daemon or PackageKit".into(),
+        dbus_name: "org.rpm.dnf.v0 / org.freedesktop.PackageKit".into(),
+        remediation: "Install a package backend: dnf5daemon-server (Fedora) providing org.rpm.dnf.v0, or PackageKit providing org.freedesktop.PackageKit, then retry.".into(),
+    }
+}
+
+/// Run a read over the PackageKit backend, mapping PackageKit's own absence to a
+/// dependency-missing error naming both daemons.
+fn read_via_packagekit(
+    client: &mut BridgeClient,
+    host: String,
+    action: ReadAction<'_>,
+) -> Result<View> {
+    use crate::capabilities::packages_pk as pk;
+    let result = match action {
+        ReadAction::List { available, repos } => pk::list(client, available, repos),
+        ReadAction::Info { spec } => pk::info(client, spec),
+        ReadAction::Search { pattern } => pk::search(client, pattern),
+        ReadAction::CheckUpdate => pk::check_update(client),
+        ReadAction::Repolist { filter } => {
+            pk::repolist(client, move |enabled| filter.accepts(enabled))
+        }
+    };
+    match result {
+        Ok(view) => Ok(from_pk(view, host)),
+        Err(FezError::Dbus { name, .. }) if is_service_unknown(&name) => Err(both_missing()),
+        Err(e) => Err(e),
+    }
 }
 
 /// Call `Rpm.list` on the session with the given scope/patterns and return the
@@ -389,6 +444,7 @@ fn list(
     data["scope"] = json!(scope);
     // Echo the requested repo filter so callers can confirm what was applied.
     data["repos"] = json!(repos);
+    data["backend"] = json!("dnf5daemon");
     Ok(View {
         kind: "PackageList",
         host,
@@ -409,7 +465,8 @@ fn info(
     let first = raw
         .first()
         .ok_or_else(|| FezError::NotFound(spec.to_string()))?;
-    let pkg = package_json(first);
+    let mut pkg = package_json(first);
+    pkg["backend"] = json!("dnf5daemon");
     let human = format!(
         "Name        : {}\nVersion     : {}\nArch        : {}\nRepo        : {}\nInstall size: {}\nSummary     : {}\n",
         sv(first, "name"),
@@ -444,6 +501,7 @@ fn search(
     let rows: Vec<Value> = raw.iter().map(package_row).collect();
     let mut data = crate::envelope::table_data(PKG_COLUMNS, rows);
     data["pattern"] = json!(pattern);
+    data["backend"] = json!("dnf5daemon");
     Ok(View {
         kind: "PackageSearch",
         host,
@@ -470,10 +528,12 @@ fn check_update(
         ));
     }
     let rows: Vec<Value> = raw.iter().map(package_row).collect();
+    let mut data = crate::envelope::table_data(PKG_COLUMNS, rows);
+    data["backend"] = json!("dnf5daemon");
     Ok(View {
         kind: "PackageUpdates",
         host,
-        data: crate::envelope::table_data(PKG_COLUMNS, rows),
+        data,
         human,
         hints: None,
     })
@@ -516,10 +576,12 @@ fn repolist(
         human.push_str(&format!("{id:<24} {enabled:<10} {name}\n"));
         rows.push(json!([id, name, enabled]));
     }
+    let mut data = crate::envelope::table_data(REPO_COLUMNS, rows);
+    data["backend"] = json!("dnf5daemon");
     Ok(View {
         kind: "RepoList",
         host,
-        data: crate::envelope::table_data(REPO_COLUMNS, rows),
+        data,
         human,
         hints: None,
     })
@@ -609,12 +671,35 @@ fn run_mutation(cli: &Cli, m: Mutation, specs: &[String]) -> Result<View> {
     let host = cli.resolved_host();
     let transport = crate::transport::from_host(cli.host.as_deref());
     let mut client = BridgeClient::connect(transport.as_ref())?;
-    let (channel, session) = open_session(&mut client, true)?;
+    let (channel, session) = match open_session(&mut client, true) {
+        Ok(pair) => pair,
+        Err(FezError::DependencyMissing { .. }) => {
+            return mutate_via_packagekit(&mut client, m, specs, &host, cli.dry_run, cli.force);
+        }
+        Err(e) => return Err(e),
+    };
     // Do the work in an inner closure so the session is closed on every path,
     // success or failure, before the result propagates.
     let result = mutation_inner(cli, &mut client, &channel, &session, m, specs, &host);
     close_session(&mut client, &channel, &session);
     result
+}
+
+/// Run a mutation over the PackageKit backend, mapping PackageKit's own absence
+/// to a dependency-missing error naming both daemons.
+fn mutate_via_packagekit(
+    client: &mut BridgeClient,
+    m: Mutation,
+    specs: &[String],
+    host: &str,
+    dry_run: bool,
+    force: bool,
+) -> Result<View> {
+    match crate::capabilities::packages_pk::mutate(client, m.verb(), specs, host, dry_run, force) {
+        Ok(view) => Ok(from_pk(view, host.to_string())),
+        Err(FezError::Dbus { name, .. }) if is_service_unknown(&name) => Err(both_missing()),
+        Err(e) => Err(e),
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -679,6 +764,7 @@ fn plan_view(
         map.insert("operation".into(), json!(m.verb()));
         map.insert("specs".into(), json!(specs));
         map.insert("dry_run".into(), json!(dry_run));
+        map.insert("backend".into(), json!("dnf5daemon"));
     }
     let human = if dry_run {
         format!(
