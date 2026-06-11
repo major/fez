@@ -58,7 +58,8 @@ Firewalld fake bridge contracts:
 | `FEZ_FAKE_NO_MASQUERADE` | Returns `UnknownMethod` for `getMasquerade`, exercising unsupported-API mapping. |
 | `FEZ_FAKE_PANIC` | Starts fake firewalld in panic mode. |
 | `FEZ_FAKE_PORT_REMOVED` | Drops `9090/tcp` from runtime `public`, modeling post-remove-port state. |
-| `FEZ_FAKE_CONFIG_INFO_DENIED` | Denies permanent firewalld `config.info` reads after escalation; `firewall status` should return partial runtime status with hints. |
+| `FEZ_FAKE_CONFIG_INFO_DENIED` | Denies permanent firewalld `config.info` reads after escalation; `firewall status` should return partial runtime status with hints, and `firewall reload` should require `--force`. |
+| `FEZ_FAKE_CONFIG_UNKNOWN_METHOD` | Returns `UnknownMethod` from the permanent firewalld config root, used to prove only `config.info` denial is converted into the reload guard. |
 
 ## Compact JSON Assertions
 
@@ -88,6 +89,8 @@ Firewalld fake bridge contracts:
 - Runtime reads are unprivileged; permanent config reads and mutations require escalation.
 - An empty `FEZ_FAKE_BRIDGES` value yields exit 11 for mutating calls and for `status` because status escalates for permanent drift reads.
 - `FEZ_FAKE_CONFIG_INFO_DENIED=1` models a real-host partial-read case after escalation; keep empty `FEZ_FAKE_BRIDGES` for the separate no-escalation case.
+- `firewall reload` reads permanent config before mutating so it can refuse drift-discarding reloads without `--force`. If `FEZ_FAKE_CONFIG_INFO_DENIED=1` makes that read unavailable, reload treats drift as unknown-but-unsafe: without `--force` it exits 8, and with `--force` it proceeds.
+- `FEZ_FAKE_CONFIG_UNKNOWN_METHOD=1` keeps unrelated permanent-config errors passing through, so tests prove the reload guard only catches real-host `config.info` authorization denial.
 - Protected firewall operations return exit 8 unless `--force` is present.
 
 ## E2E Matrix

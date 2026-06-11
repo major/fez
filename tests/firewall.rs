@@ -209,6 +209,38 @@ fn reload_with_drift_requires_force() {
         .stdout(contains("\"kind\":\"FirewallChange\""));
 }
 
+// Regression for #51 on the reload guard: if permanent config cannot be read,
+// a reload may discard unknown runtime drift. Refuse clearly unless --force is
+// supplied, rather than surfacing firewalld's raw config.info D-Bus error.
+#[test]
+fn reload_with_config_info_denied_requires_force() {
+    fez_fake()
+        .env("FEZ_FAKE_CONFIG_INFO_DENIED", "1")
+        .args(["firewall", "reload", "--json"])
+        .assert()
+        .code(8)
+        .stdout(contains("\"code\":\"protected-unit\""))
+        .stdout(contains("firewall reload"));
+    fez_fake()
+        .env("FEZ_FAKE_CONFIG_INFO_DENIED", "1")
+        .args(["firewall", "reload", "--force", "--json"])
+        .assert()
+        .success()
+        .stdout(contains("\"kind\":\"FirewallChange\""));
+}
+
+// Only the real-host config.info authorization failure is converted into an
+// unsafe reload guard. Other permanent-config errors still pass through.
+#[test]
+fn reload_with_other_permanent_config_error_passes_through() {
+    fez_fake()
+        .env("FEZ_FAKE_CONFIG_UNKNOWN_METHOD", "1")
+        .args(["firewall", "reload", "--force", "--json"])
+        .assert()
+        .code(12)
+        .stdout(contains("\"code\":\"unsupported-api\""));
+}
+
 // firewalld absent -> exit 9 with remediation.
 #[test]
 fn firewalld_absent_exits_9() {

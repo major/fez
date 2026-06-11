@@ -385,6 +385,9 @@ fn fw_reply(
             ["The name org.fedoraproject.FirewallD1 was not provided by any .service files"]
         ],"id": id});
     }
+    if path == FW_CONFIG_PATH && std::env::var_os("FEZ_FAKE_CONFIG_UNKNOWN_METHOD").is_some() {
+        return fw_unknown(method, id);
+    }
     if path.starts_with(FW_CONFIG_PATH) && std::env::var_os("FEZ_FAKE_CONFIG_INFO_DENIED").is_some()
     {
         return fw_config_info_denied(id);
