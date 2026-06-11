@@ -187,12 +187,15 @@ fn parse_port_spec(spec: &str) -> Result<(u16, String)> {
 ///
 /// `+` means present at runtime but not permanent (would be lost on reload);
 /// `-` means present permanent but not runtime (removed at runtime, not yet
-/// committed). Stateless: both sides are read live each call.
+/// committed). Covers services, ports, and masquerade. Stateless: both sides
+/// are read live each call.
 fn compute_drift(
     runtime_services: &[String],
     permanent_services: &[String],
     runtime_ports: &[String],
     permanent_ports: &[String],
+    runtime_masquerade: bool,
+    permanent_masquerade: bool,
 ) -> Vec<String> {
     let mut drift = Vec::new();
     for s in runtime_services {
@@ -215,15 +218,22 @@ fn compute_drift(
             drift.push(format!("-port {p}"));
         }
     }
+    if runtime_masquerade && !permanent_masquerade {
+        drift.push("+masquerade".to_string());
+    }
+    if permanent_masquerade && !runtime_masquerade {
+        drift.push("-masquerade".to_string());
+    }
     drift
 }
 
-/// Read the permanent (`config`) services and ports for a zone, for drift.
+/// Read the permanent (`config`) services, ports, and masquerade for a zone,
+/// for drift.
 fn permanent_zone(
     client: &mut BridgeClient,
     channel: &str,
     zone: &str,
-) -> Result<(Vec<String>, Vec<String>)> {
+) -> Result<(Vec<String>, Vec<String>, bool)> {
     let obj = fw_call_path(
         client,
         channel,
@@ -249,15 +259,23 @@ fn permanent_zone(
         "getPorts",
         json!([]),
     )?);
-    Ok((services, ports))
+    let masquerade = arg_bool(&fw_call_path(
+        client,
+        channel,
+        &zone_path,
+        FW_CONFIG_ZONE_IFACE,
+        "getMasquerade",
+        json!([]),
+    )?);
+    Ok((services, ports, masquerade))
 }
 
-/// Read the runtime services and ports for a zone.
+/// Read the runtime services, ports, and masquerade for a zone.
 fn runtime_zone(
     client: &mut BridgeClient,
     channel: &str,
     zone: &str,
-) -> Result<(Vec<String>, Vec<String>)> {
+) -> Result<(Vec<String>, Vec<String>, bool)> {
     let services = arg_str_vec(&fw_call(
         client,
         channel,
@@ -272,7 +290,14 @@ fn runtime_zone(
         "getPorts",
         json!([zone]),
     )?);
-    Ok((services, ports))
+    let masquerade = arg_bool(&fw_call(
+        client,
+        channel,
+        FW_ZONE_IFACE,
+        "getMasquerade",
+        json!([zone]),
+    )?);
+    Ok((services, ports, masquerade))
 }
 
 /// `firewall status`: state, default zone, panic flag, and pending drift.
@@ -291,19 +316,28 @@ fn status(client: &mut BridgeClient, channel: &str, host: String) -> Result<View
         "queryPanicMode",
         json!([]),
     )?);
-    let (rt_services, rt_ports) = runtime_zone(client, channel, &default_zone)?;
-    let (perm_services, perm_ports) = permanent_zone(client, channel, &default_zone)?;
-    let drift = compute_drift(&rt_services, &perm_services, &rt_ports, &perm_ports);
+    let (rt_services, rt_ports, rt_masq) = runtime_zone(client, channel, &default_zone)?;
+    let (perm_services, perm_ports, perm_masq) = permanent_zone(client, channel, &default_zone)?;
+    let drift = compute_drift(
+        &rt_services,
+        &perm_services,
+        &rt_ports,
+        &perm_ports,
+        rt_masq,
+        perm_masq,
+    );
 
     let data = json!({
         "running": true,
         "default_zone": default_zone,
         "panic_mode": panic,
+        "masquerade": rt_masq,
         "pending_changes": drift,
     });
     let mut human = format!(
-        "running:       yes\ndefault zone:  {default_zone}\npanic mode:    {}\n",
-        if panic { "on" } else { "off" }
+        "running:       yes\ndefault zone:  {default_zone}\npanic mode:    {}\nmasquerade:    {}\n",
+        if panic { "on" } else { "off" },
+        if rt_masq { "on" } else { "off" }
     );
     if drift.is_empty() {
         human.push_str("pending:       none\n");
@@ -345,7 +379,7 @@ fn list(client: &mut BridgeClient, channel: &str, host: String) -> Result<View> 
         "ZONE", "DEFAULT", "SERVICES", "PORTS", "INTERFACES"
     );
     for zone in &zones {
-        let (services, ports) = runtime_zone(client, channel, zone)?;
+        let (services, ports, _masquerade) = runtime_zone(client, channel, zone)?;
         let interfaces = arg_str_vec(&fw_call(
             client,
             channel,
@@ -385,7 +419,7 @@ fn show(client: &mut BridgeClient, channel: &str, host: String, zone: &str) -> R
     if !zones.iter().any(|z| z == zone) {
         return Err(FezError::NotFound(format!("firewall zone {zone}")));
     }
-    let (services, ports) = runtime_zone(client, channel, zone)?;
+    let (services, ports, masquerade) = runtime_zone(client, channel, zone)?;
     let interfaces = arg_str_vec(&fw_call(
         client,
         channel,
@@ -406,13 +440,15 @@ fn show(client: &mut BridgeClient, channel: &str, host: String, zone: &str) -> R
         "ports": ports,
         "interfaces": interfaces,
         "sources": sources,
+        "masquerade": masquerade,
     });
     let human = format!(
-        "Zone:       {zone}\nServices:   {}\nPorts:      {}\nInterfaces: {}\nSources:    {}\n",
+        "Zone:       {zone}\nServices:   {}\nPorts:      {}\nInterfaces: {}\nSources:    {}\nMasquerade: {}\n",
         services.join(", "),
         ports.join(", "),
         interfaces.join(", "),
         sources.join(", "),
+        if masquerade { "on" } else { "off" },
     );
     Ok(View {
         kind: "FirewallZone",
@@ -620,9 +656,9 @@ fn mutate(
                 "getDefaultZone",
                 json!([]),
             )?);
-            let (rt_s, rt_p) = runtime_zone(client, &channel, &default_zone)?;
-            let (pm_s, pm_p) = permanent_zone(client, &channel, &default_zone)?;
-            let has_drift = !compute_drift(&rt_s, &pm_s, &rt_p, &pm_p).is_empty();
+            let (rt_s, rt_p, rt_m) = runtime_zone(client, &channel, &default_zone)?;
+            let (pm_s, pm_p, pm_m) = permanent_zone(client, &channel, &default_zone)?;
+            let has_drift = !compute_drift(&rt_s, &pm_s, &rt_p, &pm_p, rt_m, pm_m).is_empty();
             crate::safety::check_firewall_reload(has_drift, cli.force)?;
             run_audited(
                 client,
@@ -670,6 +706,39 @@ fn mutate(
                 json!([]),
             )?;
             Ok(panic_view(host, on))
+        }
+        FirewallAction::Masquerade {
+            state,
+            zone,
+            timeout,
+        } => {
+            let on = state == "on";
+            let zone = effective_zone(client, &channel, zone)?;
+            if !on {
+                crate::safety::check_firewall_masquerade_off(cli.force)?;
+            }
+            let (method, args) = if on {
+                let t = i64::from(timeout.unwrap_or(0));
+                ("addMasquerade", json!([zone, t]))
+            } else {
+                ("removeMasquerade", json!([zone]))
+            };
+            run_audited(
+                client,
+                &channel,
+                &host,
+                &format!("masquerade-{state}"),
+                &zone,
+                FW_ZONE_IFACE,
+                method,
+                args,
+            )?;
+            Ok(masquerade_view(
+                host,
+                &zone,
+                on,
+                if on { *timeout } else { None },
+            ))
         }
         // Reads are dispatched in `run`; they never reach `mutate`. Return a
         // defensive error rather than panicking, so a future refactor that
@@ -772,6 +841,31 @@ fn panic_view(host: String, on: bool) -> View {
     }
 }
 
+/// Build the `FirewallChange` view for `masquerade on|off`.
+fn masquerade_view(host: String, zone: &str, on: bool, timeout: Option<u32>) -> View {
+    let mut data = json!({
+        "operation": "masquerade",
+        "zone": zone,
+        "change": if on { "+masquerade" } else { "-masquerade" },
+        "masquerade": on,
+        "persisted": false,
+    });
+    if let Some(t) = timeout {
+        data["timeout"] = json!(t);
+    }
+    let human = format!(
+        "masquerade {} in zone {zone} (runtime only)\n",
+        if on { "enabled" } else { "disabled" }
+    );
+    View {
+        kind: "FirewallChange",
+        host,
+        data,
+        human,
+        hints: Some(confirm_hint()),
+    }
+}
+
 /// Render a [`View`] (or error) to stdout/stderr and return the exit code.
 fn render(cli: &Cli, result: Result<View>) -> i32 {
     let host = cli.resolved_host();
@@ -864,6 +958,8 @@ mod tests {
             &permanent_services,
             &runtime_ports,
             &permanent_ports,
+            false,
+            false,
         );
         assert_eq!(drift, vec!["+port 9090/tcp".to_string()]);
     }
@@ -872,7 +968,7 @@ mod tests {
     fn drift_empty_when_runtime_matches_permanent() {
         let s = vec!["ssh".to_string()];
         let p: Vec<String> = vec![];
-        assert!(compute_drift(&s, &s, &p, &p).is_empty());
+        assert!(compute_drift(&s, &s, &p, &p, false, false).is_empty());
     }
 
     #[test]
@@ -881,8 +977,32 @@ mod tests {
         let runtime_services: Vec<String> = vec![];
         let permanent_services = vec!["http".to_string()];
         let p: Vec<String> = vec![];
-        let drift = compute_drift(&runtime_services, &permanent_services, &p, &p);
+        let drift = compute_drift(&runtime_services, &permanent_services, &p, &p, false, false);
         assert_eq!(drift, vec!["-service http".to_string()]);
+    }
+
+    #[test]
+    fn drift_reports_masquerade_added_at_runtime() {
+        // runtime masquerade on, permanent off -> +masquerade.
+        let s = vec!["ssh".to_string()];
+        let p: Vec<String> = vec![];
+        let drift = compute_drift(&s, &s, &p, &p, true, false);
+        assert_eq!(drift, vec!["+masquerade".to_string()]);
+    }
+
+    #[test]
+    fn drift_reports_masquerade_removed_at_runtime() {
+        let s = vec!["ssh".to_string()];
+        let p: Vec<String> = vec![];
+        let drift = compute_drift(&s, &s, &p, &p, false, true);
+        assert_eq!(drift, vec!["-masquerade".to_string()]);
+    }
+
+    #[test]
+    fn drift_empty_when_masquerade_matches() {
+        let s = vec!["ssh".to_string()];
+        let p: Vec<String> = vec![];
+        assert!(compute_drift(&s, &s, &p, &p, true, true).is_empty());
     }
 
     #[test]
