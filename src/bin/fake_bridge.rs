@@ -528,6 +528,154 @@ fn send_data(out: &mut impl Write, channel: &str, v: &Value) {
     write_frame(out, &Frame::new(channel, payload)).unwrap();
 }
 
+/// PackageKit root controller object path (carries `CreateTransaction`).
+const PK_PATH: &str = "/org/freedesktop/PackageKit";
+/// Canned PackageKit transaction object path the fake hands back.
+const PK_TX_PATH: &str = "/org/freedesktop/PackageKit/Transaction/1";
+/// PackageKit per-transaction interface (the signals carry this interface).
+const PK_TX_IFACE: &str = "org.freedesktop.PackageKit.Transaction";
+
+/// Emit a PackageKit `{"signal":[path, iface, member, args]}` data frame, the
+/// way cockpit `dbus-json3` delivers a D-Bus signal on the channel.
+fn send_signal(out: &mut impl Write, channel: &str, member: &str, args: Value) {
+    send_data(
+        out,
+        channel,
+        &json!({ "signal": [PK_TX_PATH, PK_TX_IFACE, member, args] }),
+    );
+}
+
+/// Emit the canned PackageKit signal stream for a transaction method.
+///
+/// PackageKit reports results as a stream of signals terminated by `Finished`,
+/// not a method reply, so this writes the frames directly. Scenario knobs:
+/// - `FEZ_FAKE_PK_PLAN=protected`: the `RemovePackages` plan includes a
+///   protected package (`systemd`) so the removal guardrail (exit 8) fires.
+/// - `FEZ_FAKE_PK_ERROR=notauth`: emit `ErrorCode(6, ...)` so the access-denied
+///   (exit 11) mapping is exercised.
+fn pk_emit(out: &mut impl Write, channel: &str, method: &str) {
+    let installed = [
+        (
+            1u64,
+            "bash;5.2.26-1.fc44;x86_64;installed",
+            "GNU Bourne-Again SHell",
+        ),
+        (
+            1u64,
+            "htop;3.4.1-3.fc44;x86_64;installed",
+            "Interactive process viewer",
+        ),
+    ];
+    let nginx = "nginx;1.27.0-1.fc44;x86_64;fedora";
+    match method {
+        "GetPackages" => {
+            for (info, pid, summ) in installed {
+                send_signal(out, channel, "Package", json!([info, pid, summ]));
+            }
+        }
+        "GetUpdates" => {
+            send_signal(
+                out,
+                channel,
+                "Package",
+                json!([
+                    7,
+                    "htop;3.4.2-1.fc44;x86_64;updates",
+                    "Interactive process viewer"
+                ]),
+            );
+        }
+        "SearchNames" => {
+            send_signal(
+                out,
+                channel,
+                "Package",
+                json!([2, nginx, "High performance web server"]),
+            );
+        }
+        "GetRepoList" => {
+            send_signal(
+                out,
+                channel,
+                "RepoDetail",
+                json!(["fedora", "Fedora 44", true]),
+            );
+            send_signal(
+                out,
+                channel,
+                "RepoDetail",
+                json!(["updates", "Fedora 44 updates", true]),
+            );
+            send_signal(out, channel, "RepoDetail", json!(["crb", "CRB", false]));
+        }
+        "Resolve" => {
+            // Resolve a spec to a full package_id for info / mutation.
+            send_signal(
+                out,
+                channel,
+                "Package",
+                json!([2, nginx, "High performance web server"]),
+            );
+        }
+        "InstallPackages" | "UpdatePackages" => {
+            // SIMULATE or real: report the install plan (target + a dep).
+            send_signal(
+                out,
+                channel,
+                "Package",
+                json!([8, nginx, "High performance web server"]),
+            );
+            send_signal(
+                out,
+                channel,
+                "Package",
+                json!([
+                    8,
+                    "nginx-core;1.27.0-1.fc44;x86_64;fedora",
+                    "nginx core files"
+                ]),
+            );
+        }
+        "RemovePackages" => {
+            send_signal(
+                out,
+                channel,
+                "Package",
+                json!([
+                    9,
+                    "htop;3.4.1-3.fc44;x86_64;installed",
+                    "Interactive process viewer"
+                ]),
+            );
+            if std::env::var("FEZ_FAKE_PK_PLAN").as_deref() == Ok("protected") {
+                send_signal(
+                    out,
+                    channel,
+                    "Package",
+                    json!([
+                        9,
+                        "systemd;255-1.fc44;x86_64;installed",
+                        "System and Service Manager"
+                    ]),
+                );
+            }
+        }
+        _ => {}
+    }
+    // Optional error injection before Finished (exit 4 = failed).
+    if std::env::var("FEZ_FAKE_PK_ERROR").as_deref() == Ok("notauth") {
+        send_signal(
+            out,
+            channel,
+            "ErrorCode",
+            json!([6, "not authorized to perform operation"]),
+        );
+        send_signal(out, channel, "Finished", json!([4, 10]));
+        return;
+    }
+    send_signal(out, channel, "Finished", json!([1, 20])); // exit 1 = success
+}
+
 fn main() -> io::Result<()> {
     let mut stdin = io::stdin().lock();
     let mut stdout = io::stdout().lock();
@@ -669,6 +817,25 @@ fn main() -> io::Result<()> {
                     // NetworkManager surface: disambiguated by object path, not
                     // method name (Get/GetAll are reused across object types).
                     nm_reply(path, method, &id)
+                } else if path == PK_PATH && method == "CreateTransaction" {
+                    // PackageKit root controller. FEZ_FAKE_NO_PACKAGEKIT models
+                    // the daemon being absent (ServiceUnknown), so the "both
+                    // backends missing" path is testable; otherwise hand back the
+                    // canned transaction object path as a normal reply.
+                    if std::env::var_os("FEZ_FAKE_NO_PACKAGEKIT").is_some() {
+                        json!({"error":[
+                            "org.freedesktop.DBus.Error.ServiceUnknown",
+                            ["The name org.freedesktop.PackageKit was not provided by any .service files"]
+                        ],"id": id})
+                    } else {
+                        json!({"reply":[[PK_TX_PATH]],"id":id})
+                    }
+                } else if path == PK_TX_PATH {
+                    // PackageKit transaction methods report via signals, not a
+                    // reply. Emit the canned stream then continue (no reply
+                    // frame: dbus_call_collect ignores the empty method reply).
+                    pk_emit(&mut stdout, &frame.channel, method);
+                    continue;
                 } else if dnf_options_method {
                     if let Some(err) = reject_unwrapped_options(&args, &id) {
                         send_data(&mut stdout, &frame.channel, &err);
