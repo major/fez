@@ -311,6 +311,89 @@ fn nm_unknown(method: &str, id: &Value) -> Value {
         [format!("no NM fake for {method}")]],"id": id})
 }
 
+/// firewalld root object path.
+const FW_PATH: &str = "/org/fedoraproject/FirewallD1";
+/// firewalld permanent-config object path.
+const FW_CONFIG_PATH: &str = "/org/fedoraproject/FirewallD1/config";
+
+/// Canned firewalld (`org.fedoraproject.FirewallD1`) reply.
+///
+/// Dispatches by object path (the main object vs the `config` sub-object and
+/// its per-zone children), mirroring how the NM arm dispatches by path rather
+/// than method name. Seeds a `public`/`internal`/`drop` topology where runtime
+/// `public` carries `9090/tcp` that permanent `public` lacks, so drift is
+/// non-empty out of the box (`status` reports `+port 9090/tcp`). `FEZ_FAKE_PANIC`
+/// starts panic mode on; `FEZ_FAKE_NO_FIREWALLD` makes every call report the
+/// service absent (ServiceUnknown).
+fn fw_reply(path: &str, method: &str, args: &[Value], id: &Value) -> Value {
+    if std::env::var_os("FEZ_FAKE_NO_FIREWALLD").is_some() {
+        return json!({"error":[
+            "org.freedesktop.DBus.Error.ServiceUnknown",
+            ["The name org.fedoraproject.FirewallD1 was not provided by any .service files"]
+        ],"id": id});
+    }
+    // Permanent-config per-zone object: /config/zone/<n>. Permanent `public`
+    // (zone 0) lacks the runtime-only 9090/tcp, which is the seeded drift.
+    if path.starts_with(&format!("{FW_CONFIG_PATH}/zone/")) {
+        return match method {
+            "getServices" => json!({"reply":[[["ssh", "dhcpv6-client"]]],"id": id}),
+            "getPorts" => json!({"reply":[[[]]],"id": id}),
+            other => fw_unknown(other, id),
+        };
+    }
+    if path == FW_CONFIG_PATH {
+        return match method {
+            // getZoneByName(name) -> config zone object path.
+            "getZoneByName" => json!({"reply":[[format!("{FW_CONFIG_PATH}/zone/0")]],"id": id}),
+            other => fw_unknown(other, id),
+        };
+    }
+    // Main object. Zone-scoped methods take the zone name as the first arg.
+    let zone = args.first().and_then(Value::as_str).unwrap_or("");
+    match method {
+        "getDefaultZone" => json!({"reply":[["public"]],"id": id}),
+        "getZones" => json!({"reply":[[["public", "internal", "drop"]]],"id": id}),
+        "listServices" => json!({"reply":[[[
+            "ssh", "http", "https", "cockpit", "dhcpv6-client"
+        ]]],"id": id}),
+        "queryPanicMode" => {
+            let on = std::env::var_os("FEZ_FAKE_PANIC").is_some();
+            json!({"reply":[[on]],"id": id})
+        }
+        // Runtime per-zone reads. `public` carries the drift port 9090/tcp.
+        "getServices" => json!({"reply":[[["ssh", "dhcpv6-client"]]],"id": id}),
+        "getPorts" => {
+            if zone == "public" {
+                json!({"reply":[[[["9090", "tcp"]]]],"id": id})
+            } else {
+                json!({"reply":[[[]]],"id": id})
+            }
+        }
+        "getInterfaces" => {
+            if zone == "public" {
+                json!({"reply":[[["enp1s0"]]],"id": id})
+            } else {
+                json!({"reply":[[[]]],"id": id})
+            }
+        }
+        "getSources" => json!({"reply":[[[]]],"id": id}),
+        // Mutations return the affected zone name (or void for reload/confirm).
+        "addService" | "removeService" | "addPort" | "removePort" => {
+            json!({"reply":[[zone]],"id": id})
+        }
+        "setDefaultZone" | "reload" | "runtimeToPermanent" | "enablePanicMode"
+        | "disablePanicMode" => json!({"reply":[[]],"id": id}),
+        other => fw_unknown(other, id),
+    }
+}
+
+/// Unknown-method D-Bus error for a firewalld call the fake does not model.
+fn fw_unknown(method: &str, id: &Value) -> Value {
+    json!({"error":[
+        "org.freedesktop.DBus.Error.UnknownMethod",
+        [format!("no firewalld fake for {method}")]],"id": id})
+}
+
 /// The host's escalation mechanisms as modeled by `FEZ_FAKE_BRIDGES`.
 ///
 /// Real cockpit-bridge exposes a `cockpit.Superuser.Bridges` property (the
@@ -475,7 +558,13 @@ fn main() -> io::Result<()> {
                         | "resolve"
                         | "do_transaction"
                 );
-                let reply = if path.starts_with(NM_MGR_PATH) {
+                let reply = if path.starts_with(FW_PATH) {
+                    // firewalld surface: dispatched by object path (the main
+                    // object vs the config sub-object), like the NM arm. The
+                    // single FW_PATH prefix catches FW_CONFIG_PATH too; fw_reply
+                    // splits them internally.
+                    fw_reply(path, method, &args, &id)
+                } else if path.starts_with(NM_MGR_PATH) {
                     // NetworkManager surface: disambiguated by object path, not
                     // method name (Get/GetAll are reused across object types).
                     nm_reply(path, method, &id)

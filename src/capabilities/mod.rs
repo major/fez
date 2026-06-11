@@ -8,3 +8,6 @@ pub mod packages;
 
 /// NetworkManager inspection capabilities.
 pub mod network;
+
+/// firewalld management capabilities.
+pub mod firewall;

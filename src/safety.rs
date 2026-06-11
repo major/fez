@@ -104,6 +104,89 @@ pub fn check_removal_plan(removed: &[String], force: bool) -> Result<()> {
     Ok(())
 }
 
+/// Refuse removing a firewall service that carries the active session, unless
+/// `force` is set. `session_services` is the set treated as session-critical
+/// (always includes `ssh`; the capability supplies it).
+///
+/// # Errors
+///
+/// Returns [`FezError::Protected`] (exit 8) when `service` is in
+/// `session_services` and `force` is false.
+pub fn check_firewall_service_removal(
+    service: &str,
+    session_services: &[String],
+    force: bool,
+) -> Result<()> {
+    if !force && session_services.iter().any(|s| s == service) {
+        return Err(FezError::Protected {
+            unit: format!("firewall service {service} (carries the active session)"),
+        });
+    }
+    Ok(())
+}
+
+/// Refuse removing a firewall port that carries the active session, unless
+/// `force` is set. `session_ports` is the set treated as session-critical (the
+/// `SSH_CONNECTION` server port when present).
+///
+/// # Errors
+///
+/// Returns [`FezError::Protected`] (exit 8) when `port` is in `session_ports`
+/// and `force` is false.
+pub fn check_firewall_port_removal(port: u16, session_ports: &[u16], force: bool) -> Result<()> {
+    if !force && session_ports.contains(&port) {
+        return Err(FezError::Protected {
+            unit: format!("firewall port {port} (carries the active session)"),
+        });
+    }
+    Ok(())
+}
+
+/// Refuse any default-zone change unless `force` is set. fez cannot rank zone
+/// strictness statelessly, so every default-zone change is gated.
+///
+/// # Errors
+///
+/// Returns [`FezError::Protected`] (exit 8) when `force` is false.
+pub fn check_firewall_default_zone(force: bool) -> Result<()> {
+    if !force {
+        return Err(FezError::Protected {
+            unit: "firewall default zone change".into(),
+        });
+    }
+    Ok(())
+}
+
+/// Refuse enabling panic mode (drops all traffic) unless `force` is set.
+///
+/// # Errors
+///
+/// Returns [`FezError::Protected`] (exit 8) when `force` is false.
+pub fn check_firewall_panic_on(force: bool) -> Result<()> {
+    if !force {
+        return Err(FezError::Protected {
+            unit: "firewall panic mode".into(),
+        });
+    }
+    Ok(())
+}
+
+/// Refuse a reload that would discard uncommitted runtime drift, unless `force`
+/// is set. With no drift the reload is harmless and always allowed.
+///
+/// # Errors
+///
+/// Returns [`FezError::Protected`] (exit 8) when `has_drift` is true and
+/// `force` is false.
+pub fn check_firewall_reload(has_drift: bool, force: bool) -> Result<()> {
+    if has_drift && !force {
+        return Err(FezError::Protected {
+            unit: "firewall reload (would discard uncommitted runtime changes)".into(),
+        });
+    }
+    Ok(())
+}
+
 /// Whether to interactively confirm: only a human (TTY) running a destructive
 /// op without `--force`. Agents (non-TTY) never prompt; layers 1-5 carry them.
 pub fn should_prompt(destructive: bool, is_tty: bool, force: bool) -> bool {
@@ -199,5 +282,85 @@ mod tests {
     #[test]
     fn removal_plan_allows_empty() {
         assert!(check_removal_plan(&[], false).is_ok());
+    }
+
+    #[test]
+    fn firewall_refuses_removing_session_service_without_force() {
+        // Removing `ssh` when ssh is session-critical is protected.
+        let err = check_firewall_service_removal("ssh", &["ssh".to_string()], false).unwrap_err();
+        assert_eq!(err.code(), "protected-unit");
+    }
+
+    #[test]
+    fn firewall_allows_removing_session_service_with_force() {
+        assert!(check_firewall_service_removal("ssh", &["ssh".to_string()], true).is_ok());
+    }
+
+    #[test]
+    fn firewall_allows_removing_non_session_service() {
+        assert!(check_firewall_service_removal("http", &["ssh".to_string()], false).is_ok());
+    }
+
+    #[test]
+    fn firewall_refuses_removing_session_port_without_force() {
+        // The session-carrying port is protected; 22 here stands in for the
+        // SSH_CONNECTION server port.
+        let err = check_firewall_port_removal(22, &[22], false).unwrap_err();
+        assert_eq!(err.code(), "protected-unit");
+    }
+
+    #[test]
+    fn firewall_allows_removing_session_port_with_force() {
+        assert!(check_firewall_port_removal(22, &[22], true).is_ok());
+    }
+
+    #[test]
+    fn firewall_allows_removing_non_session_port() {
+        assert!(check_firewall_port_removal(8080, &[22], false).is_ok());
+    }
+
+    #[test]
+    fn firewall_refuses_default_zone_change_without_force() {
+        assert_eq!(
+            check_firewall_default_zone(false).unwrap_err().code(),
+            "protected-unit"
+        );
+    }
+
+    #[test]
+    fn firewall_allows_default_zone_change_with_force() {
+        assert!(check_firewall_default_zone(true).is_ok());
+    }
+
+    #[test]
+    fn firewall_refuses_panic_on_without_force() {
+        assert_eq!(
+            check_firewall_panic_on(false).unwrap_err().code(),
+            "protected-unit"
+        );
+    }
+
+    #[test]
+    fn firewall_allows_panic_on_with_force() {
+        assert!(check_firewall_panic_on(true).is_ok());
+    }
+
+    #[test]
+    fn firewall_reload_free_without_drift() {
+        // No drift: reload is safe, never gated.
+        assert!(check_firewall_reload(false, false).is_ok());
+    }
+
+    #[test]
+    fn firewall_reload_refused_with_drift_without_force() {
+        assert_eq!(
+            check_firewall_reload(true, false).unwrap_err().code(),
+            "protected-unit"
+        );
+    }
+
+    #[test]
+    fn firewall_reload_allowed_with_drift_and_force() {
+        assert!(check_firewall_reload(true, true).is_ok());
     }
 }
