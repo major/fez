@@ -53,10 +53,112 @@ pub fn command() -> clap::Command {
     crate::capability::help::inject(raw_command())
 }
 
-/// Parse argv through the enriched command. Exits via clap on `--help`/errors.
-pub fn parse() -> Cli {
-    let matches = command().get_matches();
-    Cli::from_arg_matches(&matches).expect("clap validated args")
+/// Whether the raw argv requested machine-readable output (`--json`).
+///
+/// Used to decide error rendering before clap has parsed successfully: a parse
+/// error means we have no [`Cli`] to read `json` from, so we scan the raw args.
+/// `--json` is a boolean flag, so a bare token match is sufficient; it never
+/// takes a value that could be `--json`. Scanning stops at the `--`
+/// end-of-options marker, so a `--json` that appears only as a positional after
+/// `--` does not flip a usage error into a JSON envelope.
+fn wants_json<I, S>(args: I) -> bool
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<str>,
+{
+    for arg in args {
+        let arg = arg.as_ref();
+        if arg == "--" {
+            return false;
+        }
+        if arg == "--json" {
+            return true;
+        }
+    }
+    false
+}
+
+/// Parse argv to a [`Cli`], or render a clap error and return the exit code.
+///
+/// Returns `Ok(cli)` on a successful parse.
+///
+/// # Errors
+///
+/// Returns `Err(exit_code)` when the process should exit immediately, after
+/// this function has already printed whatever the user should see:
+///
+/// - `Err(0)` for `--help`/`--version`: clap renders them to stdout (not
+///   errors), then we exit cleanly.
+/// - `Err(2)` for a clap **usage** error (missing/invalid argument, unknown
+///   flag). This honors `--json`: when requested, it emits a `fez/v1` error
+///   envelope on stdout (code `usage`) instead of clap's stderr text (issue
+///   #52). Without `--json`, clap's human-facing rendering is preserved
+///   unchanged.
+pub fn parse_or_render() -> std::result::Result<Cli, i32> {
+    let argv: Vec<std::ffi::OsString> = std::env::args_os().collect();
+    match command().try_get_matches_from(&argv) {
+        Ok(matches) => Ok(Cli::from_arg_matches(&matches).expect("clap validated args")),
+        Err(err) => {
+            use clap::error::ErrorKind;
+            // Help/version are not failures: let clap print them, exit 0.
+            if matches!(
+                err.kind(),
+                ErrorKind::DisplayHelp
+                    | ErrorKind::DisplayVersion
+                    | ErrorKind::DisplayHelpOnMissingArgumentOrSubcommand
+            ) {
+                let _ = err.print();
+                return Err(0);
+            }
+            let json = wants_json(argv.iter().map(|s| s.to_string_lossy().into_owned()));
+            if json {
+                // Render a usage envelope on stdout. The host is localhost: a
+                // parse error never reached a transport.
+                let message = clap_error_message(&err);
+                let env = crate::envelope::Envelope::error(
+                    "Error",
+                    "localhost",
+                    crate::envelope::ApiError {
+                        code: "usage".into(),
+                        message,
+                        detail: None,
+                    },
+                );
+                println!("{}", env.to_json_string());
+                Err(2)
+            } else {
+                let _ = err.print();
+                Err(err.exit_code())
+            }
+        }
+    }
+}
+
+/// Reduce a clap error to a single user-actionable line for the envelope.
+///
+/// clap renders the diagnostic, then a blank line, then a `Usage:` block and a
+/// "for more information" footer. The actionable part is everything before that
+/// first blank line; we join it into one line (so "missing arg" plus the listed
+/// arg names stay together) and strip the leading `error: ` prefix.
+fn clap_error_message(err: &clap::Error) -> String {
+    let rendered = err.render().to_string();
+    let mut parts: Vec<String> = Vec::new();
+    for raw in rendered.lines() {
+        let line = raw.trim();
+        if line.is_empty() {
+            // Blank line separates the diagnostic from the usage/footer block.
+            break;
+        }
+        parts.push(line.to_string());
+    }
+    if parts.is_empty() {
+        return "usage error".to_string();
+    }
+    let joined = parts.join(" ");
+    joined
+        .strip_prefix("error: ")
+        .unwrap_or(&joined)
+        .to_string()
 }
 
 /// The top-level subcommands fez accepts.
@@ -339,6 +441,40 @@ mod tests {
 
     fn cli(args: &[&str]) -> Cli {
         Cli::try_parse_from(args).expect("args parse")
+    }
+
+    #[test]
+    fn wants_json_detects_flag_anywhere() {
+        assert!(wants_json(["fez", "--json", "services", "status"]));
+        assert!(wants_json(["fez", "services", "status", "--json"]));
+        assert!(!wants_json(["fez", "services", "status"]));
+    }
+
+    #[test]
+    fn wants_json_respects_double_dash() {
+        // `--json` after the end-of-options marker is a positional, not the flag.
+        assert!(!wants_json(["fez", "--", "--json"]));
+        // `--json` before `--` still enables JSON mode.
+        assert!(wants_json(["fez", "--json", "--", "x"]));
+    }
+
+    #[test]
+    fn clap_error_message_joins_missing_args_and_strips_prefix() {
+        // A missing required positional renders "error: ...not provided:" then
+        // the arg names on the next line; the message must keep them together
+        // and drop the `error: ` prefix.
+        let err = Cli::try_parse_from(["fez", "services", "status"]).unwrap_err();
+        let msg = clap_error_message(&err);
+        assert!(!msg.starts_with("error:"), "prefix not stripped: {msg}");
+        assert!(msg.contains("UNIT"), "arg name missing: {msg}");
+        assert!(!msg.contains('\n'), "message should be one line: {msg}");
+    }
+
+    #[test]
+    fn clap_error_message_renders_unknown_flag() {
+        let err = Cli::try_parse_from(["fez", "services", "list", "--bogus"]).unwrap_err();
+        let msg = clap_error_message(&err);
+        assert!(msg.contains("--bogus"), "{msg}");
     }
 
     #[test]

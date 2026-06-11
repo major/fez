@@ -36,7 +36,21 @@ pub fn run(cli: Cli) -> i32 {
                 0
             }
             None => {
-                eprintln!("unknown capability: {id}");
+                // Discovery error: honor --json with a fez/v1 envelope (#52).
+                if cli.json {
+                    let env = Envelope::error(
+                        "Error",
+                        &host,
+                        crate::envelope::ApiError {
+                            code: "not-found".into(),
+                            message: format!("unknown capability: {id}"),
+                            detail: Some(json!({ "capability": id })),
+                        },
+                    );
+                    println!("{}", env.to_json_string());
+                } else {
+                    eprintln!("unknown capability: {id}");
+                }
                 4
             }
         },
