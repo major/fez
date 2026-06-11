@@ -35,15 +35,26 @@ variable "key_path" {
   default = "fez-e2e-key"
 }
 
-# Which OS to provision: "fedora" or "rhel10". Selects the AMI data source
-# and the SSH login user (fedora vs ec2-user) in main.tf.
-variable "os" {
-  type    = string
-  default = "fedora"
+# Which OSes to provision. Terraform's own DAG parallelizes the per-OS
+# instances (aws_instance.e2e for_each = var.oses), so the runner does a single
+# apply instead of fanning out N terraform dirs. Each element selects an AMI
+# family and SSH login user (fedora vs ec2-user) via the maps in main.tf.
+variable "oses" {
+  type    = set(string)
+  default = ["fedora"]
   validation {
-    condition     = contains(["fedora", "rhel10"], var.os)
-    error_message = "var.os must be one of: fedora, rhel10."
+    condition     = length(var.oses) > 0 && alltrue([for o in var.oses : contains(["fedora", "rhel10"], o)])
+    error_message = "var.oses must be a non-empty subset of: fedora, rhel10."
   }
+}
+
+# Hard cap (seconds) on the per-host readiness remote-exec provisioner. A host
+# whose cloud-init never writes /var/lib/fez-e2e-ready taints its instance and
+# fails the apply for that host only; siblings still come up. The runner
+# tolerates the non-zero apply and derives survivors from the output maps.
+variable "ready_timeout_seconds" {
+  type    = number
+  default = 300
 }
 
 # Major RHEL release to match in the official Red Hat AMI name glob.

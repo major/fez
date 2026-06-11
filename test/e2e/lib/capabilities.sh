@@ -4,8 +4,8 @@
 # Caller globals: FEZ_BIN, OS, STEP_LOG, WORK.
 #
 # The helpers (run_capture, _record) and the globals they set (REPLY, RC) live in
-# the sibling lib/assertions.sh, which the caller (run.sh / per_os_job.sh) sources
-# first. Point shellcheck at it so `-x` can follow the definitions.
+# the sibling lib/assertions.sh, which the caller (run.sh) sources first. The
+# source= directive below lets `-x` follow the definitions.
 # shellcheck source=test/e2e/lib/assertions.sh
 # REPLY/RC are set by run_capture in assertions.sh; OS/STEP_LOG/WORK/FEZ_BIN are
 # caller-set globals. shellcheck cannot see those assignments from this file.

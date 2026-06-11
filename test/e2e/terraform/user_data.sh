@@ -3,49 +3,42 @@ set -eux
 
 # fez drives four subsystems over cockpit-bridge:
 #   services  -> systemd        (always present)
-#   packages  -> dnf5daemon     (dnf5daemon-server)
+#   packages  -> dnf5daemon     (dnf5daemon-server; Fedora only, see below)
 #   network   -> NetworkManager (always present)
 #   firewall  -> firewalld      (firewalld)
 # Install the bridge + cockpit-system (ships the sudo/pkexec superuser bridges
 # cockpit-bridge alone lacks) plus the package/firewall backends so every
 # capability hits a live service instead of the absent-service path.
 #
+# dnf5daemon-server (the org.rpm.dnf.v0 provider) exists on Fedora 41+ but NOT
+# on RHEL 10, which is a dnf4 stack. Terraform sets with_dnf5daemon=false for
+# RHEL so we never ask dnf to install a package that does not exist; under
+# `set -e` that would abort cloud-init before the ready marker and kill the
+# whole host. With it omitted, RHEL boots ready, services/network/firewall run,
+# and the packages e2e test hits fez's exit-9 dependency-missing path and
+# records `skip` (the harness expects this).
+#
 # This file is rendered by Terraform's templatefile(): a single-$ $${login_user}
 # is substituted with the template variable's value, while a double-$$
-# $${login_user} renders as the literal text. (Tokens that should reach the
-# guest as literal shell are escaped as $$.) The interpolated values used below
-# are ${login_user} and ${os_family}; runtime shell $$VAR expansions are escaped
-# so Terraform does not try to resolve them.
-
-# Always-present surface: bridge, superuser bridges, and firewalld. These exist
-# on every target, so a failure here is a real provisioning fault and SHOULD
-# abort (set -e) and fail the host.
-dnf -y install cockpit-bridge cockpit-system firewalld
-
-# packages backend (dnf5daemon-server) is OPTIONAL and OS-dependent:
-#   - Fedora 41+ ships it; we hard-require it so a silent install regression
-#     surfaces as a real failure (host never readies -> infra fail), not a
-#     false "skip" that would hide a broken packages capability.
-#   - RHEL 10 does NOT ship it: RHEL 10 uses dnf4 as the system manager and
-#     dnf5/dnf5daemon target RHEL 11 (upstream dnf5 PR #780 explicitly blocks
-#     dnf5 from replacing dnf on RHEL 10). The package is absent from
-#     BaseOS/AppStream, so installing it best-effort lets the host still ready
-#     and run services/network/firewall; `fez packages` then returns exit 9
-#     (dependency-missing) and the capability harness records "skip", not
-#     "fail" (issue #50).
-if [ "${os_family}" = "rhel" ]; then
-  dnf -y install dnf5daemon-server || \
-    echo "fez-e2e: dnf5daemon-server unavailable on ${os_family}; packages capability will be skipped" >&2
-else
-  dnf -y install dnf5daemon-server
-fi
+# $${login_user} renders as the literal text. (Both tokens here are escaped as
+# $$ so this comment is not itself interpolated.) The dnf/sudoers code below
+# uses the single-$ form so Terraform fills in the values; there are no runtime
+# shell $${VAR} expansions that need escaping.
+#
+# The install line uses a Terraform conditional rather than a runtime shell
+# branch: when with_dnf5daemon is false (RHEL 10) the package is simply omitted
+# from the argv, so dnf is never asked for a package that does not exist and
+# `set -e` has nothing to trip over. This is cleaner than installing it
+# best-effort and swallowing the error, because a genuine install failure on a
+# host that SHOULD have it (Fedora) still aborts and fails the host.
+dnf -y install cockpit-bridge cockpit-system firewalld${with_dnf5daemon ? " dnf5daemon-server" : ""}
 
 # firewalld is not enabled by default on cloud images; the firewall capability
 # needs the daemon running to exercise reads + runtime mutations.
 systemctl enable --now firewalld
 
-# dnf5daemon activates on demand over D-Bus; no explicit enable needed, but make
-# sure the unit is present so packages tests do not hit dependency-missing.
+# On hosts that installed it (Fedora), dnf5daemon activates on demand over
+# D-Bus; no explicit enable needed. Harmless no-op where it was not installed.
 systemctl list-unit-files 'dnf5daemon*' >/dev/null 2>&1 || true
 
 # cockpit-system's default superuser bridge escalates with `sudo -k -A`. A
