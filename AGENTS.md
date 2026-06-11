@@ -17,6 +17,17 @@ shelling out to the system OpenSSH client. Rust, edition 2021, MSRV **1.92**
 Crates.io package name is `rusty-fez` because `fez` is already taken. The
 installed binary and library crate name stay `fez`.
 
+**fez holds no state.** It never writes a state file, cache, lock, or
+spool (no `/var/lib/fez`, no `XDG_STATE_HOME`, no temp snapshots). Every
+invocation is self-contained: it reads live system state through the bridge,
+acts, emits the envelope, and exits. The source of truth always lives in the
+managed subsystem (systemd, dnf5daemon, NetworkManager, firewalld), never in
+fez. When a feature seems to need memory across invocations, push that state
+into the subsystem (e.g. firewalld's own runtime-vs-permanent split and
+`runtimeToPermanent`) or recompute it on each call, rather than persisting it
+in fez. The only thing fez writes is the append-only audit log, and that is a
+sink, not state fez ever reads back.
+
 ## Commands
 
 Use the Makefile, not raw cargo, for gated work. `make` defaults to `check`.
