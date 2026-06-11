@@ -214,6 +214,103 @@ fn services_start_help_keeps_protected_unit_wording() {
         .stdout(contains("Protected units"));
 }
 
+// Issue #61: --dry-run/--force are clap globals, so they leaked into the help
+// of read-only commands where they have no effect, adding action-space noise an
+// LLM can trip over (e.g. `fez network list --force`). The inject() pass now
+// hides any global flag not advertised by a leaf's descriptor, so read-only
+// command help no longer lists --force/--dry-run.
+#[test]
+fn readonly_command_help_hides_force_and_dry_run() {
+    for path in [
+        ["network", "list"],
+        ["packages", "info"],
+        ["firewall", "status"],
+        ["services", "status"],
+    ] {
+        fez()
+            .args([path[0], path[1], "--help"])
+            .assert()
+            .success()
+            .stdout(contains("--force").not())
+            .stdout(contains("--dry-run").not());
+    }
+}
+
+// Mutating commands must still advertise the flags they actually honor.
+#[test]
+fn mutating_command_help_keeps_force_and_dry_run() {
+    fez()
+        .args(["services", "start", "--help"])
+        .assert()
+        .success()
+        .stdout(contains("--force"))
+        .stdout(contains("--dry-run"));
+    // packages install honors both too.
+    fez()
+        .args(["packages", "install", "--help"])
+        .assert()
+        .success()
+        .stdout(contains("--force"))
+        .stdout(contains("--dry-run"));
+}
+
+// Hiding from help must not change parse behavior: the global contract holds, so
+// passing a hidden flag to a read-only command is still accepted (no-op), not a
+// usage error. Use --json so the command short-circuits before touching a bridge.
+#[test]
+fn hidden_global_flag_still_parses_on_readonly() {
+    // network list is unprivileged and needs no bridge; --force is a no-op here.
+    // It should not fail with a clap usage error (exit 2). It may fail later for
+    // transport reasons, but must not reject the flag itself.
+    let out = fez()
+        .args(["network", "list", "--force", "--json"])
+        .output()
+        .expect("run");
+    assert_ne!(
+        out.status.code(),
+        Some(2),
+        "read-only command rejected a hidden global flag as a usage error: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
+
+// Drift guard: the flags shown in each capability leaf's help must match the
+// flags advertised in that descriptor (the registry is canonical). A global
+// flag missing from the descriptor must be hidden; a flag present must be
+// visible.
+#[test]
+fn help_flags_match_descriptor_flags() {
+    let cmd = fez::cli::command();
+    for d in fez::capability::registry() {
+        let parts: Vec<&str> = d.id.split('.').collect();
+        // Walk to the leaf subcommand.
+        let mut node = &cmd;
+        for p in &parts {
+            node = node
+                .get_subcommands()
+                .find(|c| c.get_name() == *p)
+                .unwrap_or_else(|| panic!("no subcommand for {}", d.id));
+        }
+        for arg in node.get_arguments() {
+            let long = match arg.get_long() {
+                Some(l) => format!("--{l}"),
+                None => continue,
+            };
+            // Only the safety globals are conditionally hidden.
+            if long != "--force" && long != "--dry-run" {
+                continue;
+            }
+            let advertised = d.flags.iter().any(|f| f == &long);
+            let hidden = arg.is_hide_set();
+            assert_eq!(
+                hidden, !advertised,
+                "{}: {long} hidden={hidden} but descriptor advertised={advertised}",
+                d.id
+            );
+        }
+    }
+}
+
 #[test]
 fn guide_text_mentions_discovery_loop_and_exit_codes() {
     fez()
