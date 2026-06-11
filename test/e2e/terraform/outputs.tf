@@ -3,7 +3,7 @@ output "public_ip" {
 }
 
 output "ssh_user" {
-  value = "fedora"
+  value = local.ssh_user
 }
 
 output "key_path" {
@@ -11,5 +11,5 @@ output "key_path" {
 }
 
 output "ami_name" {
-  value = data.aws_ami.fedora.name
+  value = local.ami_name
 }
