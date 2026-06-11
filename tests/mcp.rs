@@ -178,6 +178,21 @@ fn expanded_capability_tool_expands_repeatable_flags() {
 }
 
 #[test]
+fn expanded_capability_tool_maps_globals() {
+    let convo = concat!(
+        r#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"services_start","arguments":{"unit":"sshd.service","host":"web1","dry_run":true,"force":true}}}"#,
+        "\n",
+    );
+    fez_mcp_expanded()
+        .write_stdin(convo)
+        .assert()
+        .success()
+        .stdout(contains("DryRun"))
+        .stdout(contains("web1"))
+        .stdout(contains("sshd.service"));
+}
+
+#[test]
 fn invoke_unknown_capability_is_tool_error() {
     let convo = concat!(
         r#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"invoke","arguments":{"capability":"does.not.exist"}}}"#,
