@@ -66,6 +66,11 @@ pub enum FezError {
         /// Package names the resolved plan would remove.
         removed: Vec<String>,
     },
+    /// A CLI usage error (clap parse failure: missing/invalid argument or
+    /// unknown flag) surfaced as a `fez/v1` envelope because `--json` was
+    /// requested. The plain-text path keeps clap's own rendering.
+    #[error("usage error: {0}")]
+    Usage(String),
     /// The user declined a confirmation prompt.
     #[error("aborted by user")]
     Aborted,
@@ -97,6 +102,11 @@ pub const EXIT_CODES: &[ExitCodeDoc] = &[
         code: 1,
         label: "general",
         meaning: "Unclassified failure (I/O, decode, aborted).",
+    },
+    ExitCodeDoc {
+        code: 2,
+        label: "usage",
+        meaning: "CLI usage error (missing/invalid argument or unknown flag).",
     },
     ExitCodeDoc {
         code: 4,
@@ -155,6 +165,7 @@ impl FezError {
             FezError::Protected { .. } => "protected-unit",
             FezError::DependencyMissing { .. } => "dependency-missing",
             FezError::DangerousTransaction { .. } => "dangerous-transaction",
+            FezError::Usage(_) => "usage",
             FezError::Aborted => "aborted",
             FezError::AccessDenied { .. } => "access-denied",
         }
@@ -162,6 +173,9 @@ impl FezError {
     /// Process exit code to use when this error is fatal.
     pub fn exit_code(&self) -> i32 {
         match self {
+            // Match clap's own convention so plain-text and --json usage errors
+            // share exit 2.
+            FezError::Usage(_) => 2,
             FezError::NotFound(_) | FezError::Problem(_) => 4,
             FezError::Timeout => 5,
             FezError::Spawn { .. } | FezError::BridgeClosed => 6,
@@ -224,6 +238,7 @@ mod tests {
                 remediation: "r".into(),
             }
             .exit_code(),
+            FezError::Usage("missing <UNIT>".into()).exit_code(),
         ];
         for code in produced {
             if code != 1 {
@@ -302,6 +317,14 @@ mod tests {
     fn aborted_maps_code_and_exit() {
         assert_eq!(FezError::Aborted.code(), "aborted");
         assert_eq!(FezError::Aborted.exit_code(), 1);
+    }
+
+    #[test]
+    fn usage_maps_code_and_exit() {
+        let e = FezError::Usage("missing required argument: <UNIT>".into());
+        assert_eq!(e.code(), "usage");
+        assert_eq!(e.exit_code(), 2);
+        assert!(e.to_string().contains("missing required argument"));
     }
 
     #[test]

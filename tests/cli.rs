@@ -168,14 +168,11 @@ fn describe_text_marks_readonly_not_privileged() {
         .stdout(contains("output: ServiceList"));
 }
 
-#[test]
-fn describe_unknown_json_still_exits_4() {
-    fez()
-        .args(["describe", "nope", "--json"])
-        .assert()
-        .code(4)
-        .stderr(contains("unknown capability"));
-}
+// Issue #52: under --json the unknown-capability discovery error emits a fez/v1
+// error envelope on stdout (still exit 4), instead of a bare stderr line. That
+// path is covered by json_unknown_capability_emits_envelope below (which also
+// asserts the capability id round-trips); the plain-text path keeps stderr (see
+// plain_unknown_capability_keeps_stderr).
 
 #[test]
 fn services_start_help_shows_examples_and_long() {
@@ -502,4 +499,88 @@ fn every_descriptor_example_parses() {
             );
         }
     }
+}
+
+// ---- issue #52: --json error envelopes for usage and discovery errors ----
+
+// A clap parse error (missing required positional) with --json must emit a
+// fez/v1 error envelope on stdout, exit non-zero, and carry a stable code.
+#[test]
+fn json_missing_required_arg_emits_envelope() {
+    fez()
+        .args(["--json", "services", "status"])
+        .assert()
+        .code(2)
+        .stdout(contains("\"apiVersion\":\"fez/v1\""))
+        .stdout(contains("\"kind\":\"Error\""))
+        .stdout(contains("\"status\":\"error\""))
+        .stdout(contains("\"code\":\"usage\""))
+        // stderr must NOT carry the clap text when JSON was requested.
+        .stderr(contains("required arguments").not());
+}
+
+// --json may appear after the subcommand; the envelope must still be emitted.
+#[test]
+fn json_after_subcommand_still_emits_envelope() {
+    fez()
+        .args(["services", "status", "--json"])
+        .assert()
+        .code(2)
+        .stdout(contains("\"apiVersion\":\"fez/v1\""))
+        .stdout(contains("\"kind\":\"Error\""))
+        .stdout(contains("\"status\":\"error\""))
+        .stdout(contains("\"code\":\"usage\""));
+}
+
+// An unknown flag is also a usage error under --json.
+#[test]
+fn json_unknown_flag_emits_envelope() {
+    fez()
+        .args(["services", "list", "--json", "--bogus"])
+        .assert()
+        .code(2)
+        .stdout(contains("\"kind\":\"Error\""))
+        .stdout(contains("\"code\":\"usage\""));
+}
+
+// describe of an unknown capability with --json must emit an envelope, not a
+// bare stderr line.
+#[test]
+fn json_unknown_capability_emits_envelope() {
+    fez()
+        .args(["describe", "nope.nope", "--json"])
+        .assert()
+        .code(4)
+        .stdout(contains("\"kind\":\"Error\""))
+        .stdout(contains("\"code\":\"not-found\""))
+        .stdout(contains("nope.nope"));
+}
+
+// Without --json, usage errors keep clap's human text on stderr (exit 2), so
+// interactive use is unchanged.
+#[test]
+fn plain_missing_arg_keeps_clap_stderr() {
+    fez()
+        .args(["services", "status"])
+        .assert()
+        .code(2)
+        .stderr(contains("required arguments"));
+}
+
+// Without --json, an unknown capability keeps the plain stderr line.
+#[test]
+fn plain_unknown_capability_keeps_stderr() {
+    fez()
+        .args(["describe", "nope.nope"])
+        .assert()
+        .code(4)
+        .stderr(contains("unknown capability"));
+}
+
+// --help and --version must still succeed (exit 0) even with --json present;
+// they are not errors and must not be converted to error envelopes.
+#[test]
+fn json_help_and_version_still_succeed() {
+    fez().args(["--json", "--help"]).assert().success();
+    fez().args(["--json", "--version"]).assert().success();
 }

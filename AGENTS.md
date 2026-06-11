@@ -64,12 +64,12 @@ Thin binaries over a library (`src/lib.rs` owns the module tree; `run()` is the 
 - `transport/` - `local` (spawns the bridge) and `ssh` (OpenSSH client) ways to reach it
 - `capabilities/` - the actual commands fez runs (e.g. `services`, `packages`, `network`, `firewall`); `capability/` holds machine-readable descriptors of that surface
 - `dispatch.rs` - routes parsed CLI to capabilities (private module)
-- `cli.rs` - clap definitions plus `command()`/`parse()` (the registry-enriched command tree) and `raw_command()` (the bare derived tree). New top-level verbs beyond the capability commands: `fez guide` (agent contract; `--json` emits an `AgentGuide` envelope), `fez completions <shell>` (bash/zsh/fish), and hidden `fez man` (emits the `fez.1` roff page; packaging runs it during `%build`). `envelope.rs` - the `fez/v1` JSON response envelope
+- `cli.rs` - clap definitions plus `command()` (the registry-enriched command tree), `raw_command()` (the bare derived tree), and `parse_or_render()` (the binary entry point: it `try_get_matches`-es, renders `--help`/`--version` itself, and on a clap **usage** error honors `--json` by emitting a `fez/v1` error envelope (code `usage`, exit 2) on stdout instead of clap's stderr text, issue #52). New top-level verbs beyond the capability commands: `fez guide` (agent contract; `--json` emits an `AgentGuide` envelope), `fez completions <shell>` (bash/zsh/fish), and hidden `fez man` (emits the `fez.1` roff page; packaging runs it during `%build`). `envelope.rs` - the `fez/v1` JSON response envelope
 - `safety.rs` - guardrails: protected units refuse mutation without `--force`
 - `audit.rs` - JSON-lines audit log of attempted + completed mutations (each executed mutation writes two records: attempt + result)
 - `mcp/` - MCP server (`fez mcp`, JSON-RPC 2.0 over stdio)
 
-Errors: single `FezError` enum (`src/error.rs`) with stable string `code()` and `exit_code()` mappings. Exit codes are part of the contract (e.g. protected-unit = 8, timeout = 5, bridge spawn/closed = 6, dbus = 7, dependency-missing = 9, dangerous-transaction = 10, access-denied = 11). E2E and integration tests assert on them; update tests when you touch the mapping.
+Errors: single `FezError` enum (`src/error.rs`) with stable string `code()` and `exit_code()` mappings. Exit codes are part of the contract (e.g. usage = 2, not-found = 4, protected-unit = 8, timeout = 5, bridge spawn/closed = 6, dbus = 7, dependency-missing = 9, dangerous-transaction = 10, access-denied = 11). The `usage` code (exit 2, matching clap's convention) covers CLI parse failures rendered as JSON; clap surfaces these before a `FezError` exists, so `parse_or_render()` builds the envelope directly while `FezError::Usage` carries the same code/exit for the table and tests. E2E and integration tests assert on them; update tests when you touch the mapping.
 
 ## Testing quirks
 
