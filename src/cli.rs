@@ -295,6 +295,15 @@ pub enum PackagesAction {
         /// package is kept if its repo id equals any given value (OR).
         #[arg(long = "repo")]
         repo: Vec<String>,
+        /// Restrict to packages whose name contains this substring.
+        #[arg(long)]
+        name: Option<String>,
+        /// Maximum number of rows to return.
+        #[arg(long)]
+        limit: Option<usize>,
+        /// Number of matching rows to skip before returning results.
+        #[arg(long, default_value_t = 0)]
+        offset: usize,
     },
     /// Show one package's full attributes.
     Info {

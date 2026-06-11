@@ -84,12 +84,31 @@ fn dnf_reply(method: &str, iface: &str, id: &Value) -> Value {
         // returns the full multi-repo set and the client filters by `repo_id`.
         // `vim` lives in `updates` so `--repo fedora` must drop it and
         // `--repo updates` must keep only it (issue #59).
-        "list" => json!({"reply":[[[
-            dnf_package("bash", "5.2.26-1.fc40", "x86_64", "fedora", 7340032),
-            dnf_package("htop", "3.3.0-1.fc40", "x86_64", "fedora", 245760),
-            dnf_package("nginx", "1.24.0-7.fc40", "x86_64", "fedora", 1572864),
-            dnf_package("vim-enhanced", "9.1.0-1.fc40", "x86_64", "updates", 3145728),
-        ]]],"id": id}),
+        "list" => {
+            let packages = match std::env::var("FEZ_FAKE_PACKAGE_COUNT")
+                .ok()
+                .and_then(|s| s.parse::<usize>().ok())
+            {
+                Some(count) => (0..count)
+                    .map(|i| {
+                        dnf_package(
+                            &format!("pkg{i:04}"),
+                            "1.0-1.fc40",
+                            "x86_64",
+                            "fedora",
+                            1024,
+                        )
+                    })
+                    .collect(),
+                None => vec![
+                    dnf_package("bash", "5.2.26-1.fc40", "x86_64", "fedora", 7340032),
+                    dnf_package("htop", "3.3.0-1.fc40", "x86_64", "fedora", 245760),
+                    dnf_package("nginx", "1.24.0-7.fc40", "x86_64", "fedora", 1572864),
+                    dnf_package("vim-enhanced", "9.1.0-1.fc40", "x86_64", "updates", 3145728),
+                ],
+            };
+            json!({"reply":[[packages]],"id": id})
+        }
         // Staging calls: install/remove/upgrade return nothing.
         "install" | "remove" | "upgrade" => json!({"reply":[[]],"id": id}),
         // Goal.resolve(options) -> (transaction_items, result). result 0 == no problems.
