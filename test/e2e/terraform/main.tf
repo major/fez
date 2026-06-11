@@ -44,15 +44,54 @@ data "aws_ami" "fedora" {
   }
 }
 
+# Latest official Red Hat RHEL AMI, owned by Red Hat (309956199498).
+# Name family is `RHEL-<ver>_HVM-<date>-<arch>-0-Hourly2-GP3` for early builds
+# and `RHEL-<ver>_HVM_GA-<date>-...` for point-release GA builds, e.g.
+# `RHEL-10.2.0_HVM_GA-20260521-x86_64-0-Hourly2-GP3`. The glob uses `_HVM*`
+# (NOT `_HVM-`) so it matches BOTH the `_HVM-` and `_HVM_GA-` families;
+# anchoring to `_HVM-` alone drops the GA point releases (the newest images) and
+# most_recent would then pick a stale minor. Verified against rhel_images.json:
+# `_HVM*` matches 17/17 Hourly2 x86_64 RHEL-10 images, `_HVM-` only 14/17.
+# Hourly2 images are PAYG (no BYOS subscription), so BaseOS/AppStream repos are
+# enabled out of the box.
+data "aws_ami" "rhel" {
+  most_recent = true
+  owners      = ["309956199498"]
+  filter {
+    name   = "name"
+    values = ["RHEL-${var.rhel_version}*_HVM*-${var.architecture}-*-Hourly2-GP3"]
+  }
+  filter {
+    name   = "architecture"
+    values = [var.architecture]
+  }
+  filter {
+    name   = "root-device-type"
+    values = ["ebs"]
+  }
+  filter {
+    name   = "virtualization-type"
+    values = ["hvm"]
+  }
+  filter {
+    name   = "state"
+    values = ["available"]
+  }
+}
+
 data "http" "myip" {
   url = "https://checkip.amazonaws.com/"
 }
 
 locals {
   # Image names use aarch64/x86_64; the EC2 architecture filter uses arm64/x86_64.
-  ami_arch = var.architecture == "arm64" ? "aarch64" : var.architecture
-  ami_id   = coalesce(var.fedora_ami_id, data.aws_ami.fedora.id)
-  ssh_cidr = coalesce(var.allowed_ssh_cidr, "${chomp(data.http.myip.response_body)}/32")
+  ami_arch   = var.architecture == "arm64" ? "aarch64" : var.architecture
+  fedora_ami = coalesce(var.fedora_ami_id, data.aws_ami.fedora.id)
+  rhel_ami   = coalesce(var.rhel_ami_id, data.aws_ami.rhel.id)
+  ami_id     = var.os == "rhel10" ? local.rhel_ami : local.fedora_ami
+  ami_name   = var.os == "rhel10" ? data.aws_ami.rhel.name : data.aws_ami.fedora.name
+  ssh_user   = var.os == "rhel10" ? "ec2-user" : "fedora"
+  ssh_cidr   = coalesce(var.allowed_ssh_cidr, "${chomp(data.http.myip.response_body)}/32")
   tags = {
     Project   = "fez"
     Purpose   = "e2e"
@@ -98,12 +137,17 @@ resource "aws_instance" "e2e" {
   instance_type          = var.instance_type
   key_name               = aws_key_pair.e2e.key_name
   vpc_security_group_ids = [aws_security_group.e2e.id]
-  user_data              = file("${path.module}/user_data.sh")
-  tags                   = merge(local.tags, { Name = "fez-e2e" })
+  user_data = templatefile("${path.module}/user_data.sh", {
+    login_user = local.ssh_user
+  })
+  tags = merge(local.tags, { Name = "fez-e2e" })
 
   lifecycle {
     precondition {
-      condition     = var.fedora_ami_id != null || !can(regex("(?i)prerelease|beta|rawhide|eln|rc", data.aws_ami.fedora.name))
+      # Only the Fedora auto-selection can drift onto a prerelease build; the
+      # RHEL Hourly2 glob already excludes betas. Skip the check when a pin or
+      # a non-fedora OS is in play.
+      condition     = var.os != "fedora" || var.fedora_ami_id != null || !can(regex("(?i)prerelease|beta|rawhide|eln|rc", data.aws_ami.fedora.name))
       error_message = "Auto-selected Fedora AMI '${data.aws_ami.fedora.name}' looks like a pre-release; pin var.fedora_ami_id."
     }
   }
