@@ -17,9 +17,38 @@ const SERVER_NAME: &str = "fez";
 /// from the free-form `inputs` object.
 const GLOBAL_FLAGS: [&str; 4] = ["--host", "--json", "--dry-run", "--force"];
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ServerContext {
+    default_host: String,
+}
+
+impl ServerContext {
+    fn new(default_host: String) -> Self {
+        Self { default_host }
+    }
+
+    fn default_localhost() -> Self {
+        Self::new("localhost".to_string())
+    }
+
+    fn default_host(&self) -> &str {
+        &self.default_host
+    }
+}
+
 /// Run the MCP server: read newline-delimited JSON-RPC from stdin, write one
 /// response line per request to stdout, until EOF. Returns the process exit code.
 pub fn run() -> i32 {
+    run_with_context(&ServerContext::default_localhost())
+}
+
+/// Run the MCP server using `default_host` for invoke calls that omit
+/// `arguments.host`.
+pub fn run_with_host(default_host: &str) -> i32 {
+    run_with_context(&ServerContext::new(default_host.to_string()))
+}
+
+fn run_with_context(context: &ServerContext) -> i32 {
     let stdin = std::io::stdin();
     let mut stdout = std::io::stdout();
     for line in stdin.lock().lines() {
@@ -30,7 +59,7 @@ pub fn run() -> i32 {
         if line.trim().is_empty() {
             continue;
         }
-        if let Some(resp) = handle_line(&line) {
+        if let Some(resp) = handle_line_with_context(&line, context) {
             let Ok(json) = serde_json::to_string(&resp) else {
                 eprintln!("MCP response serialization failed");
                 return 2;
@@ -46,7 +75,12 @@ pub fn run() -> i32 {
 
 /// Handle one input line. Returns `None` for notifications (no reply per
 /// JSON-RPC 2.0). Parse failures yield a `-32700` error with a null id.
-pub(crate) fn handle_line(line: &str) -> Option<Response> {
+#[cfg(test)]
+fn handle_line(line: &str) -> Option<Response> {
+    handle_line_with_context(line, &ServerContext::default_localhost())
+}
+
+fn handle_line_with_context(line: &str, context: &ServerContext) -> Option<Response> {
     let req: Request = match serde_json::from_str(line) {
         Ok(r) => r,
         Err(_) => return Some(Response::err(Value::Null, -32700, "parse error")),
@@ -56,10 +90,10 @@ pub(crate) fn handle_line(line: &str) -> Option<Response> {
     }
     let id = req.id.clone().unwrap_or(Value::Null);
     let resp = match req.method.as_str() {
-        "initialize" => Response::ok(id, initialize_result(&req.params)),
+        "initialize" => Response::ok(id, initialize_result(&req.params, context)),
         "ping" => Response::ok(id, json!({})),
-        "tools/list" => Response::ok(id, json!({ "tools": tool_list() })),
-        "tools/call" => match tools_call(&req.params) {
+        "tools/list" => Response::ok(id, json!({ "tools": tool_list(context) })),
+        "tools/call" => match tools_call(&req.params, context) {
             Ok(result) => Response::ok(id, result),
             Err((code, msg)) => Response::err(id, code, &msg),
         },
@@ -68,7 +102,7 @@ pub(crate) fn handle_line(line: &str) -> Option<Response> {
     Some(resp)
 }
 
-fn initialize_result(params: &Value) -> Value {
+fn initialize_result(params: &Value, context: &ServerContext) -> Value {
     // Echo the client's requested protocol version when present, else our default.
     let version = params
         .get("protocolVersion")
@@ -78,11 +112,19 @@ fn initialize_result(params: &Value) -> Value {
     json!({
         "protocolVersion": version,
         "capabilities": { "tools": {} },
-        "serverInfo": { "name": SERVER_NAME, "version": env!("CARGO_PKG_VERSION") }
+        "serverInfo": {
+            "name": SERVER_NAME,
+            "version": env!("CARGO_PKG_VERSION"),
+            "defaultTargetHost": context.default_host()
+        }
     })
 }
 
-fn tool_list() -> Value {
+fn tool_list(context: &ServerContext) -> Value {
+    let invoke_description = format!(
+        "Invoke a fez capability and return its fez/v1 JSON envelope. Mutations honor the full safety layer (protected units, dry-run, audit). Server default target host: {}. Set arguments.host to override it for one call.",
+        context.default_host()
+    );
     json!([
         {
             "name": "list_capabilities",
@@ -101,7 +143,7 @@ fn tool_list() -> Value {
         },
         {
             "name": "invoke",
-            "description": "Invoke a fez capability and return its fez/v1 JSON envelope. Mutations honor the full safety layer (protected units, dry-run, audit).",
+            "description": invoke_description,
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -121,7 +163,7 @@ fn tool_list() -> Value {
 /// Dispatch a `tools/call`. Err carries a JSON-RPC (code, message); protocol-level
 /// failures (e.g. a capability that errors) are reported inside the tool result
 /// with `isError: true`, per MCP convention.
-fn tools_call(params: &Value) -> Result<Value, (i64, String)> {
+fn tools_call(params: &Value, context: &ServerContext) -> Result<Value, (i64, String)> {
     let name = params
         .get("name")
         .and_then(Value::as_str)
@@ -151,7 +193,7 @@ fn tools_call(params: &Value) -> Result<Value, (i64, String)> {
                 .get("capability")
                 .and_then(Value::as_str)
                 .ok_or((-32602, "missing 'capability'".to_string()))?;
-            invoke(id, &args)
+            invoke(id, &args, context)
         }
         other => Err((-32602, format!("unknown tool: {other}"))),
     }
@@ -172,7 +214,7 @@ fn list_capabilities_text() -> String {
 /// Invoke a capability by re-execing `fez` with `--json`, so the call traverses
 /// the real CLI path and its safety layer (Plan 2). The child's stdout (the
 /// fez/v1 envelope) becomes the tool result; a non-zero exit sets isError.
-fn invoke(id: &str, args: &Value) -> Result<Value, (i64, String)> {
+fn invoke(id: &str, args: &Value, context: &ServerContext) -> Result<Value, (i64, String)> {
     // A well-formed `invoke` call naming an unknown capability is a domain-level
     // failure, not a malformed request: report it as a tool error (isError),
     // consistent with `describe_capability`, rather than a JSON-RPC error.
@@ -180,7 +222,7 @@ fn invoke(id: &str, args: &Value) -> Result<Value, (i64, String)> {
         Some(d) => d,
         None => return Ok(text_result(&format!("unknown capability: {id}"), true)),
     };
-    let argv = build_argv(&descriptor, args);
+    let argv = build_argv_with_context(&descriptor, args, context);
     let exe = std::env::current_exe().map_err(|e| (-32603, format!("locate fez binary: {e}")))?;
     let out = std::process::Command::new(exe)
         .args(&argv)
@@ -202,7 +244,16 @@ fn invoke(id: &str, args: &Value) -> Result<Value, (i64, String)> {
 /// (variadic inputs such as `packages.install`'s `specs`), skipping any
 /// non-string element. `host`/`dry_run`/`force` map to globals; `--json` is
 /// always appended so the result is a fez/v1 envelope.
-pub(crate) fn build_argv(d: &capability::Descriptor, args: &Value) -> Vec<String> {
+#[cfg(test)]
+fn build_argv(d: &capability::Descriptor, args: &Value) -> Vec<String> {
+    build_argv_with_context(d, args, &ServerContext::default_localhost())
+}
+
+pub(crate) fn build_argv_with_context(
+    d: &capability::Descriptor,
+    args: &Value,
+    context: &ServerContext,
+) -> Vec<String> {
     let mut argv: Vec<String> = d.id.split('.').map(|s| s.to_string()).collect();
     let inputs = args.get("inputs").cloned().unwrap_or_else(|| json!({}));
 
@@ -241,6 +292,9 @@ pub(crate) fn build_argv(d: &capability::Descriptor, args: &Value) -> Vec<String
     if let Some(h) = args.get("host").and_then(Value::as_str) {
         argv.push("--host".into());
         argv.push(h.into());
+    } else if context.default_host() != "localhost" {
+        argv.push("--host".into());
+        argv.push(context.default_host().into());
     }
     if args.get("dry_run").and_then(Value::as_bool) == Some(true) {
         argv.push("--dry-run".into());
@@ -355,6 +409,12 @@ mod tests {
         build_argv(&d, &args)
     }
 
+    fn argv_for_with_host(id: &str, default_host: &str, args: serde_json::Value) -> Vec<String> {
+        let d = capability::find(id).unwrap();
+        let context = ServerContext::new(default_host.to_string());
+        build_argv_with_context(&d, &args, &context)
+    }
+
     #[test]
     fn build_argv_status_unit_is_positional() {
         assert_eq!(
@@ -387,6 +447,44 @@ mod tests {
                 "--host",
                 "web1",
                 "--dry-run",
+                "--json"
+            ]
+        );
+    }
+
+    #[test]
+    fn build_argv_uses_default_host_when_call_omits_host() {
+        assert_eq!(
+            argv_for_with_host(
+                "services.status",
+                "web1",
+                j!({"inputs": {"unit": "sshd.service"}})
+            ),
+            vec![
+                "services",
+                "status",
+                "sshd.service",
+                "--host",
+                "web1",
+                "--json"
+            ]
+        );
+    }
+
+    #[test]
+    fn build_argv_call_host_overrides_default_host() {
+        assert_eq!(
+            argv_for_with_host(
+                "services.status",
+                "web1",
+                j!({"inputs": {"unit": "sshd.service"}, "host": "web2"})
+            ),
+            vec![
+                "services",
+                "status",
+                "sshd.service",
+                "--host",
+                "web2",
                 "--json"
             ]
         );

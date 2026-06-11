@@ -14,6 +14,12 @@ fn fez_mcp() -> Command {
     c
 }
 
+fn fez_mcp_host(host: &str) -> Command {
+    let mut c = fez_fake();
+    c.arg("--host").arg(host).arg("mcp");
+    c
+}
+
 const CONVERSATION: &str = concat!(
     r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"test","version":"0"}}}"#,
     "\n",
@@ -41,6 +47,16 @@ fn full_conversation_initializes_lists_and_invokes() {
         // envelope is embedded as the escaped `text` of a content block)
         .stdout(contains("ServiceList"))
         .stdout(contains("sshd.service"));
+}
+
+#[test]
+fn tools_list_reports_server_default_host() {
+    let convo = concat!(r#"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#, "\n",);
+    fez_mcp_host("web1.example.com")
+        .write_stdin(convo)
+        .assert()
+        .success()
+        .stdout(contains("default target host: web1.example.com"));
 }
 
 #[test]

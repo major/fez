@@ -73,6 +73,6 @@ pub fn run(cli: Cli) -> i32 {
         TopCommand::Packages { action } => crate::capabilities::packages::dispatch(&cli, action),
         TopCommand::Network { action } => crate::capabilities::network::dispatch(&cli, action),
         TopCommand::Firewall { action } => crate::capabilities::firewall::dispatch(&cli, action),
-        TopCommand::Mcp => crate::mcp::run(),
+        TopCommand::Mcp => crate::mcp::run_with_host(&host),
     }
 }
