@@ -29,8 +29,9 @@ run_os_job() {
     # Powering the guest off before destroy lets EC2 release it faster than
     # tearing down a running instance; best-effort, never blocks teardown.
     if [[ -n "${FEZ_SSH_CONFIG:-}" ]]; then
-      ssh -F "$FEZ_SSH_CONFIG" -o BatchMode=yes -o ConnectTimeout=10 target \
-        'sudo systemctl poweroff' >/dev/null 2>&1 || true
+      ssh -F "$FEZ_SSH_CONFIG" -o BatchMode=yes \
+        -o ConnectTimeout=10 -o ServerAliveInterval=5 -o ServerAliveCountMax=2 \
+        target 'sudo systemctl poweroff' >/dev/null 2>&1 || true
       sleep 5
     fi
     terraform -chdir="$TF" destroy -auto-approve -var "os=$OS" >>"$infra_log" 2>&1 || true
@@ -71,16 +72,24 @@ EOF
   export FEZ_SSH_CONFIG="$SSH_CONFIG"
 
   # Wait for cloud-init to install the capability surface (5-minute budget).
+  # Cap every probe so one wedged ssh can't outlive the per-iteration sleep:
+  # ConnectTimeout fails a never-completing connect fast, and ServerAlive*
+  # tears down a connection that stalls *after* connecting (sshd accepted TCP
+  # mid-cloud-init then hung). Both bound a single probe to <10s, the loop step.
   local ready=
   local _
   for _ in $(seq 1 30); do
-    if ssh -F "$SSH_CONFIG" -o BatchMode=yes target 'test -f /var/lib/fez-e2e-ready' 2>/dev/null; then
+    if ssh -F "$SSH_CONFIG" -o BatchMode=yes \
+        -o ConnectTimeout=5 -o ServerAliveInterval=5 -o ServerAliveCountMax=1 \
+        target 'test -f /var/lib/fez-e2e-ready' 2>/dev/null; then
       ready=1; break
     fi
     sleep 10
   done
   if [[ -z "$ready" ]]; then
-    ssh -F "$SSH_CONFIG" -o BatchMode=yes -o ConnectTimeout=10 target \
+    ssh -F "$SSH_CONFIG" -o BatchMode=yes \
+      -o ConnectTimeout=10 -o ServerAliveInterval=5 -o ServerAliveCountMax=2 \
+      target \
       'cloud-init status --long 2>&1; sudo tail -n 40 /var/log/cloud-init-output.log 2>&1' \
       >>"$infra_log" 2>&1 || true
     echo "$OS infra fail" >>"$RESULT_FILE"
