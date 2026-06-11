@@ -301,6 +301,14 @@ fn runtime_zone(
 }
 
 /// `firewall status`: state, default zone, panic flag, and pending drift.
+///
+/// Runtime reads (default zone, panic flag, the runtime zone's services/ports)
+/// go over the unprivileged `channel`. The permanent-config read needed for
+/// drift is polkit-gated (firewalld's `PK_ACTION_CONFIG`, `auth_admin_keep` on
+/// both server and desktop installs), so it is issued on a separate privileged
+/// channel that escalates first. A host with no usable escalation mechanism
+/// therefore fails `status` with `access-denied` (exit 11) rather than
+/// silently reporting empty drift.
 fn status(client: &mut BridgeClient, channel: &str, host: String) -> Result<View> {
     let default_zone = arg_str(&fw_call(
         client,
@@ -317,7 +325,10 @@ fn status(client: &mut BridgeClient, channel: &str, host: String) -> Result<View
         json!([]),
     )?);
     let (rt_services, rt_ports, rt_masq) = runtime_zone(client, channel, &default_zone)?;
-    let (perm_services, perm_ports, perm_masq) = permanent_zone(client, channel, &default_zone)?;
+    // Permanent config is polkit-gated; read it on a privileged channel.
+    let priv_channel = open_channel(client, true)?;
+    let (perm_services, perm_ports, perm_masq) =
+        permanent_zone(client, &priv_channel, &default_zone)?;
     let drift = compute_drift(
         &rt_services,
         &perm_services,
@@ -363,7 +374,13 @@ fn status(client: &mut BridgeClient, channel: &str, host: String) -> Result<View
 
 /// `firewall list`: every zone with a per-zone summary.
 fn list(client: &mut BridgeClient, channel: &str, host: String) -> Result<View> {
-    let zones = arg_str_vec(&fw_call(client, channel, FW_IFACE, "getZones", json!([]))?);
+    let zones = arg_str_vec(&fw_call(
+        client,
+        channel,
+        FW_ZONE_IFACE,
+        "getZones",
+        json!([]),
+    )?);
     let default_zone = arg_str(&fw_call(
         client,
         channel,
@@ -415,7 +432,13 @@ fn list(client: &mut BridgeClient, channel: &str, host: String) -> Result<View> 
 
 /// `firewall show <zone>`: one zone's full detail.
 fn show(client: &mut BridgeClient, channel: &str, host: String, zone: &str) -> Result<View> {
-    let zones = arg_str_vec(&fw_call(client, channel, FW_IFACE, "getZones", json!([]))?);
+    let zones = arg_str_vec(&fw_call(
+        client,
+        channel,
+        FW_ZONE_IFACE,
+        "getZones",
+        json!([]),
+    )?);
     if !zones.iter().any(|z| z == zone) {
         return Err(FezError::NotFound(format!("firewall zone {zone}")));
     }
