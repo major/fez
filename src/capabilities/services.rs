@@ -1,5 +1,5 @@
+use crate::capabilities::{render, View};
 use crate::cli::{Cli, ServicesAction};
-use crate::envelope::{ApiError, Envelope};
 use crate::error::{FezError, Result};
 use crate::protocol::client::BridgeClient;
 use crate::transport;
@@ -38,15 +38,6 @@ fn mangle_unit(name: &str) -> Cow<'_, str> {
     } else {
         Cow::Owned(format!("{name}.service"))
     }
-}
-
-struct View {
-    kind: &'static str,
-    host: String,
-    data: Value,
-    human: String,
-    pre_rendered: bool, // true when already streamed to stdout (logs --follow)
-    hints: Option<Value>,
 }
 
 #[derive(Clone, Copy)]
@@ -220,21 +211,7 @@ fn run_mutation(cli: &Cli, m: Mutation, unit: &str) -> Result<View> {
     }
 
     // Layer 4: structured audit — attempt, execute, then result.
-    let sink = crate::audit::sink_from_env();
-    let audit = crate::audit::AuditContext::new(
-        &crate::audit::actor(),
-        &host,
-        m.verb(),
-        unit,
-        &crate::audit::correlation_id(),
-    );
-    sink.write(&audit.record(crate::audit::Outcome::Attempt));
-    let result = execute(cli, &m, &host, unit);
-    match &result {
-        Ok(_) => sink.write(&audit.record(crate::audit::Outcome::Ok)),
-        Err(e) => sink.write(&audit.record(crate::audit::Outcome::Error(e.to_string()))),
-    }
-    result
+    crate::audit::run_audited(&host, m.verb(), unit, || execute(cli, &m, &host, unit))
 }
 
 fn dry_run_view(m: &Mutation, host: &str, unit: &str) -> View {
@@ -245,10 +222,10 @@ fn dry_run_view(m: &Mutation, host: &str, unit: &str) -> View {
         unit,
         host
     );
-    View {
-        kind: "DryRun",
-        host: host.to_string(),
-        data: json!({
+    View::new(
+        "DryRun",
+        host.to_string(),
+        json!({
             "operation": m.verb(),
             "unit": unit,
             "host": host,
@@ -256,9 +233,7 @@ fn dry_run_view(m: &Mutation, host: &str, unit: &str) -> View {
             "command": command,
         }),
         human,
-        pre_rendered: false,
-        hints: None,
-    }
+    )
 }
 
 fn confirm(m: &Mutation, host: &str, unit: &str) -> Result<()> {
@@ -316,14 +291,7 @@ impl Mutation {
 fn mutation_view(m: &Mutation, host: &str, unit: &str, data: Value) -> View {
     let human = format!("{} {} on {}\n", m.past(), unit, host);
     let hints = m.reverse_cmd(unit).map(|c| json!({ "reverse": c }));
-    View {
-        kind: m.kind(),
-        host: host.to_string(),
-        data,
-        human,
-        pre_rendered: false,
-        hints,
-    }
+    View::new(m.kind(), host.to_string(), data, human).with_hints_opt(hints)
 }
 
 fn execute(cli: &Cli, m: &Mutation, host: &str, unit: &str) -> Result<View> {
@@ -510,14 +478,12 @@ fn list(client: &mut BridgeClient, host: String, state: Option<&str>) -> Result<
         .iter()
         .map(|u| Value::Array(columns.iter().map(|c| u[*c].clone()).collect()))
         .collect();
-    Ok(View {
-        kind: "ServiceList",
+    Ok(View::new(
+        "ServiceList",
         host,
-        data: crate::envelope::table_data(&columns, rows),
+        crate::envelope::table_data(&columns, rows),
         human,
-        pre_rendered: false,
-        hints: None,
-    })
+    ))
 }
 
 fn status(client: &mut BridgeClient, host: String, unit: &str) -> Result<View> {
@@ -549,14 +515,7 @@ fn status(client: &mut BridgeClient, host: String, unit: &str) -> Result<View> {
         s(&props, "SubState"),
         s(&props, "UnitFileState")
     );
-    Ok(View {
-        kind: "ServiceStatus",
-        host,
-        data,
-        human,
-        pre_rendered: false,
-        hints: None,
-    })
+    Ok(View::new("ServiceStatus", host, data, human))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -601,14 +560,7 @@ fn logs(
                 }
             }
         })?;
-        return Ok(View {
-            kind: "LogEntries",
-            host,
-            data: Value::Null,
-            human: String::new(),
-            pre_rendered: true,
-            hints: None,
-        });
+        return Ok(View::new("LogEntries", host, Value::Null, String::new()).pre_rendered());
     }
 
     let blob = client.stream_collect(&argv)?;
@@ -621,14 +573,12 @@ fn logs(
             entries.push(log_entry(&v));
         }
     }
-    Ok(View {
-        kind: "LogEntries",
+    Ok(View::new(
+        "LogEntries",
         host,
-        data: json!({"unit": unit, "entries": entries}),
+        json!({"unit": unit, "entries": entries}),
         human,
-        pre_rendered: false,
-        hints: None,
-    })
+    ))
 }
 
 fn log_entry(v: &Value) -> Value {
@@ -648,44 +598,6 @@ fn log_human_line(v: &Value) -> String {
         s(v, "SYSLOG_IDENTIFIER"),
         s(v, "MESSAGE")
     )
-}
-
-fn render(cli: &Cli, result: Result<View>) -> i32 {
-    let host = cli.resolved_host();
-    match result {
-        Ok(view) => {
-            if view.pre_rendered {
-                return 0;
-            }
-            if cli.json {
-                let mut env = Envelope::ok(view.kind, &view.host, view.data);
-                if let Some(h) = view.hints {
-                    env = env.with_hints(h);
-                }
-                println!("{}", env.to_json_string());
-            } else {
-                print!("{}", view.human);
-            }
-            0
-        }
-        Err(e) => {
-            if cli.json {
-                let env = Envelope::error(
-                    "Error",
-                    &host,
-                    ApiError {
-                        code: e.code().into(),
-                        message: e.to_string(),
-                        detail: None,
-                    },
-                );
-                println!("{}", env.to_json_string());
-            } else {
-                eprintln!("error: {e}");
-            }
-            e.exit_code()
-        }
-    }
 }
 
 #[cfg(test)]

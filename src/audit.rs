@@ -124,6 +124,58 @@ impl AuditContext {
     }
 }
 
+/// Run a mutation under the standard audit envelope: write an `attempt`
+/// record, execute `action`, then write an `ok`/`error` record from its result,
+/// and return that result unchanged.
+///
+/// The sink comes from [`sink_from_env`] and the [`AuditContext`] is built from
+/// [`actor`]/[`correlation_id`] plus the supplied `host`/`operation`/`unit`,
+/// so every mutating capability emits the identical attempt+result pair without
+/// repeating the wiring. `action` runs exactly once.
+///
+/// # Errors
+///
+/// Propagates `action`'s error unchanged; the audit writes are best-effort and
+/// never alter the returned [`crate::error::Result`].
+pub fn run_audited<T, F>(
+    host: &str,
+    operation: &str,
+    unit: &str,
+    action: F,
+) -> crate::error::Result<T>
+where
+    F: FnOnce() -> crate::error::Result<T>,
+{
+    run_audited_with(sink_from_env().as_ref(), host, operation, unit, action)
+}
+
+/// [`run_audited`] against an explicit sink. Carries the attempt/result wiring;
+/// [`run_audited`] is the production wrapper that supplies [`sink_from_env`].
+///
+/// # Errors
+///
+/// Propagates `action`'s error unchanged; the [`AuditSink::write`] calls are
+/// best-effort and never alter the returned [`crate::error::Result`].
+pub fn run_audited_with<T, F>(
+    sink: &dyn AuditSink,
+    host: &str,
+    operation: &str,
+    unit: &str,
+    action: F,
+) -> crate::error::Result<T>
+where
+    F: FnOnce() -> crate::error::Result<T>,
+{
+    let ctx = AuditContext::new(&actor(), host, operation, unit, &correlation_id());
+    sink.write(&ctx.record(Outcome::Attempt));
+    let result = action();
+    match &result {
+        Ok(_) => sink.write(&ctx.record(Outcome::Ok)),
+        Err(e) => sink.write(&ctx.record(Outcome::Error(e.to_string()))),
+    }
+    result
+}
+
 /// The actor identity, best-effort from the environment.
 pub fn actor() -> String {
     std::env::var("USER")
@@ -335,5 +387,49 @@ mod tests {
         assert_eq!(rec("error", Some("x".into())).priority(), "3");
         assert_eq!(rec("attempt", None).priority(), "5");
         assert_eq!(rec("ok", None).priority(), "6");
+    }
+
+    fn audit_temp_path(tag: &str) -> std::path::PathBuf {
+        std::env::temp_dir().join(format!(
+            "fez-run-audited-{tag}-{}-{:?}.jsonl",
+            std::process::id(),
+            std::thread::current().id()
+        ))
+    }
+
+    #[test]
+    fn run_audited_writes_attempt_then_ok_on_success() {
+        let path = audit_temp_path("ok");
+        let _ = std::fs::remove_file(&path);
+        let sink = FileSink { path: path.clone() };
+        let out: crate::error::Result<i32> =
+            run_audited_with(&sink, "localhost", "stop", "chronyd.service", || Ok(42));
+        assert_eq!(out.unwrap(), 42);
+        let body = std::fs::read_to_string(&path).unwrap();
+        let lines: Vec<&str> = body.lines().collect();
+        assert_eq!(lines.len(), 2);
+        assert!(lines[0].contains("\"result\":\"attempt\""));
+        assert!(lines[1].contains("\"result\":\"ok\""));
+        assert!(lines[0].contains("\"operation\":\"stop\""));
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn run_audited_writes_attempt_then_error_on_failure() {
+        let path = audit_temp_path("err");
+        let _ = std::fs::remove_file(&path);
+        let sink = FileSink { path: path.clone() };
+        let out: crate::error::Result<i32> =
+            run_audited_with(&sink, "localhost", "start", "sshd.service", || {
+                Err(crate::error::FezError::Aborted)
+            });
+        assert!(out.is_err());
+        let body = std::fs::read_to_string(&path).unwrap();
+        let lines: Vec<&str> = body.lines().collect();
+        assert_eq!(lines.len(), 2);
+        assert!(lines[0].contains("\"result\":\"attempt\""));
+        assert!(lines[1].contains("\"result\":\"error\""));
+        assert!(lines[1].contains("aborted by user"));
+        let _ = std::fs::remove_file(&path);
     }
 }

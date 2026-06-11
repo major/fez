@@ -1,4 +1,5 @@
 //! Crate-wide error type and its mapping to stable codes and exit statuses.
+use serde_json::{json, Value};
 use thiserror::Error;
 
 /// Convenience alias for results carrying a [`FezError`].
@@ -200,6 +201,32 @@ impl FezError {
             _ => 1,
         }
     }
+    /// Structured `detail` for the `fez/v1` error envelope.
+    ///
+    /// Returns the machine-readable payload for the error variants that carry
+    /// one (`DependencyMissing`, `DangerousTransaction`, `UnsupportedApi`);
+    /// every other variant has no structured detail and yields `None`.
+    /// Capabilities call this when rendering an error envelope so the mapping
+    /// lives in one place.
+    pub fn detail(&self) -> Option<Value> {
+        match self {
+            FezError::DependencyMissing {
+                component,
+                dbus_name,
+                remediation,
+            } => Some(json!({
+                "component": component,
+                "dbusName": dbus_name,
+                "remediation": remediation,
+            })),
+            FezError::DangerousTransaction { reason, removed } => Some(json!({
+                "reason": reason,
+                "removed": removed,
+            })),
+            FezError::UnsupportedApi(method) => Some(json!({ "method": method })),
+            _ => None,
+        }
+    }
 }
 
 fn problem_code(p: &str) -> &'static str {
@@ -347,6 +374,49 @@ mod tests {
         assert_eq!(e.code(), "unsupported-api");
         assert_eq!(e.exit_code(), 12);
         assert!(e.to_string().contains("getMasquerade"));
+    }
+
+    #[test]
+    fn detail_carries_dependency_missing_fields() {
+        let e = FezError::DependencyMissing {
+            component: "dnf5daemon".into(),
+            dbus_name: "org.rpm.dnf.v0".into(),
+            remediation: "install it".into(),
+        };
+        let d = e.detail().expect("dependency-missing has detail");
+        assert_eq!(d["component"], "dnf5daemon");
+        assert_eq!(d["dbusName"], "org.rpm.dnf.v0");
+        assert_eq!(d["remediation"], "install it");
+    }
+
+    #[test]
+    fn detail_carries_dangerous_transaction_fields() {
+        let e = FezError::DangerousTransaction {
+            reason: "removes glibc".into(),
+            removed: vec!["glibc".into()],
+        };
+        let d = e.detail().expect("dangerous-transaction has detail");
+        assert_eq!(d["reason"], "removes glibc");
+        assert_eq!(d["removed"], json!(["glibc"]));
+    }
+
+    #[test]
+    fn detail_carries_unsupported_api_method() {
+        let e = FezError::UnsupportedApi("getMasquerade".into());
+        let d = e.detail().expect("unsupported-api has detail");
+        assert_eq!(d["method"], "getMasquerade");
+    }
+
+    #[test]
+    fn detail_is_none_for_variants_without_structured_payload() {
+        assert!(FezError::Timeout.detail().is_none());
+        assert!(FezError::NotFound("x".into()).detail().is_none());
+        assert!(FezError::Protected { unit: "u".into() }.detail().is_none());
+        assert!(FezError::AccessDenied {
+            remediation: "r".into()
+        }
+        .detail()
+        .is_none());
     }
 
     #[test]
