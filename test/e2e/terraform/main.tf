@@ -137,8 +137,10 @@ resource "aws_instance" "e2e" {
   instance_type          = var.instance_type
   key_name               = aws_key_pair.e2e.key_name
   vpc_security_group_ids = [aws_security_group.e2e.id]
-  user_data              = file("${path.module}/user_data.sh")
-  tags                   = merge(local.tags, { Name = "fez-e2e" })
+  user_data = templatefile("${path.module}/user_data.sh", {
+    login_user = local.ssh_user
+  })
+  tags = merge(local.tags, { Name = "fez-e2e" })
 
   lifecycle {
     precondition {
