@@ -189,7 +189,8 @@ pub enum PackagesAction {
         /// List available packages instead of installed.
         #[arg(long)]
         available: bool,
-        /// Restrict to packages from these repositories.
+        /// Restrict to packages whose repo id exactly matches. Repeatable; a
+        /// package is kept if its repo id equals any given value (OR).
         #[arg(long = "repo")]
         repo: Vec<String>,
     },

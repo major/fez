@@ -242,7 +242,9 @@ stop it immediately. Privileged. Protected units are refused unless --force is s
             id: "packages.list".into(),
             summary: "List packages".into(),
             long: "List installed (default) or available packages. Use --available to list \
-available packages, --repo to restrict by repository. Read-only."
+available packages. --repo restricts to packages whose repo id exactly matches the given \
+value; it is repeatable and unions (a package is kept if its repo id equals any given \
+value). The applied filter is echoed back in the `repos` field. Read-only."
                 .into(),
             privileged: false,
             output_kind: "PackageList".into(),

@@ -1,3 +1,4 @@
+use predicates::prelude::PredicateBooleanExt;
 use predicates::str::contains;
 
 mod common;
@@ -27,6 +28,72 @@ fn packages_list_human_default() {
         .success()
         .stdout(contains("bash"))
         .stdout(contains("NAME"));
+}
+
+// Issue #59: --repo must restrict rows to the exact repo id. The fake returns
+// bash/htop/nginx from `fedora` and vim-enhanced from `updates`; filtering to
+// `fedora` must keep the three and drop vim-enhanced.
+#[test]
+fn packages_list_repo_filter_is_exact() {
+    fez_fake()
+        .args(["packages", "list", "--repo", "fedora", "--json"])
+        .assert()
+        .success()
+        .stdout(contains("bash"))
+        .stdout(contains("htop"))
+        .stdout(contains("nginx"))
+        .stdout(contains("vim-enhanced").not())
+        // The requested filter is echoed back for transparency.
+        .stdout(contains("\"repos\":[\"fedora\"]"));
+}
+
+// A repo with no matching rows yields an empty table, not the full set.
+#[test]
+fn packages_list_repo_filter_updates_only() {
+    fez_fake()
+        .args(["packages", "list", "--repo", "updates", "--json"])
+        .assert()
+        .success()
+        .stdout(contains("vim-enhanced"))
+        .stdout(contains("\"bash\"").not())
+        .stdout(contains("\"nginx\"").not());
+}
+
+// Multiple --repo flags union (OR): a row is kept if its repo id is in the set.
+#[test]
+fn packages_list_multiple_repo_flags_union() {
+    fez_fake()
+        .args([
+            "packages", "list", "--repo", "fedora", "--repo", "updates", "--json",
+        ])
+        .assert()
+        .success()
+        .stdout(contains("bash"))
+        .stdout(contains("vim-enhanced"))
+        .stdout(contains("\"repos\":[\"fedora\",\"updates\"]"));
+}
+
+// An unknown repo id matches nothing rather than falling back to all rows.
+#[test]
+fn packages_list_unknown_repo_is_empty() {
+    fez_fake()
+        .args(["packages", "list", "--repo", "no-such-repo", "--json"])
+        .assert()
+        .success()
+        .stdout(contains("\"bash\"").not())
+        .stdout(contains("vim-enhanced").not())
+        .stdout(contains("\"count\":0"));
+}
+
+// No --repo means no filter: all rows from every repo are returned.
+#[test]
+fn packages_list_no_repo_returns_all() {
+    fez_fake()
+        .args(["packages", "list", "--json"])
+        .assert()
+        .success()
+        .stdout(contains("bash"))
+        .stdout(contains("vim-enhanced"));
 }
 
 #[test]
