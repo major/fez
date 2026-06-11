@@ -1,11 +1,7 @@
-use assert_cmd::Command as AssertCommand;
 use predicates::str::contains;
 
-fn fez_fake() -> AssertCommand {
-    let mut c = AssertCommand::cargo_bin("fez").unwrap();
-    c.env("FEZ_BRIDGE", env!("CARGO_BIN_EXE_fez-fake-bridge"));
-    c
-}
+mod common;
+use common::{fez_fake, AuditLog, PKG_COLUMNS};
 
 #[test]
 fn packages_list_json_has_packages() {
@@ -15,9 +11,7 @@ fn packages_list_json_has_packages() {
         .success()
         .stdout(contains("\"kind\":\"PackageList\""))
         // Columnar shape: column names stated once, items as positional rows.
-        .stdout(contains(
-            "\"columns\":[\"name\",\"evr\",\"arch\",\"repo_id\",\"install_size\",\"summary\"]",
-        ))
+        .stdout(contains(PKG_COLUMNS))
         .stdout(contains("\"rows\":"))
         .stdout(contains("\"count\":"))
         .stdout(contains("\"scope\":\"installed\""))
@@ -52,9 +46,7 @@ fn packages_search_finds_nginx() {
         .assert()
         .success()
         .stdout(contains("\"kind\":\"PackageSearch\""))
-        .stdout(contains(
-            "\"columns\":[\"name\",\"evr\",\"arch\",\"repo_id\",\"install_size\",\"summary\"]",
-        ))
+        .stdout(contains(PKG_COLUMNS))
         .stdout(contains("\"pattern\":\"ngin\""))
         .stdout(contains("nginx"));
 }
@@ -66,9 +58,7 @@ fn packages_check_update_lists_updates() {
         .assert()
         .success()
         .stdout(contains("\"kind\":\"PackageUpdates\""))
-        .stdout(contains(
-            "\"columns\":[\"name\",\"evr\",\"arch\",\"repo_id\",\"install_size\",\"summary\"]",
-        ))
+        .stdout(contains(PKG_COLUMNS))
         .stdout(contains("\"rows\":"))
         .stdout(contains("\"count\":"));
 }
@@ -195,21 +185,17 @@ fn packages_dependency_missing_returns_exit_9() {
 
 #[test]
 fn packages_mutation_writes_attempt_and_result_audit_records() {
-    let path = std::env::temp_dir().join(format!("fez-pkg-audit-{}.jsonl", std::process::id()));
-    let _ = std::fs::remove_file(&path);
+    let audit = AuditLog::new("pkg-audit");
     fez_fake()
-        .env("FEZ_AUDIT", format!("file:{}", path.display()))
+        .env("FEZ_AUDIT", audit.env_value())
         .env("FEZ_FAKE_PLAN", "small")
         .args(["packages", "remove", "htop", "--json"])
         .assert()
         .success();
-    let body = std::fs::read_to_string(&path).unwrap();
-    let lines: Vec<&str> = body.lines().collect();
-    assert_eq!(lines.len(), 2, "expected attempt + result records");
-    let attempt: serde_json::Value = serde_json::from_str(lines[0]).unwrap();
-    let result: serde_json::Value = serde_json::from_str(lines[1]).unwrap();
+    let records = audit.records();
+    assert_eq!(records.len(), 2, "expected attempt + result records");
+    let (attempt, result) = (&records[0], &records[1]);
     assert_eq!(attempt["result"], "attempt");
     assert_eq!(result["result"], "ok");
     assert_eq!(result["operation"], "remove");
-    let _ = std::fs::remove_file(&path);
 }

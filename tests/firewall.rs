@@ -1,13 +1,8 @@
-use assert_cmd::Command as AssertCommand;
 use predicates::str::contains;
 
-fn fez_fake() -> AssertCommand {
-    let mut c = AssertCommand::cargo_bin("fez").unwrap();
-    c.env("FEZ_BRIDGE", env!("CARGO_BIN_EXE_fez-fake-bridge"));
-    // Audit off so tests do not depend on a journal socket being present.
-    c.env("FEZ_AUDIT", "off");
-    c
-}
+mod common;
+// Audit off so firewall tests do not depend on a journal socket being present.
+use common::fez_fake_quiet as fez_fake;
 
 // status reports the default zone, panic flag, and the seeded drift (runtime
 // public carries 9090/tcp that permanent public lacks).

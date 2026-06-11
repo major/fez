@@ -3,11 +3,13 @@
 use assert_cmd::Command;
 use predicates::str::contains;
 
+mod common;
+use common::fez_fake;
+
 fn fez_mcp() -> Command {
-    let mut c = Command::cargo_bin("fez").unwrap();
     // The mcp server inherits FEZ_BRIDGE and passes it to the `fez` child it
     // re-execs for `invoke`, so the whole round-trip uses the fake bridge.
-    c.env("FEZ_BRIDGE", env!("CARGO_BIN_EXE_fez-fake-bridge"));
+    let mut c = fez_fake();
     c.arg("mcp");
     c
 }
