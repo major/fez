@@ -13,6 +13,8 @@ _record() {
     echo "expected: $3"
     echo "exit    : $5"
     echo "actual  :"
+    # sed anchors ^ per line to indent every line; ${var//} cannot do per-line.
+    # shellcheck disable=SC2001
     echo "$4" | sed 's/^/    /'
     echo
   } >>"$STEP_LOG"
