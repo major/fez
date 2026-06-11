@@ -284,3 +284,65 @@ fn broken_pipe_does_not_panic() {
         "fez exited 101 (Rust panic) on broken pipe"
     );
 }
+
+// Split an example command line into argv, honoring single-quoted segments
+// (the only quoting any descriptor example uses, e.g. --since '1 hour ago').
+fn tokenize_example(s: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut cur = String::new();
+    let mut in_quote = false;
+    let mut has_token = false;
+    for c in s.chars() {
+        match c {
+            '\'' => {
+                in_quote = !in_quote;
+                has_token = true;
+            }
+            ch if ch.is_whitespace() && !in_quote => {
+                if has_token {
+                    out.push(std::mem::take(&mut cur));
+                    has_token = false;
+                }
+            }
+            ch => {
+                cur.push(ch);
+                has_token = true;
+            }
+        }
+    }
+    if has_token {
+        out.push(cur);
+    }
+    out
+}
+
+// Regression for issue #53: every example in every capability descriptor must
+// parse cleanly against the real clap tree. The mutation descriptors used to
+// emit "fez services start --json" with no <UNIT>, so an agent copying the
+// advertised example hit "required arguments were not provided". Parse each
+// example for real and fail if clap rejects it (missing required arg, unknown
+// flag, etc.), so a future descriptor edit that drops a required positional is
+// caught by `make test`, not only on a live host.
+#[test]
+fn every_descriptor_example_parses() {
+    let cmd = fez::cli::command();
+    for d in fez::capability::registry() {
+        for example in &d.examples {
+            let argv = tokenize_example(example);
+            assert_eq!(
+                argv.first().map(String::as_str),
+                Some("fez"),
+                "example for {} does not start with `fez`: {example}",
+                d.id
+            );
+            // try_get_matches_from consumes a clone; argv[0] is the bin name.
+            let res = cmd.clone().try_get_matches_from(&argv);
+            assert!(
+                res.is_ok(),
+                "example for {} fails to parse: `{example}`\n  {}",
+                d.id,
+                res.unwrap_err()
+            );
+        }
+    }
+}

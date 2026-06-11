@@ -71,7 +71,10 @@ fn mutation(
         output_kind: output_kind.into(),
         inputs: vec![input("unit", true)],
         flags,
-        examples: vec![format!("fez {} --json", id.replace('.', " "))],
+        // Include the required <UNIT>: agents copy examples verbatim, and an
+        // example without it fails with "required arguments were not provided"
+        // (issue #53).
+        examples: vec![format!("fez {} sshd.service --json", id.replace('.', " "))],
     }
 }
 
