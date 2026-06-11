@@ -315,9 +315,11 @@ summary). Read-only."
             id: "packages.install".into(),
             summary: "Install packages".into(),
             long: "Install one or more packages. Resolves the transaction first and surfaces \
-the plan; --dry-run stops after the plan. Privileged. Exits 9 if dnf5daemon is \
-missing, 10 if the resolved transaction is refused by removal guardrails (use \
---force to override)."
+the plan; --dry-run stops after the plan. Privileged. Uses dnf5daemon, falling \
+back to PackageKit when dnf5daemon is absent (sizes are unavailable on the \
+PackageKit backend; the envelope marks backend and carries a hint). Exits 9 only \
+if both backends are missing, 10 if the resolved transaction is refused by \
+removal guardrails (use --force to override)."
                 .into(),
             privileged: true,
             output_kind: "PackageMutation".into(),

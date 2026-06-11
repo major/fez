@@ -240,8 +240,11 @@ fn packages_remove_cascade_refused_without_force() {
 
 #[test]
 fn packages_dependency_missing_returns_exit_9() {
+    // Exit 9 now requires BOTH backends absent: with only dnf5daemon gone fez
+    // falls back to PackageKit, so this test also forces PackageKit absent.
     fez_fake()
         .env("FEZ_FAKE_NO_DNF5", "1")
+        .env("FEZ_FAKE_NO_PACKAGEKIT", "1")
         .args(["packages", "list", "--json"])
         .assert()
         .code(9)

@@ -172,6 +172,45 @@ impl DbusResponse {
     }
 }
 
+/// A D-Bus signal parsed from a data frame.
+///
+/// cockpit `dbus-json3` delivers a signal as `{"signal": [path, iface,
+/// member, [args]]}` on the channel, with no `id` member (it is not a reply).
+/// PackageKit's transaction results arrive entirely as such signals, so the
+/// signal-collecting receive loop
+/// ([`crate::protocol::client::BridgeClient::dbus_call_collect`]) decodes them
+/// through this type. Request/reply callers never see it.
+#[derive(Debug, Deserialize)]
+pub struct DbusSignal {
+    /// The `[path, iface, member, [args]]` tuple, when this frame is a signal.
+    #[serde(default)]
+    pub signal: Option<Vec<Value>>,
+}
+
+impl DbusSignal {
+    /// The signal member name (e.g. `Package`, `Finished`), if present.
+    pub fn member(&self) -> Option<&str> {
+        self.signal
+            .as_ref()
+            .and_then(|s| s.get(2))
+            .and_then(|v| v.as_str())
+    }
+    /// The emitting object path, if present.
+    pub fn path(&self) -> Option<&str> {
+        self.signal
+            .as_ref()
+            .and_then(|s| s.first())
+            .and_then(|v| v.as_str())
+    }
+    /// The signal argument array, if present.
+    pub fn args(&self) -> Option<&Vec<Value>> {
+        self.signal
+            .as_ref()
+            .and_then(|s| s.get(3))
+            .and_then(|v| v.as_array())
+    }
+}
+
 /// Control messages we RECEIVE (permissive).
 #[derive(Debug, Deserialize)]
 pub struct IncomingControl {
@@ -189,6 +228,32 @@ pub struct IncomingControl {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn parses_dbus_signal() {
+        let v = serde_json::json!({
+            "signal": [
+                "/1234_abcd",
+                "org.freedesktop.PackageKit.Transaction",
+                "Package",
+                [8, "htop;3.4.1-3.fc44;x86_64;fedora", "Interactive process viewer"]
+            ]
+        });
+        let sig: DbusSignal = serde_json::from_value(v).unwrap();
+        assert_eq!(sig.member(), Some("Package"));
+        assert_eq!(sig.path(), Some("/1234_abcd"));
+        let args = sig.args().unwrap();
+        assert_eq!(args[0].as_u64(), Some(8));
+        assert_eq!(args[1].as_str(), Some("htop;3.4.1-3.fc44;x86_64;fedora"));
+    }
+
+    #[test]
+    fn dbus_reply_is_not_a_signal() {
+        // A normal reply frame has no "signal" member.
+        let v = serde_json::json!({ "reply": [[]], "id": "7" });
+        let sig: DbusSignal = serde_json::from_value(v).unwrap();
+        assert!(sig.member().is_none());
+    }
 
     #[test]
     fn serializes_init_without_superuser() {
