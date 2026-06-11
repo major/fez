@@ -316,20 +316,43 @@ const FW_PATH: &str = "/org/fedoraproject/FirewallD1";
 /// firewalld permanent-config object path.
 const FW_CONFIG_PATH: &str = "/org/fedoraproject/FirewallD1/config";
 
+/// Root firewalld interface (runtime ops; polkit `info` action = unprivileged).
+const FW_IFACE: &str = "org.fedoraproject.FirewallD1";
+/// Runtime zone interface (owns `getZones`/`getServices`/`getPorts` per zone).
+const FW_ZONE_IFACE: &str = "org.fedoraproject.FirewallD1.zone";
+/// Permanent-config interface (owns `getZoneByName`/`getZoneNames`).
+const FW_CONFIG_IFACE: &str = "org.fedoraproject.FirewallD1.config";
+/// Permanent-config per-zone interface (owns the config-zone getters/setters).
+const FW_CONFIG_ZONE_IFACE: &str = "org.fedoraproject.FirewallD1.config.zone";
+
 /// Canned firewalld (`org.fedoraproject.FirewallD1`) reply.
 ///
-/// Dispatches by object path (the main object vs the `config` sub-object and
-/// its per-zone children), mirroring how the NM arm dispatches by path rather
-/// than method name. Seeds a `public`/`internal`/`drop` topology where runtime
-/// `public` carries `9090/tcp` that permanent `public` lacks, so drift is
-/// non-empty out of the box (`status` reports `+port 9090/tcp`). Runtime
-/// `public` masquerade is likewise seeded on while permanent is off, so
-/// masquerade drift (`+masquerade`) is non-empty out of the box alongside
-/// `9090/tcp`. `FEZ_FAKE_PANIC`
-/// starts panic mode on; `FEZ_FAKE_NO_FIREWALLD` makes every call report the
-/// service absent (ServiceUnknown); `FEZ_FAKE_PORT_REMOVED` drops 9090/tcp from
-/// the runtime `public` zone to model the state after a `remove-port`.
-fn fw_reply(path: &str, method: &str, args: &[Value], id: &Value) -> Value {
+/// Dispatches by object path **and interface**, mirroring real firewalld: a
+/// method called on the wrong interface yields `UnknownMethod`, the way a real
+/// bridge would. (An earlier path-only fake masked a client that called
+/// `getZones` on the root interface instead of the zone interface; see
+/// issue #33.) It also enforces the polkit gate on the permanent `config.*`
+/// interface: those reads are `auth_admin_keep` on both server and desktop
+/// installs, so they are answered only on a privileged (escalated) channel and
+/// otherwise closed `access-denied` (issue #34).
+///
+/// Seeds a `public`/`internal`/`drop` topology where runtime `public` carries
+/// `9090/tcp` that permanent `public` lacks, so drift is non-empty out of the
+/// box (`status` reports `+port 9090/tcp`). Runtime `public` masquerade is
+/// likewise seeded on while permanent is off, so masquerade drift
+/// (`+masquerade`) is non-empty out of the box alongside `9090/tcp`.
+/// `FEZ_FAKE_PANIC` starts panic mode on; `FEZ_FAKE_NO_FIREWALLD` makes every
+/// call report the service absent (ServiceUnknown); `FEZ_FAKE_PORT_REMOVED`
+/// drops 9090/tcp from the runtime `public` zone to model the state after a
+/// `remove-port`.
+fn fw_reply(
+    path: &str,
+    iface: &str,
+    method: &str,
+    args: &[Value],
+    on_privileged: bool,
+    id: &Value,
+) -> Value {
     if std::env::var_os("FEZ_FAKE_NO_FIREWALLD").is_some() {
         return json!({"error":[
             "org.freedesktop.DBus.Error.ServiceUnknown",
@@ -338,41 +361,60 @@ fn fw_reply(path: &str, method: &str, args: &[Value], id: &Value) -> Value {
     }
     // Permanent-config per-zone object: /config/zone/<n>. Permanent `public`
     // (zone 0) lacks the runtime-only 9090/tcp, which is the seeded drift.
+    // The config.zone interface is polkit-gated (PK_ACTION_CONFIG), so deny
+    // the read unless it arrives on a privileged channel.
     if path.starts_with(&format!("{FW_CONFIG_PATH}/zone/")) {
-        return match method {
-            "getServices" => json!({"reply":[[["ssh", "dhcpv6-client"]]],"id": id}),
-            "getPorts" => json!({"reply":[[[]]],"id": id}),
+        if !on_privileged {
+            return fw_access_denied(id);
+        }
+        return match (iface, method) {
+            (FW_CONFIG_ZONE_IFACE, "getServices") => {
+                json!({"reply":[[["ssh", "dhcpv6-client"]]],"id": id})
+            }
+            (FW_CONFIG_ZONE_IFACE, "getPorts") => json!({"reply":[[[]]],"id": id}),
             // Permanent `public` masquerade is off; runtime is on, so masquerade
             // drift is non-empty out of the box alongside the 9090/tcp port.
-            "getMasquerade" => json!({"reply":[[false]],"id": id}),
-            other => fw_unknown(other, id),
+            (FW_CONFIG_ZONE_IFACE, "getMasquerade") => json!({"reply":[[false]],"id": id}),
+            (_, other) => fw_unknown(other, id),
         };
     }
     if path == FW_CONFIG_PATH {
-        return match method {
+        if !on_privileged {
+            return fw_access_denied(id);
+        }
+        return match (iface, method) {
             // getZoneByName(name) -> config zone object path.
-            "getZoneByName" => json!({"reply":[[format!("{FW_CONFIG_PATH}/zone/0")]],"id": id}),
-            other => fw_unknown(other, id),
+            (FW_CONFIG_IFACE, "getZoneByName") => {
+                json!({"reply":[[format!("{FW_CONFIG_PATH}/zone/0")]],"id": id})
+            }
+            (_, other) => fw_unknown(other, id),
         };
     }
     // Main object. Zone-scoped methods take the zone name as the first arg.
+    // Dispatch on (interface, method): `getZones`/`getServices`/`getPorts`/
+    // `getInterfaces`/`getSources` live on the zone interface, while
+    // `getDefaultZone`/`listServices`/`queryPanicMode` and the mutations live
+    // on the root interface. A method invoked on the wrong interface is
+    // UnknownMethod, exactly as real firewalld responds.
     let zone = args.first().and_then(Value::as_str).unwrap_or("");
-    match method {
-        "getDefaultZone" => json!({"reply":[["public"]],"id": id}),
-        "getZones" => json!({"reply":[[["public", "internal", "drop"]]],"id": id}),
-        "listServices" => json!({"reply":[[[
+    match (iface, method) {
+        (FW_IFACE, "getDefaultZone") => json!({"reply":[["public"]],"id": id}),
+        (FW_IFACE, "listServices") => json!({"reply":[[[
             "ssh", "http", "https", "cockpit", "dhcpv6-client"
         ]]],"id": id}),
-        "queryPanicMode" => {
+        (FW_IFACE, "queryPanicMode") => {
             let on = std::env::var_os("FEZ_FAKE_PANIC").is_some();
             json!({"reply":[[on]],"id": id})
+        }
+        (FW_ZONE_IFACE, "getZones") => {
+            json!({"reply":[[["public", "internal", "drop"]]],"id": id})
         }
         // Runtime per-zone reads. `public` carries the drift port 9090/tcp,
         // unless FEZ_FAKE_PORT_REMOVED models the post-removal state where the
         // port is gone from the runtime zone (a follow-up read after
         // `remove-port 9090/tcp`).
-        "getServices" => json!({"reply":[[["ssh", "dhcpv6-client"]]],"id": id}),
-        "getPorts" => {
+        (FW_ZONE_IFACE, "getServices") => json!({"reply":[[["ssh", "dhcpv6-client"]]],"id": id}),
+        (FW_ZONE_IFACE, "getPorts") => {
             let removed = std::env::var_os("FEZ_FAKE_PORT_REMOVED").is_some();
             if zone == "public" && !removed {
                 json!({"reply":[[[["9090", "tcp"]]]],"id": id})
@@ -380,17 +422,17 @@ fn fw_reply(path: &str, method: &str, args: &[Value], id: &Value) -> Value {
                 json!({"reply":[[[]]],"id": id})
             }
         }
-        "getInterfaces" => {
+        (FW_ZONE_IFACE, "getInterfaces") => {
             if zone == "public" {
                 json!({"reply":[[["enp1s0"]]],"id": id})
             } else {
                 json!({"reply":[[[]]],"id": id})
             }
         }
-        "getSources" => json!({"reply":[[[]]],"id": id}),
+        (FW_ZONE_IFACE, "getSources") => json!({"reply":[[[]]],"id": id}),
         // Runtime per-zone masquerade. `public` is seeded on (permanent is off),
         // so masquerade drift is non-empty out of the box.
-        "getMasquerade" => {
+        (FW_ZONE_IFACE, "getMasquerade") => {
             if zone == "public" {
                 json!({"reply":[[true]],"id": id})
             } else {
@@ -398,21 +440,35 @@ fn fw_reply(path: &str, method: &str, args: &[Value], id: &Value) -> Value {
             }
         }
         // Mutations return the affected zone name (or void for reload/confirm).
-        "addService" | "removeService" | "addPort" | "removePort" | "addMasquerade"
-        | "removeMasquerade" => {
+        (
+            FW_ZONE_IFACE,
+            "addService" | "removeService" | "addPort" | "removePort" | "addMasquerade"
+            | "removeMasquerade",
+        ) => {
             json!({"reply":[[zone]],"id": id})
         }
-        "setDefaultZone" | "reload" | "runtimeToPermanent" | "enablePanicMode"
-        | "disablePanicMode" => json!({"reply":[[]],"id": id}),
-        other => fw_unknown(other, id),
+        (FW_IFACE, "setDefaultZone" | "reload" | "runtimeToPermanent")
+        | (FW_IFACE, "enablePanicMode" | "disablePanicMode") => json!({"reply":[[]],"id": id}),
+        (_, other) => fw_unknown(other, id),
     }
 }
 
-/// Unknown-method D-Bus error for a firewalld call the fake does not model.
+/// Unknown-method D-Bus error for a firewalld call the fake does not model
+/// (also the response when a method is called on the wrong interface).
 fn fw_unknown(method: &str, id: &Value) -> Value {
     json!({"error":[
         "org.freedesktop.DBus.Error.UnknownMethod",
         [format!("no firewalld fake for {method}")]],"id": id})
+}
+
+/// Polkit-denied error for a permanent `config.*` read on an unprivileged
+/// channel. Real firewalld raises an `AUTH_FAILED`/`NOT_AUTHORIZED` D-Bus
+/// error; cockpit surfaces an unauthorized call by closing the channel
+/// `access-denied`, which the client maps to [`FezError::AccessDenied`].
+fn fw_access_denied(id: &Value) -> Value {
+    json!({"error":[
+        "org.freedesktop.DBus.Error.AccessDenied",
+        ["permanent config read requires authorization (PK_ACTION_CONFIG)"]],"id": id})
 }
 
 /// The host's escalation mechanisms as modeled by `FEZ_FAKE_BRIDGES`.
@@ -473,6 +529,16 @@ fn main() -> io::Result<()> {
     // Tracks whether a cockpit.Superuser.Start has succeeded, i.e. a root peer
     // is "up". A `superuser: "require"` open succeeds only after that.
     let mut escalated = false;
+    // Channels opened with `superuser: "require"` route to the root peer. The
+    // firewalld `config.*` (permanent) interface is polkit-gated
+    // (`auth_admin_keep` on both server and desktop installs), so a permanent
+    // read must arrive on one of these privileged channels. Real firewalld
+    // checks polkit on the caller; in cockpit's model that is the root peer,
+    // i.e. a `superuser: "require"` channel. Reads on a plain channel are
+    // denied. Without this set the fake would answer config reads unprivileged
+    // and mask a client that forgets to escalate for the drift read.
+    let mut privileged_channels: std::collections::HashSet<String> =
+        std::collections::HashSet::new();
 
     send_control(&mut stdout, &json!({"command":"init","version":1}));
 
@@ -530,6 +596,9 @@ fn main() -> io::Result<()> {
                     );
                     continue;
                 }
+                if privileged {
+                    privileged_channels.insert(channel.clone());
+                }
                 send_control(&mut stdout, &json!({"command":"ready","channel":channel}));
                 if payload == "stream" {
                     let mut blob = serde_json::to_vec(&json!({
@@ -583,8 +652,12 @@ fn main() -> io::Result<()> {
                     // firewalld surface: dispatched by object path (the main
                     // object vs the config sub-object), like the NM arm. The
                     // single FW_PATH prefix catches FW_CONFIG_PATH too; fw_reply
-                    // splits them internally.
-                    fw_reply(path, method, &args, &id)
+                    // splits them internally. It also receives the interface
+                    // (to reject methods called on the wrong interface, the way
+                    // real firewalld does) and whether the channel is privileged
+                    // (the permanent `config.*` interface is polkit-gated).
+                    let on_privileged = privileged_channels.contains(&frame.channel);
+                    fw_reply(path, iface, method, &args, on_privileged, &id)
                 } else if path.starts_with(NM_MGR_PATH) {
                     // NetworkManager surface: disambiguated by object path, not
                     // method name (Get/GetAll are reused across object types).

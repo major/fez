@@ -221,6 +221,30 @@ fn firewalld_absent_exits_9() {
         .stdout(contains("firewalld"));
 }
 
+// firewalld absent on `list`: the first getZones call (on the zone interface)
+// hits ServiceUnknown, exercising the error-propagation arm of that read and
+// mapping to exit 9.
+#[test]
+fn list_firewalld_absent_exits_9() {
+    fez_fake()
+        .env("FEZ_FAKE_NO_FIREWALLD", "1")
+        .args(["firewall", "list", "--json"])
+        .assert()
+        .code(9)
+        .stdout(contains("\"code\":\"dependency-missing\""));
+}
+
+// firewalld absent on `show`: same getZones error path as `list`.
+#[test]
+fn show_firewalld_absent_exits_9() {
+    fez_fake()
+        .env("FEZ_FAKE_NO_FIREWALLD", "1")
+        .args(["firewall", "show", "public", "--json"])
+        .assert()
+        .code(9)
+        .stdout(contains("\"code\":\"dependency-missing\""));
+}
+
 // A mutating call on a host advertising no escalation mechanism -> exit 11.
 #[test]
 fn mutation_without_escalation_exits_11() {
@@ -229,6 +253,62 @@ fn mutation_without_escalation_exits_11() {
         .args(["firewall", "add-service", "http"])
         .assert()
         .code(11);
+}
+
+// Regression for #33: `getZones` lives on the zone interface, not the root
+// `org.fedoraproject.FirewallD1` interface. The realistic fake answers it only
+// on the zone interface, so `list` succeeding proves fez calls the right one.
+// (A path-only fake masked this; real firewalld returns UnknownMethod.)
+#[test]
+fn list_calls_getzones_on_zone_interface() {
+    fez_fake()
+        .args(["firewall", "list", "--json"])
+        .assert()
+        .success()
+        .stdout(contains("\"kind\":\"FirewallZoneList\""))
+        .stdout(contains("internal"));
+}
+
+// Regression for #33: `show` looks the zone up via the zone-interface
+// `getZones`, so it resolves a real zone instead of erroring on the wrong
+// interface.
+#[test]
+fn show_resolves_zone_via_zone_interface() {
+    fez_fake()
+        .args(["firewall", "show", "internal", "--json"])
+        .assert()
+        .success()
+        .stdout(contains("\"kind\":\"FirewallZone\""))
+        .stdout(contains("\"zone\":\"internal\""));
+}
+
+// Regression for #34: the permanent-config read for drift is polkit-gated
+// (PK_ACTION_CONFIG, auth_admin_keep on server and desktop), so `status`
+// escalates for it. On a host advertising no escalation mechanism the
+// privileged read is denied and status fails with exit 11, rather than
+// silently reporting empty drift. This is the e2e symptom from #32/#34.
+#[test]
+fn status_without_escalation_exits_11() {
+    fez_fake()
+        .env("FEZ_FAKE_BRIDGES", "")
+        .args(["firewall", "status", "--json"])
+        .assert()
+        .code(11);
+}
+
+// Regression for #34: with a working escalation mechanism, `status` reads the
+// permanent config over the privileged channel and reports the seeded drift.
+// (Covered by status_reports_default_zone_and_drift; this asserts the drift
+// specifically came from a privileged permanent read by also checking the
+// confirm hint.)
+#[test]
+fn status_with_escalation_reports_drift() {
+    fez_fake()
+        .args(["firewall", "status", "--json"])
+        .assert()
+        .success()
+        .stdout(contains("+port 9090/tcp"))
+        .stdout(contains("fez firewall confirm"));
 }
 
 // panic off when the host starts in panic mode succeeds (FEZ_FAKE_PANIC).
