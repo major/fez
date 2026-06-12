@@ -3,6 +3,7 @@ use crate::protocol::frame::{read_frame, write_frame, Frame};
 use crate::protocol::message::{Control, DbusCall, DbusResponse, DbusSignal, IncomingControl};
 use crate::transport::Transport;
 use serde_json::{json, Value};
+use std::io;
 use std::process::{Child, Stdio};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError};
 use std::thread;
@@ -64,6 +65,13 @@ impl BridgeClient {
             .map_err(|source| FezError::Spawn { program, source })?;
         let stdin = child.stdin.take().expect("piped stdin");
         let mut stdout = child.stdout.take().expect("piped stdout");
+        let mut stderr = child.stderr.take().expect("piped stderr");
+
+        // Always consume stderr so a noisy bridge or SSH transport cannot block
+        // on a full pipe while the client waits for stdout frames.
+        let _stderr_drain = thread::spawn(move || {
+            let _ = io::copy(&mut stderr, &mut io::sink());
+        });
 
         let (tx, rx) = mpsc::channel::<Frame>();
         thread::spawn(move || {

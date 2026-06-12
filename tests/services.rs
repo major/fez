@@ -1,9 +1,11 @@
 use assert_cmd::Command as AssertCommand;
 use fez::protocol::client::BridgeClient;
 use fez::transport::local::LocalTransport;
+use fez::transport::Transport;
 use predicates::prelude::PredicateBooleanExt;
 use predicates::str::contains;
 use serde_json::json;
+use std::process::Command;
 
 mod common;
 use common::{fez_fake, AuditLog};
@@ -18,6 +20,22 @@ fn fez_without_bridge() -> AssertCommand {
 fn fake_transport() -> LocalTransport {
     LocalTransport {
         program: env!("CARGO_BIN_EXE_fez-fake-bridge").into(),
+    }
+}
+
+struct NoisyFakeTransport;
+
+impl Transport for NoisyFakeTransport {
+    fn command(&self) -> Command {
+        let mut cmd = Command::new(env!("CARGO_BIN_EXE_fez-fake-bridge"));
+        // More than a typical pipe buffer. If BridgeClient does not drain
+        // stderr, the fake blocks here before it can send the init frame.
+        cmd.env("FEZ_FAKE_STDERR_BYTES", "1048576");
+        cmd
+    }
+
+    fn host_label(&self) -> String {
+        "localhost".to_string()
     }
 }
 
@@ -39,6 +57,23 @@ fn dbus_call_returns_listunits_out_args() {
     let units = out.get(0).and_then(|u| u.as_array()).unwrap();
     assert_eq!(units.len(), 2);
     assert_eq!(units[0][0], json!("sshd.service"));
+}
+
+#[test]
+fn bridge_connect_drains_child_stderr() {
+    let t = NoisyFakeTransport;
+    let mut c = BridgeClient::connect(&t).unwrap();
+    let channel = c.dbus_open("org.freedesktop.systemd1").unwrap();
+    let out = c
+        .dbus_call(
+            &channel,
+            "/org/freedesktop/systemd1",
+            "org.freedesktop.systemd1.Manager",
+            "ListUnits",
+            json!([]),
+        )
+        .unwrap();
+    assert!(out.get(0).and_then(|u| u.as_array()).is_some());
 }
 
 #[test]

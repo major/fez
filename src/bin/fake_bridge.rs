@@ -719,6 +719,14 @@ fn main() -> io::Result<()> {
     let mut stdin = io::stdin().lock();
     let mut stdout = io::stdout().lock();
 
+    if let Some(bytes) = std::env::var("FEZ_FAKE_STDERR_BYTES")
+        .ok()
+        .and_then(|s| s.parse::<usize>().ok())
+    {
+        let chunk = vec![b'x'; bytes];
+        io::stderr().lock().write_all(&chunk)?;
+    }
+
     let bridges = fake_bridges();
     // Tracks whether a cockpit.Superuser.Start has succeeded, i.e. a root peer
     // is "up". A `superuser: "require"` open succeeds only after that.
