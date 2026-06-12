@@ -96,6 +96,15 @@ enum ReadAction<'a> {
     },
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ServiceUnit {
+    name: String,
+    description: String,
+    load_state: String,
+    active_state: String,
+    sub_state: String,
+}
+
 /// The read/mutate split of a parsed [`ServicesAction`].
 ///
 /// [`classify`] is the single place that matches the full clap enum; everything
@@ -423,44 +432,80 @@ fn s(v: &Value, key: &str) -> String {
         .unwrap_or("")
         .to_string()
 }
-fn at(v: &Value, idx: usize) -> String {
-    v.get(idx).and_then(Value::as_str).unwrap_or("").to_string()
+
+fn protocol_decode_error(message: impl Into<String>) -> FezError {
+    FezError::Decode(<serde_json::Error as serde::de::Error>::custom(
+        message.into(),
+    ))
+}
+
+fn required_row_string(row: &Value, row_index: usize, idx: usize, field: &str) -> Result<String> {
+    row.get(idx)
+        .and_then(Value::as_str)
+        .map(str::to_string)
+        .ok_or_else(|| {
+            protocol_decode_error(format!(
+                "ListUnits row {row_index} missing string field {idx} ({field})"
+            ))
+        })
+}
+
+fn parse_service_unit(row: &Value, row_index: usize) -> Result<ServiceUnit> {
+    Ok(ServiceUnit {
+        name: required_row_string(row, row_index, 0, "name")?,
+        description: required_row_string(row, row_index, 1, "description")?,
+        load_state: required_row_string(row, row_index, 2, "load_state")?,
+        active_state: required_row_string(row, row_index, 3, "active_state")?,
+        sub_state: required_row_string(row, row_index, 4, "sub_state")?,
+    })
+}
+
+fn parse_list_units(out: &Value) -> Result<Vec<ServiceUnit>> {
+    let units = out
+        .get(0)
+        .and_then(Value::as_array)
+        .ok_or_else(|| protocol_decode_error("ListUnits reply missing unit array"))?;
+
+    units
+        .iter()
+        .enumerate()
+        .map(|(idx, row)| parse_service_unit(row, idx))
+        .collect()
+}
+
+fn get_unit_path(out: &Value, unit: &str) -> Result<String> {
+    out.get(0)
+        .and_then(Value::as_str)
+        .filter(|path| !path.is_empty())
+        .map(str::to_string)
+        .ok_or_else(|| {
+            protocol_decode_error(format!("GetUnit reply for {unit} missing object path"))
+        })
 }
 
 fn list(client: &mut BridgeClient, host: String, state: Option<&str>) -> Result<View> {
     let channel = client.dbus_open("org.freedesktop.systemd1")?;
     let out = client.dbus_call(&channel, MGR_PATH, MGR_IFACE, "ListUnits", json!([]))?;
-    let units_raw = out
-        .get(0)
-        .and_then(Value::as_array)
-        .cloned()
-        .unwrap_or_default();
+    let units = parse_list_units(&out)?;
 
-    let mut units = Vec::new();
-    for u in &units_raw {
-        let active = at(u, 3);
+    let mut filtered = Vec::new();
+    for unit in units {
         if let Some(want) = state {
-            if active != want {
+            if unit.active_state != want {
                 continue;
             }
         }
-        units.push(json!({
-            "name": at(u, 0), "description": at(u, 1), "load_state": at(u, 2),
-            "active_state": active, "sub_state": at(u, 4),
-        }));
+        filtered.push(unit);
     }
 
     let mut human = format!(
         "{:<28} {:<10} {:<10} {}\n",
         "UNIT", "ACTIVE", "SUB", "DESCRIPTION"
     );
-    for u in &units {
+    for unit in &filtered {
         human.push_str(&format!(
             "{:<28} {:<10} {:<10} {}\n",
-            s(u, "name"),
-            s(u, "active_state"),
-            s(u, "sub_state"),
-            s(u, "description")
+            unit.name, unit.active_state, unit.sub_state, unit.description
         ));
     }
     // Columnar projection via the shared envelope helper: field names are
@@ -474,9 +519,17 @@ fn list(client: &mut BridgeClient, host: String, state: Option<&str>) -> Result<
         "active_state",
         "sub_state",
     ];
-    let rows: Vec<Value> = units
+    let rows: Vec<Value> = filtered
         .iter()
-        .map(|u| Value::Array(columns.iter().map(|c| u[*c].clone()).collect()))
+        .map(|unit| {
+            json!([
+                unit.name,
+                unit.description,
+                unit.load_state,
+                unit.active_state,
+                unit.sub_state,
+            ])
+        })
         .collect();
     Ok(View::new(
         "ServiceList",
@@ -490,7 +543,7 @@ fn status(client: &mut BridgeClient, host: String, unit: &str) -> Result<View> {
     let channel = client.dbus_open("org.freedesktop.systemd1")?;
     let got = client.dbus_call(&channel, MGR_PATH, MGR_IFACE, "GetUnit", json!([unit]));
     let path = match got {
-        Ok(out) => out.get(0).and_then(Value::as_str).unwrap_or("").to_string(),
+        Ok(out) => get_unit_path(&out, unit)?,
         Err(FezError::Dbus { name, .. }) if name.contains("NoSuchUnit") => {
             return Err(FezError::NotFound(unit.to_string()))
         }
@@ -602,7 +655,8 @@ fn log_human_line(v: &Value) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{mangle_unit, s};
+    use super::{get_unit_path, mangle_unit, parse_list_units, s};
+    use crate::error::FezError;
     use serde_json::json;
 
     #[test]
@@ -665,6 +719,37 @@ mod tests {
     fn s_missing_key_is_empty() {
         let props = json!({"ActiveState": {"t": "s", "v": "active"}});
         assert_eq!(s(&props, "Nope"), "");
+    }
+
+    #[test]
+    fn parse_list_units_errors_when_unit_array_missing() {
+        let err = parse_list_units(&json!([])).unwrap_err();
+        assert!(matches!(err, FezError::Decode(_)));
+    }
+
+    #[test]
+    fn parse_list_units_errors_when_required_row_field_missing() {
+        let err = parse_list_units(&json!([[["sshd.service", "OpenSSH server"]]])).unwrap_err();
+        assert!(matches!(err, FezError::Decode(_)));
+    }
+
+    #[test]
+    fn parse_list_units_errors_when_required_row_field_is_wrong_type() {
+        let err = parse_list_units(&json!([[[
+            "sshd.service",
+            "OpenSSH server",
+            "loaded",
+            true,
+            "running"
+        ]]]))
+        .unwrap_err();
+        assert!(matches!(err, FezError::Decode(_)));
+    }
+
+    #[test]
+    fn get_unit_path_errors_when_success_reply_has_no_object_path() {
+        let err = get_unit_path(&json!([]), "sshd.service").unwrap_err();
+        assert!(matches!(err, FezError::Decode(_)));
     }
 
     // `classify` is the single total mapping from the flat clap enum to the
