@@ -655,7 +655,10 @@ fn log_human_line(v: &Value) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{get_unit_path, mangle_unit, parse_list_units, s};
+    use super::{
+        get_unit_path, mangle_unit, parse_list_units, parse_service_unit, protocol_decode_error,
+        required_row_string, s, ServiceUnit,
+    };
     use crate::error::FezError;
     use serde_json::json;
 
@@ -752,10 +755,283 @@ mod tests {
         assert!(matches!(err, FezError::Decode(_)));
     }
 
+    // ── protocol_decode_error ────────────────────────────────────────────────
+
+    #[test]
+    fn protocol_decode_error_returns_decode_variant() {
+        let err = protocol_decode_error("something went wrong");
+        assert!(matches!(err, FezError::Decode(_)));
+    }
+
+    #[test]
+    fn protocol_decode_error_message_is_preserved() {
+        let err = protocol_decode_error("custom message");
+        assert!(err.to_string().contains("custom message"));
+    }
+
+    // ── required_row_string ──────────────────────────────────────────────────
+
+    #[test]
+    fn required_row_string_returns_string_at_index() {
+        let row = json!(["alpha", "beta", "gamma"]);
+        assert_eq!(
+            required_row_string(&row, 0, 1, "field").unwrap(),
+            "beta"
+        );
+    }
+
+    #[test]
+    fn required_row_string_returns_first_element() {
+        let row = json!(["first"]);
+        assert_eq!(
+            required_row_string(&row, 0, 0, "name").unwrap(),
+            "first"
+        );
+    }
+
+    #[test]
+    fn required_row_string_errors_when_index_out_of_bounds() {
+        let row = json!(["only-one"]);
+        let err = required_row_string(&row, 0, 5, "missing").unwrap_err();
+        assert!(matches!(err, FezError::Decode(_)));
+    }
+
+    #[test]
+    fn required_row_string_errors_when_value_is_boolean() {
+        let row = json!([true]);
+        let err = required_row_string(&row, 0, 0, "field").unwrap_err();
+        assert!(matches!(err, FezError::Decode(_)));
+    }
+
+    #[test]
+    fn required_row_string_errors_when_value_is_number() {
+        let row = json!([42]);
+        let err = required_row_string(&row, 0, 0, "field").unwrap_err();
+        assert!(matches!(err, FezError::Decode(_)));
+    }
+
+    #[test]
+    fn required_row_string_errors_when_value_is_null() {
+        let row = json!([null]);
+        let err = required_row_string(&row, 0, 0, "field").unwrap_err();
+        assert!(matches!(err, FezError::Decode(_)));
+    }
+
+    #[test]
+    fn required_row_string_errors_when_value_is_array() {
+        let row = json!([["nested"]]);
+        let err = required_row_string(&row, 0, 0, "field").unwrap_err();
+        assert!(matches!(err, FezError::Decode(_)));
+    }
+
+    // ── parse_service_unit ───────────────────────────────────────────────────
+
+    #[test]
+    fn parse_service_unit_succeeds_with_all_fields_present() {
+        let row = json!(["sshd.service", "OpenSSH server", "loaded", "active", "running"]);
+        let unit = parse_service_unit(&row, 0).unwrap();
+        assert_eq!(unit.name, "sshd.service");
+        assert_eq!(unit.description, "OpenSSH server");
+        assert_eq!(unit.load_state, "loaded");
+        assert_eq!(unit.active_state, "active");
+        assert_eq!(unit.sub_state, "running");
+    }
+
+    #[test]
+    fn parse_service_unit_errors_when_row_is_empty() {
+        let row = json!([]);
+        let err = parse_service_unit(&row, 0).unwrap_err();
+        assert!(matches!(err, FezError::Decode(_)));
+    }
+
+    #[test]
+    fn parse_service_unit_errors_when_missing_sub_state_field() {
+        // Only 4 fields — sub_state (idx 4) is absent
+        let row = json!(["sshd.service", "OpenSSH server", "loaded", "active"]);
+        let err = parse_service_unit(&row, 0).unwrap_err();
+        assert!(matches!(err, FezError::Decode(_)));
+    }
+
+    #[test]
+    fn parse_service_unit_errors_when_name_field_is_wrong_type() {
+        let row = json!([99, "OpenSSH server", "loaded", "active", "running"]);
+        let err = parse_service_unit(&row, 0).unwrap_err();
+        assert!(matches!(err, FezError::Decode(_)));
+    }
+
+    #[test]
+    fn parse_service_unit_errors_when_active_state_field_is_wrong_type() {
+        let row = json!(["sshd.service", "OpenSSH server", "loaded", false, "running"]);
+        let err = parse_service_unit(&row, 0).unwrap_err();
+        assert!(matches!(err, FezError::Decode(_)));
+    }
+
+    // ── parse_list_units ─────────────────────────────────────────────────────
+
+    #[test]
+    fn parse_list_units_succeeds_with_empty_unit_array() {
+        let out = json!([[]]);
+        let units = parse_list_units(&out).unwrap();
+        assert!(units.is_empty());
+    }
+
+    #[test]
+    fn parse_list_units_succeeds_with_single_unit() {
+        let out = json!([[
+            ["sshd.service", "OpenSSH server daemon", "loaded", "active", "running"]
+        ]]);
+        let units = parse_list_units(&out).unwrap();
+        assert_eq!(units.len(), 1);
+        assert_eq!(units[0].name, "sshd.service");
+        assert_eq!(units[0].description, "OpenSSH server daemon");
+        assert_eq!(units[0].load_state, "loaded");
+        assert_eq!(units[0].active_state, "active");
+        assert_eq!(units[0].sub_state, "running");
+    }
+
+    #[test]
+    fn parse_list_units_succeeds_with_multiple_units() {
+        let out = json!([[
+            ["sshd.service", "OpenSSH server daemon", "loaded", "active", "running"],
+            ["nginx.service", "nginx web server", "loaded", "inactive", "dead"],
+            ["cron.service", "Regular background work", "loaded", "active", "waiting"]
+        ]]);
+        let units = parse_list_units(&out).unwrap();
+        assert_eq!(units.len(), 3);
+        assert_eq!(units[0].name, "sshd.service");
+        assert_eq!(units[1].name, "nginx.service");
+        assert_eq!(units[1].active_state, "inactive");
+        assert_eq!(units[2].name, "cron.service");
+        assert_eq!(units[2].sub_state, "waiting");
+    }
+
+    #[test]
+    fn parse_list_units_errors_when_top_level_is_not_array() {
+        // Out is a JSON object, not an array — get(0) returns None
+        let err = parse_list_units(&json!({"units": []})).unwrap_err();
+        assert!(matches!(err, FezError::Decode(_)));
+    }
+
+    #[test]
+    fn parse_list_units_errors_when_first_element_is_not_array() {
+        // out[0] exists but is a string, not an array
+        let err = parse_list_units(&json!(["not-an-array"])).unwrap_err();
+        assert!(matches!(err, FezError::Decode(_)));
+    }
+
+    #[test]
+    fn parse_list_units_errors_on_second_row_with_missing_field() {
+        // First row is valid; second is incomplete — error propagates
+        let out = json!([[
+            ["sshd.service", "OpenSSH server daemon", "loaded", "active", "running"],
+            ["broken.service", "Incomplete row"]
+        ]]);
+        let err = parse_list_units(&out).unwrap_err();
+        assert!(matches!(err, FezError::Decode(_)));
+    }
+
+    // ── get_unit_path ────────────────────────────────────────────────────────
+
+    #[test]
+    fn get_unit_path_returns_path_on_success() {
+        let path = "/org/freedesktop/systemd1/unit/sshd_2eservice";
+        let out = json!([path]);
+        assert_eq!(get_unit_path(&out, "sshd.service").unwrap(), path);
+    }
+
+    #[test]
+    fn get_unit_path_errors_when_path_is_empty_string() {
+        let err = get_unit_path(&json!([""]), "sshd.service").unwrap_err();
+        assert!(matches!(err, FezError::Decode(_)));
+    }
+
+    #[test]
+    fn get_unit_path_errors_when_first_element_is_number() {
+        let err = get_unit_path(&json!([42]), "sshd.service").unwrap_err();
+        assert!(matches!(err, FezError::Decode(_)));
+    }
+
+    #[test]
+    fn get_unit_path_errors_when_first_element_is_null() {
+        let err = get_unit_path(&json!([null]), "sshd.service").unwrap_err();
+        assert!(matches!(err, FezError::Decode(_)));
+    }
+
+    #[test]
+    fn get_unit_path_errors_when_first_element_is_object() {
+        let err = get_unit_path(&json!([{"path": "/some/path"}]), "sshd.service").unwrap_err();
+        assert!(matches!(err, FezError::Decode(_)));
+    }
+
+    // ── ServiceUnit struct properties ────────────────────────────────────────
+
+    #[test]
+    fn service_unit_equality_holds_for_identical_values() {
+        let a = ServiceUnit {
+            name: "sshd.service".into(),
+            description: "OpenSSH server".into(),
+            load_state: "loaded".into(),
+            active_state: "active".into(),
+            sub_state: "running".into(),
+        };
+        let b = a.clone();
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn service_unit_inequality_detected_on_differing_field() {
+        let a = ServiceUnit {
+            name: "sshd.service".into(),
+            description: "OpenSSH server".into(),
+            load_state: "loaded".into(),
+            active_state: "active".into(),
+            sub_state: "running".into(),
+        };
+        let b = ServiceUnit {
+            name: "sshd.service".into(),
+            description: "OpenSSH server".into(),
+            load_state: "loaded".into(),
+            active_state: "inactive".into(), // differs
+            sub_state: "dead".into(),
+        };
+        assert_ne!(a, b);
+    }
+
+    #[test]
+    fn service_unit_clone_produces_independent_copy() {
+        let original = ServiceUnit {
+            name: "cron.service".into(),
+            description: "Scheduled tasks".into(),
+            load_state: "loaded".into(),
+            active_state: "active".into(),
+            sub_state: "waiting".into(),
+        };
+        let cloned = original.clone();
+        assert_eq!(original, cloned);
+        // Confirm fields match individually
+        assert_eq!(cloned.name, "cron.service");
+        assert_eq!(cloned.sub_state, "waiting");
+    }
+
+    // ── regression: empty top-level JSON value ───────────────────────────────
+
+    #[test]
+    fn parse_list_units_errors_on_json_null() {
+        let err = parse_list_units(&json!(null)).unwrap_err();
+        assert!(matches!(err, FezError::Decode(_)));
+    }
+
+    #[test]
+    fn get_unit_path_error_message_names_the_unit() {
+        let err = get_unit_path(&json!([]), "my-custom.service").unwrap_err();
+        // The error message should mention the unit name for diagnostics
+        assert!(err.to_string().contains("my-custom.service"));
+    }
+
     // `classify` is the single total mapping from the flat clap enum to the
     // read/mutate split. It replaces the `unreachable!()`-guarded helpers: if a
     // new `ServicesAction` variant is added, this match fails to compile rather
-    // than panicking at runtime. These cases pin the routing for every variant.
+
     #[test]
     fn classify_routes_reads() {
         use super::{classify, Plan};
