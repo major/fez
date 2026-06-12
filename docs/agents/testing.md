@@ -47,6 +47,7 @@ Firewalld fake bridge contracts:
 | `FEZ_AUDIT` | Audit sink; tests commonly use `off` or `file:/path`. |
 | `FEZ_FAKE_PLAN` | Selects dnf5daemon `Goal.resolve` plan: `install`, `small`, `protected`, or `cascade`. |
 | `FEZ_FAKE_PACKAGE_COUNT` | Makes fake `Rpm.list` return a generated large package set for large-response hint tests. |
+| `FEZ_FAKE_STDERR_BYTES` | Makes the fake bridge write N bytes to stderr before the init frame, exercising child stderr draining. |
 | `FEZ_FAKE_NO_DNF5` | Simulates absent dnf5daemon. |
 | `FEZ_FAKE_NO_PACKAGEKIT` | Simulates absent PackageKit so the both-backends-absent exit-9 path is testable. |
 | `FEZ_FAKE_PK_PLAN` | `protected` adds `systemd` to the PackageKit removal plan so the dangerous-transaction guardrail fires. |
