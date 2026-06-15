@@ -112,6 +112,62 @@ const PHYSICAL_TYPES: [u64; 8] = [
     32, // loopback
 ];
 
+// Temporary staged models for the upcoming list/show refactor; remove these
+// dead-code allowances when the typed boundary is wired into those commands.
+#[allow(dead_code)]
+#[derive(Debug, Clone)]
+struct NetworkDevice {
+    interface: String,
+    device_type: u64,
+    state: u64,
+    managed: bool,
+    mac: String,
+    mtu: u64,
+    ip4_config: Option<String>,
+    ip6_config: Option<String>,
+    active_connection: Option<String>,
+    dhcp4_config: Option<String>,
+}
+
+#[allow(dead_code)]
+#[derive(Debug, Clone, serde::Serialize)]
+struct IpConfig {
+    addresses: Vec<String>,
+    gateway: String,
+    dns: Vec<String>,
+    domains: Vec<String>,
+}
+
+#[allow(dead_code)]
+#[derive(Debug, Clone, serde::Serialize)]
+struct Ipv6Config {
+    addresses: Vec<String>,
+}
+
+#[allow(dead_code)]
+#[derive(Debug, Clone, serde::Serialize)]
+struct ActiveConnection {
+    id: String,
+    #[serde(rename = "type")]
+    connection_type: String,
+    default: bool,
+}
+
+#[allow(dead_code)]
+#[derive(Debug, Clone, serde::Serialize)]
+struct NetworkDeviceDetail {
+    interface: String,
+    #[serde(rename = "type")]
+    device_type: String,
+    state: String,
+    mac: String,
+    mtu: u64,
+    ipv4: IpConfig,
+    ipv6: Ipv6Config,
+    connection: Option<ActiveConnection>,
+    dhcp4: Option<Value>,
+}
+
 /// Whether a device should appear in `network list` without `--all`.
 ///
 /// Keeps managed devices and physical/interesting types; hides unmanaged
@@ -161,6 +217,107 @@ fn prop_path(props: &Value, key: &str) -> Option<String> {
         None
     } else {
         Some(p)
+    }
+}
+
+#[allow(dead_code)]
+impl NetworkDevice {
+    fn from_props(props: &Value) -> Self {
+        Self {
+            interface: prop_str(props, "Interface"),
+            device_type: prop_u64(props, "DeviceType"),
+            state: prop_u64(props, "State"),
+            managed: prop_bool(props, "Managed"),
+            mac: prop_str(props, "HwAddress"),
+            mtu: prop_u64(props, "Mtu"),
+            ip4_config: prop_path(props, "Ip4Config"),
+            ip6_config: prop_path(props, "Ip6Config"),
+            active_connection: prop_path(props, "ActiveConnection"),
+            dhcp4_config: prop_path(props, "Dhcp4Config"),
+        }
+    }
+
+    fn should_list(&self) -> bool {
+        keep_device(self.device_type, self.managed)
+    }
+
+    fn type_name(&self) -> String {
+        device_type_str(self.device_type)
+    }
+
+    fn state_name(&self) -> String {
+        device_state_str(self.state)
+    }
+}
+
+#[allow(dead_code)]
+impl IpConfig {
+    fn from_props(props: &Value) -> Self {
+        Self {
+            addresses: addresses(props),
+            gateway: prop_str(props, "Gateway"),
+            dns: nameservers(props),
+            domains: domains_list(props),
+        }
+    }
+
+    fn empty() -> Self {
+        Self {
+            addresses: Vec::new(),
+            gateway: String::new(),
+            dns: Vec::new(),
+            domains: Vec::new(),
+        }
+    }
+
+    fn primary_address(&self) -> String {
+        self.addresses
+            .first()
+            .map(|address| {
+                address
+                    .split_once('/')
+                    .map_or(address.as_str(), |(addr, _)| addr)
+            })
+            .unwrap_or("")
+            .to_string()
+    }
+}
+
+#[allow(dead_code)]
+impl Ipv6Config {
+    fn from_props(props: &Value) -> Self {
+        Self {
+            addresses: addresses(props),
+        }
+    }
+
+    fn empty() -> Self {
+        Self {
+            addresses: Vec::new(),
+        }
+    }
+
+    fn primary_address(&self) -> String {
+        self.addresses
+            .first()
+            .map(|address| {
+                address
+                    .split_once('/')
+                    .map_or(address.as_str(), |(addr, _)| addr)
+            })
+            .unwrap_or("")
+            .to_string()
+    }
+}
+
+#[allow(dead_code)]
+impl ActiveConnection {
+    fn from_props(props: &Value) -> Self {
+        Self {
+            id: prop_str(props, "Id"),
+            connection_type: prop_str(props, "Type"),
+            default: prop_bool(props, "Default"),
+        }
     }
 }
 
@@ -532,5 +689,83 @@ mod tests {
         assert_eq!(prop_path(&props, "Ip4Config"), None);
         assert_eq!(prop_path(&props, "Ok").as_deref(), Some("/x/1"));
         assert_eq!(prop_path(&props, "Missing"), None);
+    }
+
+    #[test]
+    fn network_device_from_props_unwraps_known_fields() {
+        let props = json!({
+            "Interface": {"t":"s","v":"eth0"},
+            "DeviceType": {"t":"u","v":1},
+            "State": {"t":"u","v":100},
+            "Managed": {"t":"b","v":true},
+            "HwAddress": {"t":"s","v":"52:54:00:00:00:01"},
+            "Mtu": {"t":"u","v":1500},
+            "Ip4Config": {"t":"o","v":"/org/freedesktop/NetworkManager/IP4Config/1"},
+            "Ip6Config": {"t":"o","v":"/"},
+            "ActiveConnection": {"t":"o","v":"/org/freedesktop/NetworkManager/ActiveConnection/1"},
+            "Dhcp4Config": {"t":"o","v":"/org/freedesktop/NetworkManager/DHCP4Config/1"},
+        });
+
+        let device = NetworkDevice::from_props(&props);
+
+        assert_eq!(device.interface, "eth0");
+        assert_eq!(device.device_type, 1);
+        assert_eq!(device.state, 100);
+        assert!(device.managed);
+        assert_eq!(device.mac, "52:54:00:00:00:01");
+        assert_eq!(device.mtu, 1500);
+        assert_eq!(
+            device.ip4_config.as_deref(),
+            Some("/org/freedesktop/NetworkManager/IP4Config/1")
+        );
+        assert_eq!(device.ip6_config, None);
+        assert_eq!(
+            device.active_connection.as_deref(),
+            Some("/org/freedesktop/NetworkManager/ActiveConnection/1")
+        );
+        assert_eq!(
+            device.dhcp4_config.as_deref(),
+            Some("/org/freedesktop/NetworkManager/DHCP4Config/1")
+        );
+        assert!(device.should_list());
+        assert_eq!(device.type_name(), "ethernet");
+        assert_eq!(device.state_name(), "activated");
+    }
+
+    #[test]
+    fn ip_config_primary_address_drops_prefix() {
+        let props = json!({
+            "AddressData": {"t":"aa{sv}","v":[
+                {"address":{"t":"s","v":"192.0.2.10"},"prefix":{"t":"u","v":24}},
+                {"address":{"t":"s","v":"192.0.2.11"},"prefix":{"t":"u","v":24}}
+            ]},
+            "Gateway": {"t":"s","v":"192.0.2.1"},
+            "NameserverData": {"t":"aa{sv}","v":[{"address":{"t":"s","v":"1.1.1.1"}}]},
+            "Domains": {"t":"as","v":["example.test"]}
+        });
+
+        let config = IpConfig::from_props(&props);
+
+        assert_eq!(config.addresses, vec!["192.0.2.10/24", "192.0.2.11/24"]);
+        assert_eq!(config.gateway, "192.0.2.1");
+        assert_eq!(config.dns, vec!["1.1.1.1"]);
+        assert_eq!(config.domains, vec!["example.test"]);
+        assert_eq!(config.primary_address(), "192.0.2.10");
+        assert_eq!(IpConfig::empty().primary_address(), "");
+    }
+
+    #[test]
+    fn active_connection_from_props_unwraps_known_fields() {
+        let props = json!({
+            "Id": {"t":"s","v":"Wired connection 1"},
+            "Type": {"t":"s","v":"802-3-ethernet"},
+            "Default": {"t":"b","v":true},
+        });
+
+        let connection = ActiveConnection::from_props(&props);
+
+        assert_eq!(connection.id, "Wired connection 1");
+        assert_eq!(connection.connection_type, "802-3-ethernet");
+        assert!(connection.default);
     }
 }
