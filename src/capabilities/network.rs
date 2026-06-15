@@ -112,8 +112,6 @@ const PHYSICAL_TYPES: [u64; 8] = [
     32, // loopback
 ];
 
-// Temporary staged models for the upcoming list/show refactor; remove these
-// dead-code allowances when the typed boundary is wired into those commands.
 #[derive(Debug, Clone)]
 struct NetworkDevice {
     interface: String,
@@ -121,13 +119,10 @@ struct NetworkDevice {
     state: u64,
     managed: bool,
     mac: String,
-    #[allow(dead_code)]
     mtu: u64,
     ip4_config: Option<String>,
     ip6_config: Option<String>,
-    #[allow(dead_code)]
     active_connection: Option<String>,
-    #[allow(dead_code)]
     dhcp4_config: Option<String>,
 }
 
@@ -144,7 +139,6 @@ struct Ipv6Config {
     addresses: Vec<String>,
 }
 
-#[allow(dead_code)]
 #[derive(Debug, Clone, serde::Serialize)]
 struct ActiveConnection {
     id: String,
@@ -153,7 +147,6 @@ struct ActiveConnection {
     default: bool,
 }
 
-#[allow(dead_code)]
 #[derive(Debug, Clone, serde::Serialize)]
 struct NetworkDeviceDetail {
     interface: String,
@@ -307,7 +300,6 @@ impl Ipv6Config {
     }
 }
 
-#[allow(dead_code)]
 impl ActiveConnection {
     fn from_props(props: &Value) -> Self {
         Self {
@@ -353,6 +345,39 @@ fn load_ip6_config(
             client, channel, path, IP6_IFACE,
         )?)),
         None => Ok(Ipv6Config::empty()),
+    }
+}
+
+fn load_active_connection(
+    client: &mut BridgeClient,
+    channel: &str,
+    path: Option<&str>,
+) -> Result<Option<ActiveConnection>> {
+    match path {
+        Some(path) => Ok(Some(ActiveConnection::from_props(&get_all(
+            client,
+            channel,
+            path,
+            ACTIVE_IFACE,
+        )?))),
+        None => Ok(None),
+    }
+}
+
+fn load_dhcp4_options(
+    client: &mut BridgeClient,
+    channel: &str,
+    path: Option<&str>,
+) -> Result<Option<Value>> {
+    match path {
+        Some(path) => {
+            let props = get_all(client, channel, path, DHCP4_IFACE)?;
+            Ok(props
+                .get("Options")
+                .map(unwrap_variant)
+                .and_then(flatten_options))
+        }
+        None => Ok(None),
     }
 }
 
@@ -451,74 +476,35 @@ fn show(client: &mut BridgeClient, channel: &str, host: String, device: &str) ->
     let paths = device_paths(client, channel)?;
 
     // Find the device whose Interface matches the requested name.
-    let mut found: Option<Value> = None;
+    let mut found: Option<NetworkDevice> = None;
     for path in &paths {
-        let props = get_all(client, channel, path, DEVICE_IFACE)?;
-        if prop_str(&props, "Interface") == device {
-            found = Some(props);
+        let candidate = NetworkDevice::from_props(&get_all(client, channel, path, DEVICE_IFACE)?);
+        if candidate.interface == device {
+            found = Some(candidate);
             break;
         }
     }
-    let props = found.ok_or_else(|| FezError::NotFound(format!("network device {device}")))?;
+    let device = found.ok_or_else(|| FezError::NotFound(format!("network device {device}")))?;
 
-    let device_type = prop_u64(&props, "DeviceType");
-    let state = device_state_str(prop_u64(&props, "State"));
+    let ipv4 = load_ip4_config(client, channel, device.ip4_config.as_deref())?;
+    let ipv6 = load_ip6_config(client, channel, device.ip6_config.as_deref())?;
+    let connection = load_active_connection(client, channel, device.active_connection.as_deref())?;
+    let dhcp4 = load_dhcp4_options(client, channel, device.dhcp4_config.as_deref())?;
+    let device_type = device.type_name();
+    let state = device.state_name();
 
-    // IPv4 detail.
-    let (mut ip4_addrs, mut gateway, mut dns, mut domains) =
-        (Vec::new(), String::new(), Vec::new(), Vec::new());
-    if let Some(p) = prop_path(&props, "Ip4Config") {
-        let ip = get_all(client, channel, &p, IP4_IFACE)?;
-        ip4_addrs = addresses(&ip);
-        gateway = prop_str(&ip, "Gateway");
-        dns = nameservers(&ip);
-        domains = domains_list(&ip);
-    }
-
-    // IPv6 detail.
-    let mut ip6_addrs = Vec::new();
-    if let Some(p) = prop_path(&props, "Ip6Config") {
-        let ip = get_all(client, channel, &p, IP6_IFACE)?;
-        ip6_addrs = addresses(&ip);
-    }
-
-    // Active connection profile.
-    let connection = match prop_path(&props, "ActiveConnection") {
-        Some(p) => {
-            let ac = get_all(client, channel, &p, ACTIVE_IFACE)?;
-            Some(json!({
-                "id": prop_str(&ac, "Id"),
-                "type": prop_str(&ac, "Type"),
-                "default": prop_bool(&ac, "Default"),
-            }))
-        }
-        None => None,
+    let detail = NetworkDeviceDetail {
+        interface: device.interface,
+        device_type,
+        state,
+        mac: device.mac,
+        mtu: device.mtu,
+        ipv4,
+        ipv6,
+        connection,
+        dhcp4,
     };
-
-    // DHCPv4 lease options. NM hands these back as an `a{sv}` whose values are
-    // variant-wrapped; flatten them so the envelope carries clean scalars
-    // instead of leaking the `{"t","v"}` wire shape.
-    let dhcp = match prop_path(&props, "Dhcp4Config") {
-        Some(p) => {
-            let d = get_all(client, channel, &p, DHCP4_IFACE)?;
-            d.get("Options")
-                .map(unwrap_variant)
-                .and_then(flatten_options)
-        }
-        None => None,
-    };
-
-    let data = json!({
-        "interface": prop_str(&props, "Interface"),
-        "type": device_type_str(device_type),
-        "state": state,
-        "mac": prop_str(&props, "HwAddress"),
-        "mtu": prop_u64(&props, "Mtu"),
-        "ipv4": { "addresses": ip4_addrs, "gateway": gateway, "dns": dns, "domains": domains },
-        "ipv6": { "addresses": ip6_addrs },
-        "connection": connection,
-        "dhcp4": dhcp,
-    });
+    let data = serde_json::to_value(detail).map_err(FezError::Decode)?;
 
     let human = render_show_human(&data);
     Ok(View::new("NetworkDeviceDetail", host, data, human))
