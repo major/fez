@@ -112,6 +112,55 @@ const PHYSICAL_TYPES: [u64; 8] = [
     32, // loopback
 ];
 
+#[derive(Debug, Clone)]
+struct NetworkDevice {
+    interface: String,
+    device_type: u64,
+    state: u64,
+    managed: bool,
+    mac: String,
+    mtu: u64,
+    ip4_config: Option<String>,
+    ip6_config: Option<String>,
+    active_connection: Option<String>,
+    dhcp4_config: Option<String>,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+struct IpConfig {
+    addresses: Vec<String>,
+    gateway: String,
+    dns: Vec<String>,
+    domains: Vec<String>,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+struct Ipv6Config {
+    addresses: Vec<String>,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+struct ActiveConnection {
+    id: String,
+    #[serde(rename = "type")]
+    connection_type: String,
+    default: bool,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+struct NetworkDeviceDetail {
+    interface: String,
+    #[serde(rename = "type")]
+    device_type: String,
+    state: String,
+    mac: String,
+    mtu: u64,
+    ipv4: IpConfig,
+    ipv6: Ipv6Config,
+    connection: Option<ActiveConnection>,
+    dhcp4: Option<Value>,
+}
+
 /// Whether a device should appear in `network list` without `--all`.
 ///
 /// Keeps managed devices and physical/interesting types; hides unmanaged
@@ -164,6 +213,103 @@ fn prop_path(props: &Value, key: &str) -> Option<String> {
     }
 }
 
+impl NetworkDevice {
+    fn from_props(props: &Value) -> Self {
+        Self {
+            interface: prop_str(props, "Interface"),
+            device_type: prop_u64(props, "DeviceType"),
+            state: prop_u64(props, "State"),
+            managed: prop_bool(props, "Managed"),
+            mac: prop_str(props, "HwAddress"),
+            mtu: prop_u64(props, "Mtu"),
+            ip4_config: prop_path(props, "Ip4Config"),
+            ip6_config: prop_path(props, "Ip6Config"),
+            active_connection: prop_path(props, "ActiveConnection"),
+            dhcp4_config: prop_path(props, "Dhcp4Config"),
+        }
+    }
+
+    fn should_list(&self, all: bool) -> bool {
+        all || keep_device(self.device_type, self.managed)
+    }
+
+    fn type_name(&self) -> String {
+        device_type_str(self.device_type)
+    }
+
+    fn state_name(&self) -> String {
+        device_state_str(self.state)
+    }
+}
+
+impl IpConfig {
+    fn from_props(props: &Value) -> Self {
+        Self {
+            addresses: addresses(props),
+            gateway: prop_str(props, "Gateway"),
+            dns: nameservers(props),
+            domains: domains_list(props),
+        }
+    }
+
+    fn empty() -> Self {
+        Self {
+            addresses: Vec::new(),
+            gateway: String::new(),
+            dns: Vec::new(),
+            domains: Vec::new(),
+        }
+    }
+
+    fn primary_address(&self) -> String {
+        self.addresses
+            .first()
+            .map(|address| {
+                address
+                    .split_once('/')
+                    .map_or(address.as_str(), |(addr, _)| addr)
+            })
+            .unwrap_or("")
+            .to_string()
+    }
+}
+
+impl Ipv6Config {
+    fn from_props(props: &Value) -> Self {
+        Self {
+            addresses: addresses(props),
+        }
+    }
+
+    fn empty() -> Self {
+        Self {
+            addresses: Vec::new(),
+        }
+    }
+
+    fn primary_address(&self) -> String {
+        self.addresses
+            .first()
+            .map(|address| {
+                address
+                    .split_once('/')
+                    .map_or(address.as_str(), |(addr, _)| addr)
+            })
+            .unwrap_or("")
+            .to_string()
+    }
+}
+
+impl ActiveConnection {
+    fn from_props(props: &Value) -> Self {
+        Self {
+            id: prop_str(props, "Id"),
+            connection_type: prop_str(props, "Type"),
+            default: prop_bool(props, "Default"),
+        }
+    }
+}
+
 /// `GetAll` the properties of a NM object, returning the unwrapped `a{sv}` map.
 ///
 /// A `GetAll` always returns one out-arg (the property dict); a missing one is
@@ -174,6 +320,65 @@ fn get_all(client: &mut BridgeClient, channel: &str, path: &str, iface: &str) ->
     out.get(0)
         .cloned()
         .ok_or_else(|| FezError::Problem(format!("GetAll({iface}) returned no value")))
+}
+
+fn load_ip4_config(
+    client: &mut BridgeClient,
+    channel: &str,
+    path: Option<&str>,
+) -> Result<IpConfig> {
+    match path {
+        Some(path) => Ok(IpConfig::from_props(&get_all(
+            client, channel, path, IP4_IFACE,
+        )?)),
+        None => Ok(IpConfig::empty()),
+    }
+}
+
+fn load_ip6_config(
+    client: &mut BridgeClient,
+    channel: &str,
+    path: Option<&str>,
+) -> Result<Ipv6Config> {
+    match path {
+        Some(path) => Ok(Ipv6Config::from_props(&get_all(
+            client, channel, path, IP6_IFACE,
+        )?)),
+        None => Ok(Ipv6Config::empty()),
+    }
+}
+
+fn load_active_connection(
+    client: &mut BridgeClient,
+    channel: &str,
+    path: Option<&str>,
+) -> Result<Option<ActiveConnection>> {
+    match path {
+        Some(path) => Ok(Some(ActiveConnection::from_props(&get_all(
+            client,
+            channel,
+            path,
+            ACTIVE_IFACE,
+        )?))),
+        None => Ok(None),
+    }
+}
+
+fn load_dhcp4_options(
+    client: &mut BridgeClient,
+    channel: &str,
+    path: Option<&str>,
+) -> Result<Option<Value>> {
+    match path {
+        Some(path) => {
+            let props = get_all(client, channel, path, DHCP4_IFACE)?;
+            Ok(props
+                .get("Options")
+                .map(unwrap_variant)
+                .and_then(flatten_options))
+        }
+        None => Ok(None),
+    }
 }
 
 /// Project an NM `AddressData` (`aa{sv}`) entry to `"address/prefix"`.
@@ -199,20 +404,6 @@ fn addresses(ip_props: &Value) -> Vec<String> {
         .unwrap_or_default()
 }
 
-/// The first address (without prefix) from an IP config, for the list column.
-fn primary_address(ip_props: &Value) -> String {
-    ip_props
-        .get("AddressData")
-        .map(unwrap_variant)
-        .and_then(Value::as_array)
-        .and_then(|arr| arr.first())
-        .and_then(|e| e.get("address"))
-        .map(unwrap_variant)
-        .and_then(Value::as_str)
-        .unwrap_or("")
-        .to_string()
-}
-
 /// Call `GetDevices` on the manager and return the device object paths.
 ///
 /// `GetDevices` always returns one out-arg (an array of object paths); a
@@ -236,27 +427,19 @@ fn list(client: &mut BridgeClient, channel: &str, host: String, all: bool) -> Re
 
     let mut devices = Vec::new();
     for path in &paths {
-        let props = get_all(client, channel, path, DEVICE_IFACE)?;
-        let device_type = prop_u64(&props, "DeviceType");
-        let managed = prop_bool(&props, "Managed");
-        if !all && !keep_device(device_type, managed) {
+        let device = NetworkDevice::from_props(&get_all(client, channel, path, DEVICE_IFACE)?);
+        if !device.should_list(all) {
             continue;
         }
-        let ip4 = match prop_path(&props, "Ip4Config") {
-            Some(p) => primary_address(&get_all(client, channel, &p, IP4_IFACE)?),
-            None => String::new(),
-        };
-        let ip6 = match prop_path(&props, "Ip6Config") {
-            Some(p) => primary_address(&get_all(client, channel, &p, IP6_IFACE)?),
-            None => String::new(),
-        };
+        let ip4 = load_ip4_config(client, channel, device.ip4_config.as_deref())?;
+        let ip6 = load_ip6_config(client, channel, device.ip6_config.as_deref())?;
         devices.push(json!({
-            "interface": prop_str(&props, "Interface"),
-            "type": device_type_str(device_type),
-            "state": device_state_str(prop_u64(&props, "State")),
-            "ip4": ip4,
-            "ip6": ip6,
-            "mac": prop_str(&props, "HwAddress"),
+            "interface": device.interface,
+            "type": device.type_name(),
+            "state": device.state_name(),
+            "ip4": ip4.primary_address(),
+            "ip6": ip6.primary_address(),
+            "mac": device.mac,
         }));
     }
 
@@ -293,74 +476,35 @@ fn show(client: &mut BridgeClient, channel: &str, host: String, device: &str) ->
     let paths = device_paths(client, channel)?;
 
     // Find the device whose Interface matches the requested name.
-    let mut found: Option<Value> = None;
+    let mut found: Option<NetworkDevice> = None;
     for path in &paths {
-        let props = get_all(client, channel, path, DEVICE_IFACE)?;
-        if prop_str(&props, "Interface") == device {
-            found = Some(props);
+        let candidate = NetworkDevice::from_props(&get_all(client, channel, path, DEVICE_IFACE)?);
+        if candidate.interface == device {
+            found = Some(candidate);
             break;
         }
     }
-    let props = found.ok_or_else(|| FezError::NotFound(format!("network device {device}")))?;
+    let device = found.ok_or_else(|| FezError::NotFound(format!("network device {device}")))?;
 
-    let device_type = prop_u64(&props, "DeviceType");
-    let state = device_state_str(prop_u64(&props, "State"));
+    let ipv4 = load_ip4_config(client, channel, device.ip4_config.as_deref())?;
+    let ipv6 = load_ip6_config(client, channel, device.ip6_config.as_deref())?;
+    let connection = load_active_connection(client, channel, device.active_connection.as_deref())?;
+    let dhcp4 = load_dhcp4_options(client, channel, device.dhcp4_config.as_deref())?;
+    let device_type = device.type_name();
+    let state = device.state_name();
 
-    // IPv4 detail.
-    let (mut ip4_addrs, mut gateway, mut dns, mut domains) =
-        (Vec::new(), String::new(), Vec::new(), Vec::new());
-    if let Some(p) = prop_path(&props, "Ip4Config") {
-        let ip = get_all(client, channel, &p, IP4_IFACE)?;
-        ip4_addrs = addresses(&ip);
-        gateway = prop_str(&ip, "Gateway");
-        dns = nameservers(&ip);
-        domains = domains_list(&ip);
-    }
-
-    // IPv6 detail.
-    let mut ip6_addrs = Vec::new();
-    if let Some(p) = prop_path(&props, "Ip6Config") {
-        let ip = get_all(client, channel, &p, IP6_IFACE)?;
-        ip6_addrs = addresses(&ip);
-    }
-
-    // Active connection profile.
-    let connection = match prop_path(&props, "ActiveConnection") {
-        Some(p) => {
-            let ac = get_all(client, channel, &p, ACTIVE_IFACE)?;
-            Some(json!({
-                "id": prop_str(&ac, "Id"),
-                "type": prop_str(&ac, "Type"),
-                "default": prop_bool(&ac, "Default"),
-            }))
-        }
-        None => None,
+    let detail = NetworkDeviceDetail {
+        interface: device.interface,
+        device_type,
+        state,
+        mac: device.mac,
+        mtu: device.mtu,
+        ipv4,
+        ipv6,
+        connection,
+        dhcp4,
     };
-
-    // DHCPv4 lease options. NM hands these back as an `a{sv}` whose values are
-    // variant-wrapped; flatten them so the envelope carries clean scalars
-    // instead of leaking the `{"t","v"}` wire shape.
-    let dhcp = match prop_path(&props, "Dhcp4Config") {
-        Some(p) => {
-            let d = get_all(client, channel, &p, DHCP4_IFACE)?;
-            d.get("Options")
-                .map(unwrap_variant)
-                .and_then(flatten_options)
-        }
-        None => None,
-    };
-
-    let data = json!({
-        "interface": prop_str(&props, "Interface"),
-        "type": device_type_str(device_type),
-        "state": state,
-        "mac": prop_str(&props, "HwAddress"),
-        "mtu": prop_u64(&props, "Mtu"),
-        "ipv4": { "addresses": ip4_addrs, "gateway": gateway, "dns": dns, "domains": domains },
-        "ipv6": { "addresses": ip6_addrs },
-        "connection": connection,
-        "dhcp4": dhcp,
-    });
+    let data = serde_json::to_value(detail).map_err(FezError::Decode)?;
 
     let human = render_show_human(&data);
     Ok(View::new("NetworkDeviceDetail", host, data, human))
@@ -532,5 +676,84 @@ mod tests {
         assert_eq!(prop_path(&props, "Ip4Config"), None);
         assert_eq!(prop_path(&props, "Ok").as_deref(), Some("/x/1"));
         assert_eq!(prop_path(&props, "Missing"), None);
+    }
+
+    #[test]
+    fn network_device_from_props_unwraps_known_fields() {
+        let props = json!({
+            "Interface": {"t":"s","v":"eth0"},
+            "DeviceType": {"t":"u","v":1},
+            "State": {"t":"u","v":100},
+            "Managed": {"t":"b","v":true},
+            "HwAddress": {"t":"s","v":"52:54:00:00:00:01"},
+            "Mtu": {"t":"u","v":1500},
+            "Ip4Config": {"t":"o","v":"/org/freedesktop/NetworkManager/IP4Config/1"},
+            "Ip6Config": {"t":"o","v":"/"},
+            "ActiveConnection": {"t":"o","v":"/org/freedesktop/NetworkManager/ActiveConnection/1"},
+            "Dhcp4Config": {"t":"o","v":"/org/freedesktop/NetworkManager/DHCP4Config/1"},
+        });
+
+        let device = NetworkDevice::from_props(&props);
+
+        assert_eq!(device.interface, "eth0");
+        assert_eq!(device.device_type, 1);
+        assert_eq!(device.state, 100);
+        assert!(device.managed);
+        assert_eq!(device.mac, "52:54:00:00:00:01");
+        assert_eq!(device.mtu, 1500);
+        assert_eq!(
+            device.ip4_config.as_deref(),
+            Some("/org/freedesktop/NetworkManager/IP4Config/1")
+        );
+        assert_eq!(device.ip6_config, None);
+        assert_eq!(
+            device.active_connection.as_deref(),
+            Some("/org/freedesktop/NetworkManager/ActiveConnection/1")
+        );
+        assert_eq!(
+            device.dhcp4_config.as_deref(),
+            Some("/org/freedesktop/NetworkManager/DHCP4Config/1")
+        );
+        assert!(device.should_list(false));
+        assert!(device.should_list(true));
+        assert_eq!(device.type_name(), "ethernet");
+        assert_eq!(device.state_name(), "activated");
+    }
+
+    #[test]
+    fn ip_config_primary_address_drops_prefix() {
+        let props = json!({
+            "AddressData": {"t":"aa{sv}","v":[
+                {"address":{"t":"s","v":"192.0.2.10"},"prefix":{"t":"u","v":24}},
+                {"address":{"t":"s","v":"192.0.2.11"},"prefix":{"t":"u","v":24}}
+            ]},
+            "Gateway": {"t":"s","v":"192.0.2.1"},
+            "NameserverData": {"t":"aa{sv}","v":[{"address":{"t":"s","v":"1.1.1.1"}}]},
+            "Domains": {"t":"as","v":["example.test"]}
+        });
+
+        let config = IpConfig::from_props(&props);
+
+        assert_eq!(config.addresses, vec!["192.0.2.10/24", "192.0.2.11/24"]);
+        assert_eq!(config.gateway, "192.0.2.1");
+        assert_eq!(config.dns, vec!["1.1.1.1"]);
+        assert_eq!(config.domains, vec!["example.test"]);
+        assert_eq!(config.primary_address(), "192.0.2.10");
+        assert_eq!(IpConfig::empty().primary_address(), "");
+    }
+
+    #[test]
+    fn active_connection_from_props_unwraps_known_fields() {
+        let props = json!({
+            "Id": {"t":"s","v":"Wired connection 1"},
+            "Type": {"t":"s","v":"802-3-ethernet"},
+            "Default": {"t":"b","v":true},
+        });
+
+        let connection = ActiveConnection::from_props(&props);
+
+        assert_eq!(connection.id, "Wired connection 1");
+        assert_eq!(connection.connection_type, "802-3-ethernet");
+        assert!(connection.default);
     }
 }

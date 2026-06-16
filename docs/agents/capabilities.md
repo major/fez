@@ -93,6 +93,8 @@ The network capability drives NetworkManager over `org.freedesktop.NetworkManage
 
 NetworkManager reuses generic `Get` and `GetAll` property methods across object types. The fake dispatches by object path, not just method name, for manager, device, IP config, active connection, and DHCP config objects.
 
+`src/capabilities/network.rs` keeps D-Bus transport values raw only at the call boundary. Device, IP config, and active connection properties are converted into private typed structs before filtering or rendering. DHCP option properties are flattened at the boundary and remain JSON because the option map is arbitrary. Keep new NetworkManager reads inside that boundary instead of spreading `serde_json::Value` indexing through command logic.
+
 Canned topology from `GetDevices`:
 
 - `enp1s0` - ethernet, activated, full IPv4/IPv6/active-connection/DHCP data.
