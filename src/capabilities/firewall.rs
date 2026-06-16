@@ -58,30 +58,130 @@ fn dependency_missing() -> FezError {
     }
 }
 
+/// A read-only firewall subcommand and its borrowed arguments.
+#[derive(Debug, PartialEq, Eq)]
+enum ReadAction<'a> {
+    Status,
+    List,
+    Show { zone: &'a str },
+    Services,
+}
+
+/// A firewall mutation subcommand and its borrowed arguments.
+#[derive(Debug, PartialEq, Eq)]
+enum Mutation<'a> {
+    AddService {
+        service: &'a str,
+        zone: Option<&'a str>,
+        timeout: Option<u32>,
+    },
+    RemoveService {
+        service: &'a str,
+        zone: Option<&'a str>,
+    },
+    AddPort {
+        port: &'a str,
+        zone: Option<&'a str>,
+        timeout: Option<u32>,
+    },
+    RemovePort {
+        port: &'a str,
+        zone: Option<&'a str>,
+    },
+    SetDefaultZone {
+        zone: &'a str,
+    },
+    Reload,
+    Confirm,
+    Panic {
+        state: &'a str,
+    },
+    Masquerade {
+        state: &'a str,
+        zone: Option<&'a str>,
+        timeout: Option<u32>,
+    },
+}
+
+/// The read/mutate split of a parsed [`FirewallAction`].
+#[derive(Debug, PartialEq, Eq)]
+enum Plan<'a> {
+    Read(ReadAction<'a>),
+    Mutate(Mutation<'a>),
+}
+
+/// Map the flat clap enum onto a typed read/mutate plan.
+fn classify(action: &FirewallAction) -> Plan<'_> {
+    match action {
+        FirewallAction::Status => Plan::Read(ReadAction::Status),
+        FirewallAction::List => Plan::Read(ReadAction::List),
+        FirewallAction::Show { zone } => Plan::Read(ReadAction::Show { zone }),
+        FirewallAction::Services => Plan::Read(ReadAction::Services),
+        FirewallAction::AddService {
+            service,
+            zone,
+            timeout,
+        } => Plan::Mutate(Mutation::AddService {
+            service,
+            zone: zone.as_deref(),
+            timeout: *timeout,
+        }),
+        FirewallAction::RemoveService { service, zone } => Plan::Mutate(Mutation::RemoveService {
+            service,
+            zone: zone.as_deref(),
+        }),
+        FirewallAction::AddPort {
+            port,
+            zone,
+            timeout,
+        } => Plan::Mutate(Mutation::AddPort {
+            port,
+            zone: zone.as_deref(),
+            timeout: *timeout,
+        }),
+        FirewallAction::RemovePort { port, zone } => Plan::Mutate(Mutation::RemovePort {
+            port,
+            zone: zone.as_deref(),
+        }),
+        FirewallAction::SetDefaultZone { zone } => Plan::Mutate(Mutation::SetDefaultZone { zone }),
+        FirewallAction::Reload => Plan::Mutate(Mutation::Reload),
+        FirewallAction::Confirm => Plan::Mutate(Mutation::Confirm),
+        FirewallAction::Panic { state } => Plan::Mutate(Mutation::Panic { state }),
+        FirewallAction::Masquerade {
+            state,
+            zone,
+            timeout,
+        } => Plan::Mutate(Mutation::Masquerade {
+            state,
+            zone: zone.as_deref(),
+            timeout: *timeout,
+        }),
+    }
+}
+
 /// Connect to the bridge and dispatch the requested action.
 fn run(cli: &Cli, action: &FirewallAction) -> Result<View> {
     let transport = transport::from_host(cli.host.as_deref());
     let mut client = BridgeClient::connect(transport.as_ref())?;
     let host = client.host().to_string();
-    match action {
-        FirewallAction::Status => {
+    match classify(action) {
+        Plan::Read(ReadAction::Status) => {
             let ch = open_channel(&mut client, false)?;
             status(&mut client, &ch, host)
         }
-        FirewallAction::List => {
+        Plan::Read(ReadAction::List) => {
             let ch = open_channel(&mut client, false)?;
             list(&mut client, &ch, host)
         }
-        FirewallAction::Show { zone } => {
+        Plan::Read(ReadAction::Show { zone }) => {
             let ch = open_channel(&mut client, false)?;
             show(&mut client, &ch, host, zone)
         }
-        FirewallAction::Services => {
+        Plan::Read(ReadAction::Services) => {
             let ch = open_channel(&mut client, false)?;
             services(&mut client, &ch, host)
         }
-        // Every mutation routes through the privileged path.
-        _ => mutate(cli, &mut client, host, action),
+        Plan::Mutate(mutation) => mutate(cli, &mut client, host, mutation),
     }
 }
 
@@ -204,13 +304,25 @@ fn port_label(entry: &Value) -> String {
     }
 }
 
-/// Parse a `port/proto` spec into `(port, protocol)`.
+#[derive(Debug, PartialEq, Eq)]
+struct PortSpec {
+    port: u16,
+    proto: String,
+}
+
+impl PortSpec {
+    fn label(&self) -> String {
+        format!("{}/{}", self.port, self.proto)
+    }
+}
+
+/// Parse a `port/proto` spec.
 ///
 /// # Errors
 ///
 /// Returns [`FezError::NotFound`] when the spec is not `<u16>/<proto>` with a
 /// non-empty protocol (used as a bad-argument signal; renders exit 4).
-fn parse_port_spec(spec: &str) -> Result<(u16, String)> {
+fn parse_port_spec(spec: &str) -> Result<PortSpec> {
     let (port, proto) = spec
         .split_once('/')
         .ok_or_else(|| FezError::NotFound(format!("port spec {spec:?} (expected port/proto)")))?;
@@ -222,7 +334,10 @@ fn parse_port_spec(spec: &str) -> Result<(u16, String)> {
             "port spec {spec:?} (empty protocol)"
         )));
     }
-    Ok((port, proto.to_string()))
+    Ok(PortSpec {
+        port,
+        proto: proto.to_string(),
+    })
 }
 
 /// Compute runtime-vs-permanent drift as a list of `"+/-kind value"` tokens.
@@ -584,10 +699,10 @@ fn session_ports() -> Vec<u16> {
 fn effective_zone(
     client: &mut BridgeClient,
     channel: &str,
-    requested: &Option<String>,
+    requested: Option<&str>,
 ) -> Result<String> {
     match requested {
-        Some(z) => Ok(z.clone()),
+        Some(z) => Ok(z.to_string()),
         None => Ok(arg_str(&fw_call(
             client,
             channel,
@@ -605,12 +720,12 @@ fn mutate(
     cli: &Cli,
     client: &mut BridgeClient,
     host: String,
-    action: &FirewallAction,
+    action: Mutation<'_>,
 ) -> Result<View> {
     let channel = open_channel(client, true)?;
 
     match action {
-        FirewallAction::AddService {
+        Mutation::AddService {
             service,
             zone,
             timeout,
@@ -632,10 +747,10 @@ fn mutate(
                 "add-service",
                 &zone,
                 &format!("service {service}"),
-                *timeout,
+                timeout,
             ))
         }
-        FirewallAction::RemoveService { service, zone } => {
+        Mutation::RemoveService { service, zone } => {
             let zone = effective_zone(client, &channel, zone)?;
             crate::safety::check_firewall_service_removal(service, &session_services(), cli.force)?;
             run_audited(
@@ -656,55 +771,57 @@ fn mutate(
                 None,
             ))
         }
-        FirewallAction::AddPort {
+        Mutation::AddPort {
             port,
             zone,
             timeout,
         } => {
-            let (p, proto) = parse_port_spec(port)?;
+            let spec = parse_port_spec(port)?;
             let zone = effective_zone(client, &channel, zone)?;
             let t = i64::from(timeout.unwrap_or(0));
+            let label = spec.label();
             run_audited(
                 client,
                 &channel,
                 &host,
                 "add-port",
-                &format!("{zone}:{p}/{proto}"),
+                &format!("{zone}:{label}"),
                 FW_ZONE_IFACE,
                 "addPort",
-                json!([zone, p.to_string(), proto, t]),
+                json!([zone, spec.port.to_string(), spec.proto, t]),
             )?;
             Ok(change_view(
                 host,
                 "add-port",
                 &zone,
-                &format!("port {p}/{proto}"),
-                *timeout,
+                &format!("port {label}"),
+                timeout,
             ))
         }
-        FirewallAction::RemovePort { port, zone } => {
-            let (p, proto) = parse_port_spec(port)?;
+        Mutation::RemovePort { port, zone } => {
+            let spec = parse_port_spec(port)?;
             let zone = effective_zone(client, &channel, zone)?;
-            crate::safety::check_firewall_port_removal(p, &session_ports(), cli.force)?;
+            crate::safety::check_firewall_port_removal(spec.port, &session_ports(), cli.force)?;
+            let label = spec.label();
             run_audited(
                 client,
                 &channel,
                 &host,
                 "remove-port",
-                &format!("{zone}:{p}/{proto}"),
+                &format!("{zone}:{label}"),
                 FW_ZONE_IFACE,
                 "removePort",
-                json!([zone, p.to_string(), proto]),
+                json!([zone, spec.port.to_string(), spec.proto]),
             )?;
             Ok(change_view(
                 host,
                 "remove-port",
                 &zone,
-                &format!("port {p}/{proto}"),
+                &format!("port {label}"),
                 None,
             ))
         }
-        FirewallAction::SetDefaultZone { zone } => {
+        Mutation::SetDefaultZone { zone } => {
             crate::safety::check_firewall_default_zone(cli.force)?;
             run_audited(
                 client,
@@ -724,7 +841,7 @@ fn mutate(
                 None,
             ))
         }
-        FirewallAction::Reload => {
+        Mutation::Reload => {
             let default_zone = arg_str(&fw_call(
                 client,
                 &channel,
@@ -753,7 +870,7 @@ fn mutate(
             )?;
             Ok(reload_view(host))
         }
-        FirewallAction::Confirm => {
+        Mutation::Confirm => {
             run_audited(
                 client,
                 &channel,
@@ -766,7 +883,7 @@ fn mutate(
             )?;
             Ok(confirm_view(host))
         }
-        FirewallAction::Panic { state } => {
+        Mutation::Panic { state } => {
             let on = state == "on";
             if on {
                 crate::safety::check_firewall_panic_on(cli.force)?;
@@ -788,7 +905,7 @@ fn mutate(
             )?;
             Ok(panic_view(host, on))
         }
-        FirewallAction::Masquerade {
+        Mutation::Masquerade {
             state,
             zone,
             timeout,
@@ -818,16 +935,9 @@ fn mutate(
                 host,
                 &zone,
                 on,
-                if on { *timeout } else { None },
+                if on { timeout } else { None },
             ))
         }
-        // Reads are dispatched in `run`; they never reach `mutate`. Return a
-        // defensive error rather than panicking, so a future refactor that
-        // reroutes a read here fails gracefully instead of aborting.
-        FirewallAction::Status
-        | FirewallAction::List
-        | FirewallAction::Show { .. }
-        | FirewallAction::Services => Err(FezError::Problem("read action routed to mutate".into())),
     }
 }
 
@@ -1010,12 +1120,47 @@ mod tests {
     }
 
     #[test]
+    fn classify_routes_reads_and_mutations_to_typed_plans() {
+        assert!(matches!(
+            classify(&FirewallAction::Status),
+            Plan::Read(ReadAction::Status)
+        ));
+        assert!(matches!(
+            classify(&FirewallAction::Show {
+                zone: "public".into()
+            }),
+            Plan::Read(ReadAction::Show { zone: "public" })
+        ));
+        assert!(matches!(
+            classify(&FirewallAction::AddPort {
+                port: "8080/tcp".into(),
+                zone: Some("public".into()),
+                timeout: Some(60),
+            }),
+            Plan::Mutate(Mutation::AddPort {
+                port: "8080/tcp",
+                zone: Some("public"),
+                timeout: Some(60),
+            })
+        ));
+    }
+
+    #[test]
     fn parse_port_spec_splits_port_and_proto() {
         assert_eq!(
             parse_port_spec("8080/tcp").unwrap(),
-            (8080, "tcp".to_string())
+            PortSpec {
+                port: 8080,
+                proto: "tcp".to_string(),
+            }
         );
-        assert_eq!(parse_port_spec("53/udp").unwrap(), (53, "udp".to_string()));
+        assert_eq!(
+            parse_port_spec("53/udp").unwrap(),
+            PortSpec {
+                port: 53,
+                proto: "udp".to_string(),
+            }
+        );
     }
 
     #[test]
