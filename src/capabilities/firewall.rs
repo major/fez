@@ -1126,10 +1126,40 @@ mod tests {
             Plan::Read(ReadAction::Status)
         ));
         assert!(matches!(
+            classify(&FirewallAction::List),
+            Plan::Read(ReadAction::List)
+        ));
+        assert!(matches!(
             classify(&FirewallAction::Show {
                 zone: "public".into()
             }),
             Plan::Read(ReadAction::Show { zone: "public" })
+        ));
+        assert!(matches!(
+            classify(&FirewallAction::Services),
+            Plan::Read(ReadAction::Services)
+        ));
+        assert!(matches!(
+            classify(&FirewallAction::AddService {
+                service: "ssh".into(),
+                zone: Some("public".into()),
+                timeout: Some(60),
+            }),
+            Plan::Mutate(Mutation::AddService {
+                service: "ssh",
+                zone: Some("public"),
+                timeout: Some(60),
+            })
+        ));
+        assert!(matches!(
+            classify(&FirewallAction::RemoveService {
+                service: "ssh".into(),
+                zone: Some("public".into()),
+            }),
+            Plan::Mutate(Mutation::RemoveService {
+                service: "ssh",
+                zone: Some("public"),
+            })
         ));
         assert!(matches!(
             classify(&FirewallAction::AddPort {
@@ -1139,6 +1169,46 @@ mod tests {
             }),
             Plan::Mutate(Mutation::AddPort {
                 port: "8080/tcp",
+                zone: Some("public"),
+                timeout: Some(60),
+            })
+        ));
+        assert!(matches!(
+            classify(&FirewallAction::RemovePort {
+                port: "8080/tcp".into(),
+                zone: Some("public".into()),
+            }),
+            Plan::Mutate(Mutation::RemovePort {
+                port: "8080/tcp",
+                zone: Some("public"),
+            })
+        ));
+        assert!(matches!(
+            classify(&FirewallAction::SetDefaultZone {
+                zone: "internal".into(),
+            }),
+            Plan::Mutate(Mutation::SetDefaultZone { zone: "internal" })
+        ));
+        assert!(matches!(
+            classify(&FirewallAction::Reload),
+            Plan::Mutate(Mutation::Reload)
+        ));
+        assert!(matches!(
+            classify(&FirewallAction::Confirm),
+            Plan::Mutate(Mutation::Confirm)
+        ));
+        assert!(matches!(
+            classify(&FirewallAction::Panic { state: "on".into() }),
+            Plan::Mutate(Mutation::Panic { state: "on" })
+        ));
+        assert!(matches!(
+            classify(&FirewallAction::Masquerade {
+                state: "on".into(),
+                zone: Some("public".into()),
+                timeout: Some(60),
+            }),
+            Plan::Mutate(Mutation::Masquerade {
+                state: "on",
                 zone: Some("public"),
                 timeout: Some(60),
             })
