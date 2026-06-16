@@ -416,13 +416,17 @@ impl FirewallStatusData {
         masquerade: bool,
         drift: Option<Vec<String>>,
     ) -> Self {
+        let (pending_changes, pending_changes_available) = match drift {
+            Some(pending_changes) => (pending_changes, true),
+            None => (Vec::new(), false),
+        };
         Self {
             running: true,
             default_zone,
             panic_mode,
             masquerade,
-            pending_changes: drift.clone().unwrap_or_default(),
-            pending_changes_available: drift.is_some(),
+            pending_changes,
+            pending_changes_available,
         }
     }
 
@@ -1380,6 +1384,49 @@ mod tests {
         assert_eq!(
             status.human_prefix(),
             "running:       yes\ndefault zone:  public\npanic mode:    off\nmasquerade:    on\n"
+        );
+    }
+
+    #[test]
+    fn firewall_status_data_marks_pending_unavailable_when_drift_is_none() {
+        let status = FirewallStatusData::from_runtime("public".to_string(), false, false, None);
+
+        assert_eq!(
+            status.data(),
+            json!({
+                "running": true,
+                "default_zone": "public",
+                "panic_mode": false,
+                "masquerade": false,
+                "pending_changes": [],
+                "pending_changes_available": false,
+            })
+        );
+        assert_eq!(
+            status.human_prefix(),
+            "running:       yes\ndefault zone:  public\npanic mode:    off\nmasquerade:    off\n"
+        );
+    }
+
+    #[test]
+    fn firewall_status_data_keeps_empty_drift_available() {
+        let status =
+            FirewallStatusData::from_runtime("public".to_string(), true, false, Some(vec![]));
+
+        assert_eq!(
+            status.data(),
+            json!({
+                "running": true,
+                "default_zone": "public",
+                "panic_mode": true,
+                "masquerade": false,
+                "pending_changes": [],
+                "pending_changes_available": true,
+            })
+        );
+        assert_eq!(
+            status.human_prefix(),
+            "running:       yes\ndefault zone:  public\npanic mode:    on\nmasquerade:    off\n"
         );
     }
 
