@@ -357,12 +357,36 @@ enum Enablement {
     Disable,
 }
 
+struct EnablementCall {
+    method: &'static str,
+    followup_method: &'static str,
+    args: Value,
+    changes_index: usize,
+}
+
 impl Enablement {
     /// The owning [`Mutation`] for `mutation_view`, with `now` threaded back in.
     fn mutation(self, now: bool) -> Mutation {
         match self {
             Enablement::Enable => Mutation::Enable { now },
             Enablement::Disable => Mutation::Disable { now },
+        }
+    }
+
+    fn unit_file_call(self, unit: &str) -> EnablementCall {
+        match self {
+            Enablement::Enable => EnablementCall {
+                method: "EnableUnitFiles",
+                followup_method: "StartUnit",
+                args: json!([[unit], false, false]),
+                changes_index: 1,
+            },
+            Enablement::Disable => EnablementCall {
+                method: "DisableUnitFiles",
+                followup_method: "StopUnit",
+                args: json!([[unit], false]),
+                changes_index: 0,
+            },
         }
     }
 }
@@ -375,25 +399,12 @@ fn execute_enablement(
     unit: &str,
     now: bool,
 ) -> Result<View> {
-    // Shared enable/disable path: issue the unit-file D-Bus call, extract the
-    // method-specific changes output, refresh systemd's cached state, and run
-    // the matching StartUnit/StopUnit follow-up when --now is requested.
-    //
-    // `args`: EnableUnitFiles takes [[units], runtime, force]; DisableUnitFiles
-    // takes [[units], runtime]. `changes_idx`: EnableUnitFiles out_args are
-    // [carries_install_info (bool), changes (array)] so changes is at 1;
-    // DisableUnitFiles out_args are [changes (array)] so changes is at 0.
-    let (unit_file_method, followup_method, args, changes_idx) = match op {
-        Enablement::Enable => (
-            "EnableUnitFiles",
-            "StartUnit",
-            json!([[unit], false, false]),
-            1,
-        ),
-        Enablement::Disable => ("DisableUnitFiles", "StopUnit", json!([[unit], false]), 0),
-    };
-    let out = client.dbus_call(channel, MGR_PATH, MGR_IFACE, unit_file_method, args)?;
-    let changes = out.get(changes_idx).cloned().unwrap_or_else(|| json!([]));
+    let call = op.unit_file_call(unit);
+    let out = client.dbus_call(channel, MGR_PATH, MGR_IFACE, call.method, call.args)?;
+    let changes = out
+        .get(call.changes_index)
+        .cloned()
+        .unwrap_or_else(|| json!([]));
 
     // Unit file changes leave systemd's cached UnitFileState stale until reload.
     reload_daemon(client, channel)?;
@@ -402,7 +413,7 @@ fn execute_enablement(
             channel,
             MGR_PATH,
             MGR_IFACE,
-            followup_method,
+            call.followup_method,
             json!([unit, "replace"]),
         )?;
     }
@@ -832,5 +843,22 @@ mod tests {
                 Plan::Read(_) => panic!("mutation classified as read"),
             }
         }
+    }
+
+    #[test]
+    fn enablement_describes_dbus_call_shape() {
+        use super::Enablement;
+
+        let enable = Enablement::Enable.unit_file_call("sshd.service");
+        assert_eq!(enable.method, "EnableUnitFiles");
+        assert_eq!(enable.followup_method, "StartUnit");
+        assert_eq!(enable.args, json!([["sshd.service"], false, false]));
+        assert_eq!(enable.changes_index, 1);
+
+        let disable = Enablement::Disable.unit_file_call("sshd.service");
+        assert_eq!(disable.method, "DisableUnitFiles");
+        assert_eq!(disable.followup_method, "StopUnit");
+        assert_eq!(disable.args, json!([["sshd.service"], false]));
+        assert_eq!(disable.changes_index, 0);
     }
 }
