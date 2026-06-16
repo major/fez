@@ -35,15 +35,15 @@ const FILTER_NEWEST: u64 = 1 << 16;
 const FILTER_NONE: u64 = 0;
 
 /// PackageKit `info` enum: package will be installed.
-const INFO_INSTALLING: u64 = 8;
+const INFO_INSTALLING: u64 = 12;
 /// PackageKit `info` enum: package will be removed.
-const INFO_REMOVING: u64 = 9;
+const INFO_REMOVING: u64 = 13;
 /// PackageKit `info` enum: package will be updated.
-const INFO_UPDATING: u64 = 7;
+const INFO_UPDATING: u64 = 11;
 /// PackageKit `info` enum: package will be obsoleted (treated as a removal).
-const INFO_OBSOLETING: u64 = 11;
+const INFO_OBSOLETING: u64 = 15;
 /// PackageKit `info` enum: package will be downgraded.
-const INFO_DOWNGRADING: u64 = 13;
+const INFO_DOWNGRADING: u64 = 20;
 
 /// PackageKit error enum: `PK_ERROR_ENUM_NOT_AUTHORIZED`.
 const PK_ERROR_NOT_AUTHORIZED: u64 = 6;
@@ -495,6 +495,54 @@ struct PkPlan {
     remove_names: Vec<String>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PkPlanAction {
+    Install,
+    Remove,
+    Upgrade,
+    Downgrade,
+}
+
+impl PkPlanAction {
+    fn from_info(info: u64) -> Option<Self> {
+        match info {
+            INFO_INSTALLING => Some(Self::Install),
+            INFO_UPDATING => Some(Self::Upgrade),
+            INFO_DOWNGRADING => Some(Self::Downgrade),
+            INFO_REMOVING | INFO_OBSOLETING => Some(Self::Remove),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PkMutation {
+    Install,
+    Remove,
+    Upgrade,
+}
+
+impl PkMutation {
+    fn from_verb(verb: &str) -> Result<Self> {
+        match verb {
+            "install" => Ok(Self::Install),
+            "remove" => Ok(Self::Remove),
+            "upgrade" => Ok(Self::Upgrade),
+            _ => Err(FezError::Usage(format!(
+                "unsupported PackageKit mutation verb: {verb}"
+            ))),
+        }
+    }
+
+    fn verb(self) -> &'static str {
+        match self {
+            Self::Install => "install",
+            Self::Remove => "remove",
+            Self::Upgrade => "upgrade",
+        }
+    }
+}
+
 /// Bucket a SIMULATE stream's packages by their `info` enum into a [`PkPlan`].
 fn plan_from(signals: &[(String, Vec<Value>)]) -> PkPlan {
     let mut plan = PkPlan {
@@ -505,28 +553,27 @@ fn plan_from(signals: &[(String, Vec<Value>)]) -> PkPlan {
         remove_names: vec![],
     };
     for p in packages_from(signals) {
-        match p.info {
-            INFO_INSTALLING => plan.install.push(p.label()),
-            INFO_UPDATING => plan.upgrade.push(p.label()),
-            INFO_DOWNGRADING => plan.downgrade.push(p.label()),
-            INFO_REMOVING | INFO_OBSOLETING => {
+        match PkPlanAction::from_info(p.info) {
+            Some(PkPlanAction::Install) => plan.install.push(p.label()),
+            Some(PkPlanAction::Upgrade) => plan.upgrade.push(p.label()),
+            Some(PkPlanAction::Downgrade) => plan.downgrade.push(p.label()),
+            Some(PkPlanAction::Remove) => {
                 plan.remove_names.push(p.name.clone());
                 plan.remove.push(p.label());
             }
-            _ => {}
+            None => {}
         }
     }
     plan
 }
 
 /// The PackageKit method name and argument array for each mutation verb.
-fn method_for(verb: &str, flags: u64, ids: &[String]) -> (&'static str, Value) {
-    match verb {
-        "install" => ("InstallPackages", json!([flags, ids])),
-        "upgrade" => ("UpdatePackages", json!([flags, ids])),
+fn method_for(mutation: PkMutation, flags: u64, ids: &[String]) -> (&'static str, Value) {
+    match mutation {
+        PkMutation::Install => ("InstallPackages", json!([flags, ids])),
+        PkMutation::Upgrade => ("UpdatePackages", json!([flags, ids])),
         // RemovePackages(flags, ids, allow_deps=true, autoremove=false)
-        "remove" => ("RemovePackages", json!([flags, ids, true, false])),
-        other => unreachable!("unknown mutation verb {other}"),
+        PkMutation::Remove => ("RemovePackages", json!([flags, ids, true, false])),
     }
 }
 
@@ -573,6 +620,7 @@ pub fn mutate(
     dry_run: bool,
     force: bool,
 ) -> Result<PkView> {
+    let mutation = PkMutation::from_verb(verb)?;
     let channel = open_pk(client, true)?;
     let ids = resolve_ids(client, &channel, specs)?;
     if ids.is_empty() {
@@ -581,13 +629,13 @@ pub fn mutate(
 
     // SIMULATE to build the plan (separate single-use transaction).
     let sim_tx = new_tx(client, &channel)?;
-    let (m, args) = method_for(verb, TF_SIMULATE, &ids);
+    let (m, args) = method_for(mutation, TF_SIMULATE, &ids);
     let sim = client.dbus_call_collect(&channel, &sim_tx, TX_IFACE, m, args)?;
     check_stream(&sim)?;
     let plan = plan_from(&sim);
 
     if dry_run {
-        return Ok(plan_view(verb, host, specs, &plan, true));
+        return Ok(plan_view(mutation, host, specs, &plan, true));
     }
     crate::safety::check_removal_plan(&plan.remove_names, force)?;
 
@@ -595,12 +643,12 @@ pub fn mutate(
     let audit = crate::audit::AuditContext::new(
         &crate::audit::actor(),
         host,
-        verb,
+        mutation.verb(),
         &specs.join(","),
         &crate::audit::correlation_id(),
     );
     sink.write(&audit.record(crate::audit::Outcome::Attempt));
-    let (m, args) = method_for(verb, TF_NONE, &ids);
+    let (m, args) = method_for(mutation, TF_NONE, &ids);
     let exec_tx = new_tx(client, &channel)?;
     let exec = client
         .dbus_call_collect(&channel, &exec_tx, TX_IFACE, m, args)
@@ -610,13 +658,20 @@ pub fn mutate(
         Err(e) => sink.write(&audit.record(crate::audit::Outcome::Error(e.to_string()))),
     }
     exec?;
-    Ok(plan_view(verb, host, specs, &plan, false))
+    Ok(plan_view(mutation, host, specs, &plan, false))
 }
 
 /// Build a [`PkView`] for a plan (dry-run preview or executed mutation),
 /// schema-compatible with the dnf5daemon backend's plan payload but with a
 /// `null` `install_size_total` and a `"backend":"packagekit"` marker.
-fn plan_view(verb: &str, host: &str, specs: &[String], plan: &PkPlan, dry_run: bool) -> PkView {
+fn plan_view(
+    mutation: PkMutation,
+    host: &str,
+    specs: &[String],
+    plan: &PkPlan,
+    dry_run: bool,
+) -> PkView {
+    let verb = mutation.verb();
     let kind = if dry_run {
         "PackagePlan"
     } else {
@@ -677,12 +732,12 @@ mod tests {
     #[test]
     fn parses_package_signal() {
         let args = vec![
-            json!(8),
+            json!(INFO_INSTALLING),
             json!("htop;3.4.1-3.fc44;x86_64;fedora"),
             json!("Interactive process viewer"),
         ];
         let p = PkPackage::from_signal(&args).unwrap();
-        assert_eq!(p.info, 8);
+        assert_eq!(p.info, INFO_INSTALLING);
         assert_eq!(p.name, "htop");
         assert_eq!(p.version, "3.4.1-3.fc44");
         assert_eq!(p.arch, "x86_64");
@@ -694,7 +749,7 @@ mod tests {
     #[test]
     fn malformed_package_signal_is_none() {
         assert!(PkPackage::from_signal(&[]).is_none());
-        assert!(PkPackage::from_signal(&[json!(8)]).is_none());
+        assert!(PkPackage::from_signal(&[json!(INFO_INSTALLING)]).is_none());
     }
 
     #[test]
@@ -758,15 +813,27 @@ mod tests {
         let signals = vec![
             (
                 "Package".to_string(),
-                vec![json!(8), json!("nginx;1;x86_64;fedora"), json!("")],
+                vec![
+                    json!(INFO_INSTALLING),
+                    json!("nginx;1;x86_64;fedora"),
+                    json!(""),
+                ],
             ),
             (
                 "Package".to_string(),
-                vec![json!(9), json!("htop;1;x86_64;installed"), json!("")],
+                vec![
+                    json!(INFO_REMOVING),
+                    json!("htop;1;x86_64;installed"),
+                    json!(""),
+                ],
             ),
             (
                 "Package".to_string(),
-                vec![json!(7), json!("bash;2;x86_64;updates"), json!("")],
+                vec![
+                    json!(INFO_UPDATING),
+                    json!("bash;2;x86_64;updates"),
+                    json!(""),
+                ],
             ),
             ("Finished".to_string(), vec![json!(1), json!(20)]),
         ];
@@ -779,11 +846,59 @@ mod tests {
     }
 
     #[test]
+    fn plan_action_maps_known_packagekit_info_values() {
+        assert_eq!(
+            PkPlanAction::from_info(INFO_INSTALLING),
+            Some(PkPlanAction::Install)
+        );
+        assert_eq!(
+            PkPlanAction::from_info(INFO_REMOVING),
+            Some(PkPlanAction::Remove)
+        );
+        assert_eq!(
+            PkPlanAction::from_info(INFO_OBSOLETING),
+            Some(PkPlanAction::Remove)
+        );
+        assert_eq!(
+            PkPlanAction::from_info(INFO_UPDATING),
+            Some(PkPlanAction::Upgrade)
+        );
+        assert_eq!(
+            PkPlanAction::from_info(INFO_DOWNGRADING),
+            Some(PkPlanAction::Downgrade)
+        );
+        assert_eq!(PkPlanAction::from_info(999), None);
+    }
+
+    #[test]
+    fn mutation_from_verb_rejects_unknown_verbs() {
+        assert_eq!(
+            PkMutation::from_verb("install").unwrap(),
+            PkMutation::Install
+        );
+        assert_eq!(PkMutation::from_verb("remove").unwrap(), PkMutation::Remove);
+        assert_eq!(
+            PkMutation::from_verb("upgrade").unwrap(),
+            PkMutation::Upgrade
+        );
+        assert!(matches!(
+            PkMutation::from_verb("reinstall"),
+            Err(FezError::Usage(_))
+        ));
+    }
+
+    #[test]
     fn method_for_maps_verbs() {
         let ids = vec!["nginx;1;x86_64;fedora".to_string()];
-        assert_eq!(method_for("install", TF_NONE, &ids).0, "InstallPackages");
-        assert_eq!(method_for("upgrade", TF_NONE, &ids).0, "UpdatePackages");
-        let (m, args) = method_for("remove", TF_SIMULATE, &ids);
+        assert_eq!(
+            method_for(PkMutation::Install, TF_NONE, &ids).0,
+            "InstallPackages"
+        );
+        assert_eq!(
+            method_for(PkMutation::Upgrade, TF_NONE, &ids).0,
+            "UpdatePackages"
+        );
+        let (m, args) = method_for(PkMutation::Remove, TF_SIMULATE, &ids);
         assert_eq!(m, "RemovePackages");
         // RemovePackages carries (flags, ids, allow_deps, autoremove).
         assert_eq!(args.as_array().unwrap().len(), 4);
@@ -798,7 +913,13 @@ mod tests {
             downgrade: vec![],
             remove_names: vec![],
         };
-        let view = plan_view("install", "host", &["nginx".to_string()], &plan, true);
+        let view = plan_view(
+            PkMutation::Install,
+            "host",
+            &["nginx".to_string()],
+            &plan,
+            true,
+        );
         assert_eq!(view.kind, "PackagePlan");
         assert_eq!(view.data["backend"], json!("packagekit"));
         assert_eq!(view.data["install_size_total"], Value::Null);

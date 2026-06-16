@@ -618,7 +618,7 @@ fn pk_emit(out: &mut impl Write, channel: &str, method: &str) {
                 channel,
                 "Package",
                 json!([
-                    7,
+                    11,
                     "htop;3.4.2-1.fc44;x86_64;updates",
                     "Interactive process viewer"
                 ]),
@@ -662,14 +662,14 @@ fn pk_emit(out: &mut impl Write, channel: &str, method: &str) {
                 out,
                 channel,
                 "Package",
-                json!([8, nginx, "High performance web server"]),
+                json!([12, nginx, "High performance web server"]),
             );
             send_signal(
                 out,
                 channel,
                 "Package",
                 json!([
-                    8,
+                    12,
                     "nginx-core;1.27.0-1.fc44;x86_64;fedora",
                     "nginx core files"
                 ]),
@@ -681,7 +681,7 @@ fn pk_emit(out: &mut impl Write, channel: &str, method: &str) {
                 channel,
                 "Package",
                 json!([
-                    9,
+                    13,
                     "htop;3.4.1-3.fc44;x86_64;installed",
                     "Interactive process viewer"
                 ]),
@@ -692,7 +692,7 @@ fn pk_emit(out: &mut impl Write, channel: &str, method: &str) {
                     channel,
                     "Package",
                     json!([
-                        9,
+                        13,
                         "systemd;255-1.fc44;x86_64;installed",
                         "System and Service Manager"
                     ]),
