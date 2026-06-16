@@ -620,6 +620,80 @@ struct ResolvedPlan {
     remove_names: Vec<String>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TransactionAction {
+    Install,
+    Remove,
+    Upgrade,
+    Downgrade,
+    Replaced,
+    ReplacedBy,
+    Erase,
+    Obsoleted,
+}
+
+impl TransactionAction {
+    fn from_str(action: &str) -> Option<Self> {
+        match action {
+            "Install" => Some(Self::Install),
+            "Remove" => Some(Self::Remove),
+            "Upgrade" => Some(Self::Upgrade),
+            "Downgrade" => Some(Self::Downgrade),
+            "Replaced" => Some(Self::Replaced),
+            "ReplacedBy" => Some(Self::ReplacedBy),
+            "Erase" => Some(Self::Erase),
+            "Obsoleted" => Some(Self::Obsoleted),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct TransactionPackage {
+    name: String,
+    evr: String,
+    arch: String,
+    install_size: u64,
+}
+
+impl TransactionPackage {
+    fn from_value(v: &Value) -> Option<Self> {
+        let name = sv(v, "name");
+        let evr = sv(v, "evr");
+        let arch = sv(v, "arch");
+        if name.is_empty() || evr.is_empty() || arch.is_empty() {
+            return None;
+        }
+        Some(Self {
+            name,
+            evr,
+            arch,
+            install_size: sv_u64(v, "install_size"),
+        })
+    }
+
+    fn label(&self) -> String {
+        format!("{}-{}.{}", self.name, self.evr, self.arch)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct TransactionItem {
+    action: TransactionAction,
+    package: TransactionPackage,
+}
+
+impl TransactionItem {
+    fn from_value(item: &Value) -> Option<Self> {
+        let action = item
+            .get(1)
+            .and_then(Value::as_str)
+            .and_then(TransactionAction::from_str)?;
+        let package = item.get(4).and_then(TransactionPackage::from_value)?;
+        Some(Self { action, package })
+    }
+}
+
 impl ResolvedPlan {
     /// The plan rendered as the `fez/v1` data payload.
     fn data(&self) -> Value {
@@ -639,16 +713,6 @@ impl ResolvedPlan {
     }
 }
 
-/// Format a package object's NEVRA label (`name-evr.arch`).
-fn nevra(object: &Value) -> String {
-    format!(
-        "{}-{}.{}",
-        sv(object, "name"),
-        sv(object, "evr"),
-        sv(object, "arch")
-    )
-}
-
 /// Parse a `Goal.resolve` `transaction_items` array into a [`ResolvedPlan`].
 ///
 /// Each item is a 5-element array `[object_type, action, reason, attrs, object]`;
@@ -666,22 +730,23 @@ fn parse_plan(items: &Value) -> ResolvedPlan {
     let Some(arr) = items.as_array() else {
         return plan;
     };
-    for item in arr {
-        let action = item.get(1).and_then(Value::as_str).unwrap_or("");
-        let object = item.get(4).cloned().unwrap_or(Value::Null);
-        let label = nevra(&object);
-        match action {
-            "Install" => {
-                plan.install_size_total += sv_u64(&object, "install_size");
+    for item in arr.iter().filter_map(TransactionItem::from_value) {
+        let label = item.package.label();
+        match item.action {
+            TransactionAction::Install => {
+                plan.install_size_total += item.package.install_size;
                 plan.install.push(label);
             }
-            "Upgrade" => plan.upgrade.push(label),
-            "Downgrade" => plan.downgrade.push(label),
-            "Remove" | "Replaced" | "Obsoleted" | "Erase" => {
-                plan.remove_names.push(sv(&object, "name"));
+            TransactionAction::Remove
+            | TransactionAction::Replaced
+            | TransactionAction::Erase
+            | TransactionAction::Obsoleted => {
+                plan.remove_names.push(item.package.name);
                 plan.remove.push(label);
             }
-            _ => {}
+            TransactionAction::Upgrade => plan.upgrade.push(label),
+            TransactionAction::Downgrade => plan.downgrade.push(label),
+            TransactionAction::ReplacedBy => {}
         }
     }
     plan
@@ -950,6 +1015,42 @@ mod tests {
     }
 
     #[test]
+    fn transaction_item_parses_install_action_and_package() {
+        let item = json!(["package", "Install", "user", {}, {
+            "name": {"t":"s","v":"nginx"},
+            "evr": {"t":"s","v":"1.26.2-1.fc41"},
+            "arch": {"t":"s","v":"x86_64"},
+            "install_size": {"t":"t","v":2048}
+        }]);
+
+        let parsed = TransactionItem::from_value(&item).expect("valid item");
+
+        assert_eq!(parsed.action, TransactionAction::Install);
+        assert_eq!(parsed.package.name, "nginx");
+        assert_eq!(parsed.package.label(), "nginx-1.26.2-1.fc41.x86_64");
+        assert_eq!(parsed.package.install_size, 2048);
+    }
+
+    #[test]
+    fn transaction_item_rejects_unknown_or_malformed_items() {
+        assert!(
+            TransactionItem::from_value(&json!(["package", "Unknown", "user", {}, {}])).is_none()
+        );
+        assert!(TransactionItem::from_value(&json!({"not":"an array"})).is_none());
+    }
+
+    #[test]
+    fn transaction_item_rejects_malformed_package_object() {
+        assert!(
+            TransactionItem::from_value(&json!(["package", "Install", "user", {}, null])).is_none()
+        );
+        assert!(
+            TransactionItem::from_value(&json!(["package", "Install", "user", {}, {}])).is_none()
+        );
+        assert!(TransactionItem::from_value(&json!(["package", "Install", "user", {}])).is_none());
+    }
+
+    #[test]
     fn parse_plan_buckets_by_action() {
         let items = json!([
             item("Install", "htop", 100),
@@ -972,6 +1073,45 @@ mod tests {
             item("Replaced", "oldpkg", 50)
         ]);
         assert_eq!(parse_plan(&items).remove_names, vec!["oldpkg".to_string()]);
+    }
+
+    #[test]
+    fn parse_plan_counts_legacy_removal_actions_as_removed() {
+        let items = json!([
+            item("Obsoleted", "oldpkg", 50),
+            item("Erase", "gonepkg", 25)
+        ]);
+
+        let plan = parse_plan(&items);
+
+        assert_eq!(plan.remove, vec!["oldpkg-1-1.x86_64", "gonepkg-1-1.x86_64"]);
+        assert_eq!(
+            plan.remove_names,
+            vec!["oldpkg".to_string(), "gonepkg".to_string()]
+        );
+    }
+
+    #[test]
+    fn parse_plan_ignores_replaced_by_to_preserve_existing_contract() {
+        let items = json!([item("ReplacedBy", "newpkg", 50)]);
+
+        let plan = parse_plan(&items);
+
+        assert!(plan.upgrade.is_empty());
+        assert!(plan.remove.is_empty());
+    }
+
+    #[test]
+    fn parse_plan_drops_malformed_known_action_items() {
+        let items = json!([
+            ["package", "Remove", "user", {}, {}],
+            ["package", "Obsoleted", "user", {}, null]
+        ]);
+
+        let plan = parse_plan(&items);
+
+        assert!(plan.remove.is_empty());
+        assert!(plan.remove_names.is_empty());
     }
 
     #[test]
