@@ -113,6 +113,53 @@ impl PkPackage {
     fn repo(&self) -> &str {
         &self.data
     }
+
+    /// One positional row aligned to [`PK_COLUMNS`]; `install_size` is `null`.
+    fn row(&self) -> Value {
+        json!([
+            self.name,
+            self.version,
+            self.arch,
+            self.repo(),
+            Value::Null,
+            self.summary,
+        ])
+    }
+
+    /// Record-shaped package info payload without the backend marker.
+    fn object(&self) -> Value {
+        json!({
+            "name": self.name,
+            "evr": self.version,
+            "arch": self.arch,
+            "repo_id": self.repo(),
+            "install_size": Value::Null,
+            "summary": self.summary,
+        })
+    }
+}
+
+/// One repository parsed from a PackageKit `RepoDetail(id, name, enabled)` signal.
+struct PkRepo {
+    id: String,
+    name: String,
+    enabled: bool,
+}
+
+impl PkRepo {
+    /// Parse a `RepoDetail` signal's `[id, name, enabled]` args.
+    fn from_signal(args: &[Value]) -> Option<Self> {
+        Some(Self {
+            id: args.first()?.as_str()?.to_string(),
+            name: args.get(1)?.as_str()?.to_string(),
+            enabled: args.get(2)?.as_bool()?,
+        })
+    }
+
+    /// One positional row aligned to [`PK_REPO_COLUMNS`].
+    fn row(&self) -> Value {
+        json!([self.id, self.name, self.enabled])
+    }
 }
 
 /// Pull the `Package` rows out of a collected signal stream, in arrival order.
@@ -212,11 +259,6 @@ fn pk_hints() -> Option<Value> {
     }))
 }
 
-/// One positional row aligned to [`PK_COLUMNS`]; `install_size` is `null`.
-fn row(p: &PkPackage) -> Value {
-    json!([p.name, p.version, p.arch, p.repo(), Value::Null, p.summary,])
-}
-
 /// Human-readable NAME/VERSION/ARCH/REPO table for list output.
 fn human_table(pkgs: &[&PkPackage]) -> String {
     let mut s = format!(
@@ -271,7 +313,7 @@ pub fn list(
         None => total,
     };
     let page = &filtered[start..end];
-    let rows: Vec<Value> = page.iter().map(|p| row(p)).collect();
+    let rows: Vec<Value> = page.iter().map(|p| p.row()).collect();
     let mut data = crate::envelope::table_data(PK_COLUMNS, rows);
     data["scope"] = json!(if available { "available" } else { "installed" });
     data["repos"] = json!(repos);
@@ -322,15 +364,8 @@ pub fn info(client: &mut BridgeClient, spec: &str) -> Result<PkView> {
     let p = pkgs
         .first()
         .ok_or_else(|| FezError::NotFound(spec.to_string()))?;
-    let data = json!({
-        "name": p.name,
-        "evr": p.version,
-        "arch": p.arch,
-        "repo_id": p.repo(),
-        "install_size": Value::Null,
-        "summary": p.summary,
-        "backend": "packagekit",
-    });
+    let mut data = p.object();
+    data["backend"] = json!("packagekit");
     let human = format!(
         "Name        : {}\nVersion     : {}\nArch        : {}\nRepo        : {}\nInstall size: (unavailable)\nSummary     : {}\n",
         p.name,
@@ -365,7 +400,7 @@ pub fn search(client: &mut BridgeClient, pattern: &str) -> Result<PkView> {
     check_stream(&signals)?;
     let pkgs = packages_from(&signals);
     let refs: Vec<&PkPackage> = pkgs.iter().collect();
-    let rows: Vec<Value> = refs.iter().map(|p| row(p)).collect();
+    let rows: Vec<Value> = refs.iter().map(|p| p.row()).collect();
     let mut data = crate::envelope::table_data(PK_COLUMNS, rows);
     data["pattern"] = json!(pattern);
     data["backend"] = json!("packagekit");
@@ -394,7 +429,7 @@ pub fn check_update(client: &mut BridgeClient) -> Result<PkView> {
     check_stream(&signals)?;
     let pkgs = packages_from(&signals);
     let refs: Vec<&PkPackage> = pkgs.iter().collect();
-    let rows: Vec<Value> = refs.iter().map(|p| row(p)).collect();
+    let rows: Vec<Value> = refs.iter().map(|p| p.row()).collect();
     let mut data = crate::envelope::table_data(PK_COLUMNS, rows);
     data["backend"] = json!("packagekit");
     let mut human = format!("{:<24} {:<20} {}\n", "NAME", "VERSION", "REPO");
@@ -423,20 +458,22 @@ pub fn repolist(client: &mut BridgeClient, accepts: impl Fn(bool) -> bool) -> Re
     let signals =
         client.dbus_call_collect(&channel, &tx, TX_IFACE, "GetRepoList", json!([FILTER_NONE]))?;
     check_stream(&signals)?;
+    let repos: Vec<PkRepo> = signals
+        .iter()
+        .filter(|(member, _)| member == "RepoDetail")
+        .filter_map(|(_, args)| PkRepo::from_signal(args))
+        .collect();
     let mut rows = Vec::new();
     let mut human = format!("{:<24} {:<10} {}\n", "REPO ID", "ENABLED", "NAME");
-    for (member, args) in &signals {
-        if member != "RepoDetail" {
+    for repo in &repos {
+        if !accepts(repo.enabled) {
             continue;
         }
-        let id = args.first().and_then(Value::as_str).unwrap_or("");
-        let name = args.get(1).and_then(Value::as_str).unwrap_or("");
-        let enabled = args.get(2).and_then(Value::as_bool).unwrap_or(false);
-        if !accepts(enabled) {
-            continue;
-        }
-        human.push_str(&format!("{id:<24} {enabled:<10} {name}\n"));
-        rows.push(json!([id, name, enabled]));
+        human.push_str(&format!(
+            "{:<24} {:<10} {}\n",
+            repo.id, repo.enabled, repo.name
+        ));
+        rows.push(repo.row());
     }
     let mut data = crate::envelope::table_data(PK_REPO_COLUMNS, rows);
     data["backend"] = json!("packagekit");
@@ -658,6 +695,27 @@ mod tests {
     fn malformed_package_signal_is_none() {
         assert!(PkPackage::from_signal(&[]).is_none());
         assert!(PkPackage::from_signal(&[json!(8)]).is_none());
+    }
+
+    #[test]
+    fn pk_repo_parses_repo_detail_signal_args() {
+        let args = vec![json!("updates"), json!("Fedora Updates"), json!(true)];
+
+        let repo = PkRepo::from_signal(&args).expect("valid RepoDetail args");
+
+        assert_eq!(repo.id, "updates");
+        assert_eq!(repo.name, "Fedora Updates");
+        assert!(repo.enabled);
+        assert_eq!(repo.row(), json!(["updates", "Fedora Updates", true]));
+    }
+
+    #[test]
+    fn pk_repo_rejects_malformed_repo_detail_signal_args() {
+        assert!(PkRepo::from_signal(&[json!("updates"), json!("Fedora Updates")]).is_none());
+        assert!(
+            PkRepo::from_signal(&[json!("updates"), json!("Fedora Updates"), json!("true")])
+                .is_none()
+        );
     }
 
     #[test]

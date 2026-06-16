@@ -272,38 +272,59 @@ fn sv_bool(v: &Value, key: &str) -> bool {
         .unwrap_or(false)
 }
 
-/// A single package row in list/info/search/check-update output.
-fn package_json(p: &Value) -> Value {
-    json!({
-        "name": sv(p, "name"),
-        "evr": sv(p, "evr"),
-        "arch": sv(p, "arch"),
-        "repo_id": sv(p, "repo_id"),
-        "install_size": sv_u64(p, "install_size"),
-        "summary": sv(p, "summary"),
-    })
+/// A package record parsed from dnf5daemon's variant-wrapped package object.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct PackageRecord {
+    name: String,
+    evr: String,
+    arch: String,
+    repo_id: String,
+    install_size: u64,
+    summary: String,
+}
+
+impl PackageRecord {
+    fn from_value(v: &Value) -> Self {
+        Self {
+            name: sv(v, "name"),
+            evr: sv(v, "evr"),
+            arch: sv(v, "arch"),
+            repo_id: sv(v, "repo_id"),
+            install_size: sv_u64(v, "install_size"),
+            summary: sv(v, "summary"),
+        }
+    }
+
+    fn object(&self) -> Value {
+        json!({
+            "name": self.name,
+            "evr": self.evr,
+            "arch": self.arch,
+            "repo_id": self.repo_id,
+            "install_size": self.install_size,
+            "summary": self.summary,
+        })
+    }
+
+    fn row(&self) -> Value {
+        json!([
+            self.name,
+            self.evr,
+            self.arch,
+            self.repo_id,
+            self.install_size,
+            self.summary,
+        ])
+    }
+
+    #[cfg(test)]
+    fn nevra(&self) -> String {
+        format!("{}-{}.{}", self.name, self.evr, self.arch)
+    }
 }
 
 /// Column order for the columnar `PackageList`/`PackageSearch` payloads.
-///
-/// Stated once here so the header and each [`package_row`] stay aligned; the
-/// record-shaped [`package_json`] (used by single-package `PackageInfo`) keeps
-/// the same field names.
 const PKG_COLUMNS: &[&str] = &["name", "evr", "arch", "repo_id", "install_size", "summary"];
-
-/// Project one raw package into a positional row aligned to [`PKG_COLUMNS`].
-///
-/// `install_size` stays an integer; every other cell is a string.
-fn package_row(p: &Value) -> Value {
-    json!([
-        sv(p, "name"),
-        sv(p, "evr"),
-        sv(p, "arch"),
-        sv(p, "repo_id"),
-        sv_u64(p, "install_size"),
-        sv(p, "summary"),
-    ])
-}
 
 /// Connect, open an unprivileged session, dispatch the read, and always close.
 ///
@@ -379,14 +400,14 @@ fn read_via_packagekit(
 }
 
 /// Call `Rpm.list` on the session with the given scope/patterns and return the
-/// raw package array.
+/// parsed package array.
 fn rpm_list(
     client: &mut BridgeClient,
     channel: &str,
     session: &str,
     scope: &str,
     patterns: &[String],
-) -> Result<Vec<Value>> {
+) -> Result<Vec<PackageRecord>> {
     let out = client.dbus_call(
         channel,
         session,
@@ -401,7 +422,7 @@ fn rpm_list(
     Ok(out
         .get(0)
         .and_then(Value::as_array)
-        .cloned()
+        .map(|items| items.iter().map(PackageRecord::from_value).collect())
         .unwrap_or_default())
 }
 
@@ -417,21 +438,15 @@ fn list(
     } else {
         "installed"
     };
-    let raw = rpm_list(client, channel, session, scope, &[])?;
+    let packages = rpm_list(client, channel, session, scope, &[])?;
     // dnf5daemon's Rpm.list has no server-side repo filter (only install/upgrade
     // accept `repo_ids`, for resolution), so we filter client-side on the exact
     // `repo_id`. Multiple --repo flags union: a row is kept if its repo id is in
     // the requested set. An empty set means no filter (issue #59).
-    let filtered: Vec<&Value> = raw
+    let filtered: Vec<&PackageRecord> = packages
         .iter()
-        .filter(|p| {
-            filters.repos.is_empty() || filters.repos.iter().any(|r| r == &sv(p, "repo_id"))
-        })
-        .filter(|p| {
-            filters
-                .name
-                .is_none_or(|pattern| sv(p, "name").contains(pattern))
-        })
+        .filter(|p| filters.repos.is_empty() || filters.repos.iter().any(|r| r == &p.repo_id))
+        .filter(|p| filters.name.is_none_or(|pattern| p.name.contains(pattern)))
         .collect();
     let total = filtered.len();
     let start = filters.offset.min(total);
@@ -447,13 +462,10 @@ fn list(
     for p in page {
         human.push_str(&format!(
             "{:<24} {:<20} {:<10} {}\n",
-            sv(p, "name"),
-            sv(p, "evr"),
-            sv(p, "arch"),
-            sv(p, "repo_id"),
+            p.name, p.evr, p.arch, p.repo_id,
         ));
     }
-    let rows: Vec<Value> = page.iter().map(|p| package_row(p)).collect();
+    let rows: Vec<Value> = page.iter().map(|p| p.row()).collect();
     let mut data = crate::envelope::table_data(PKG_COLUMNS, rows);
     data["scope"] = json!(scope);
     // Echo the requested repo filter so callers can confirm what was applied.
@@ -482,20 +494,20 @@ fn info(
     host: String,
     spec: &str,
 ) -> Result<View> {
-    let raw = rpm_list(client, channel, session, "all", &[spec.to_string()])?;
-    let first = raw
+    let packages = rpm_list(client, channel, session, "all", &[spec.to_string()])?;
+    let first = packages
         .first()
         .ok_or_else(|| FezError::NotFound(spec.to_string()))?;
-    let mut pkg = package_json(first);
+    let mut pkg = first.object();
     pkg["backend"] = json!("dnf5daemon");
     let human = format!(
         "Name        : {}\nVersion     : {}\nArch        : {}\nRepo        : {}\nInstall size: {}\nSummary     : {}\n",
-        sv(first, "name"),
-        sv(first, "evr"),
-        sv(first, "arch"),
-        sv(first, "repo_id"),
-        sv_u64(first, "install_size"),
-        sv(first, "summary"),
+        first.name,
+        first.evr,
+        first.arch,
+        first.repo_id,
+        first.install_size,
+        first.summary,
     );
     Ok(View::new("PackageInfo", host, pkg, human))
 }
@@ -508,12 +520,12 @@ fn search(
     pattern: &str,
 ) -> Result<View> {
     let glob = format!("*{pattern}*");
-    let raw = rpm_list(client, channel, session, "available", &[glob])?;
+    let packages = rpm_list(client, channel, session, "available", &[glob])?;
     let mut human = String::new();
-    for p in &raw {
-        human.push_str(&format!("{} - {}\n", sv(p, "name"), sv(p, "summary")));
+    for p in &packages {
+        human.push_str(&format!("{} - {}\n", p.name, p.summary));
     }
-    let rows: Vec<Value> = raw.iter().map(package_row).collect();
+    let rows: Vec<Value> = packages.iter().map(PackageRecord::row).collect();
     let mut data = crate::envelope::table_data(PKG_COLUMNS, rows);
     data["pattern"] = json!(pattern);
     data["backend"] = json!("dnf5daemon");
@@ -526,17 +538,12 @@ fn check_update(
     session: &str,
     host: String,
 ) -> Result<View> {
-    let raw = rpm_list(client, channel, session, "upgrades", &[])?;
+    let packages = rpm_list(client, channel, session, "upgrades", &[])?;
     let mut human = format!("{:<24} {:<20} {}\n", "NAME", "VERSION", "REPO");
-    for p in &raw {
-        human.push_str(&format!(
-            "{:<24} {:<20} {}\n",
-            sv(p, "name"),
-            sv(p, "evr"),
-            sv(p, "repo_id"),
-        ));
+    for p in &packages {
+        human.push_str(&format!("{:<24} {:<20} {}\n", p.name, p.evr, p.repo_id,));
     }
-    let rows: Vec<Value> = raw.iter().map(package_row).collect();
+    let rows: Vec<Value> = packages.iter().map(PackageRecord::row).collect();
     let mut data = crate::envelope::table_data(PKG_COLUMNS, rows);
     data["backend"] = json!("dnf5daemon");
     Ok(View::new("PackageUpdates", host, data, human))
@@ -544,6 +551,27 @@ fn check_update(
 
 /// Column order for the columnar `RepoList` payload (`enabled` stays a bool).
 const REPO_COLUMNS: &[&str] = &["id", "name", "enabled"];
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct RepoRecord {
+    id: String,
+    name: String,
+    enabled: bool,
+}
+
+impl RepoRecord {
+    fn from_value(v: &Value) -> Self {
+        Self {
+            id: sv(v, "id"),
+            name: sv(v, "name"),
+            enabled: sv_bool(v, "enabled"),
+        }
+    }
+
+    fn row(&self) -> Value {
+        json!([self.id, self.name, self.enabled])
+    }
+}
 
 fn repolist(
     client: &mut BridgeClient,
@@ -562,22 +590,19 @@ fn repolist(
             ("repo_attrs", "as", json!(["id", "name", "enabled"])),
         ])]),
     )?;
-    let raw = out
+    let raw: Vec<RepoRecord> = out
         .get(0)
         .and_then(Value::as_array)
-        .cloned()
+        .map(|items| items.iter().map(RepoRecord::from_value).collect())
         .unwrap_or_default();
     let mut rows = Vec::new();
     let mut human = format!("{:<24} {:<10} {}\n", "REPO ID", "ENABLED", "NAME");
     for r in &raw {
-        let enabled = sv_bool(r, "enabled");
-        if !filter.accepts(enabled) {
+        if !filter.accepts(r.enabled) {
             continue;
         }
-        let id = sv(r, "id");
-        let name = sv(r, "name");
-        human.push_str(&format!("{id:<24} {enabled:<10} {name}\n"));
-        rows.push(json!([id, name, enabled]));
+        human.push_str(&format!("{:<24} {:<10} {}\n", r.id, r.enabled, r.name));
+        rows.push(r.row());
     }
     let mut data = crate::envelope::table_data(REPO_COLUMNS, rows);
     data["backend"] = json!("dnf5daemon");
@@ -814,6 +839,114 @@ mod tests {
                 "patterns": {"t": "as", "v": ["htop"]},
             })
         );
+    }
+
+    #[test]
+    fn package_record_parses_variant_wrapped_fields() {
+        let raw = json!({
+            "name": {"t":"s","v":"bash"},
+            "evr": {"t":"s","v":"5.2.26-3.fc41"},
+            "arch": {"t":"s","v":"x86_64"},
+            "repo_id": {"t":"s","v":"fedora"},
+            "install_size": {"t":"t","v":12345},
+            "summary": {"t":"s","v":"The GNU Bourne Again shell"}
+        });
+
+        let record = PackageRecord::from_value(&raw);
+
+        assert_eq!(record.name, "bash");
+        assert_eq!(record.evr, "5.2.26-3.fc41");
+        assert_eq!(record.arch, "x86_64");
+        assert_eq!(record.repo_id, "fedora");
+        assert_eq!(record.install_size, 12345);
+        assert_eq!(record.summary, "The GNU Bourne Again shell");
+        assert_eq!(
+            record.row(),
+            json!([
+                "bash",
+                "5.2.26-3.fc41",
+                "x86_64",
+                "fedora",
+                12345,
+                "The GNU Bourne Again shell"
+            ])
+        );
+        assert_eq!(
+            record.object(),
+            json!({
+                "name": "bash",
+                "evr": "5.2.26-3.fc41",
+                "arch": "x86_64",
+                "repo_id": "fedora",
+                "install_size": 12345,
+                "summary": "The GNU Bourne Again shell"
+            })
+        );
+    }
+
+    #[test]
+    fn package_record_parses_flat_and_string_size_fields() {
+        let raw = json!({
+            "name": "vim",
+            "evr": "9.1.0-1.fc41",
+            "arch": "x86_64",
+            "repo_id": "updates",
+            "install_size": "456",
+            "summary": "Editor"
+        });
+
+        let record = PackageRecord::from_value(&raw);
+
+        assert_eq!(record.install_size, 456);
+        assert_eq!(record.nevra(), "vim-9.1.0-1.fc41.x86_64");
+    }
+
+    #[test]
+    fn repo_record_parses_variant_wrapped_fields() {
+        let raw = json!({
+            "id": {"t":"s","v":"fedora"},
+            "name": {"t":"s","v":"Fedora Everything"},
+            "enabled": {"t":"b","v":true}
+        });
+
+        let repo = RepoRecord::from_value(&raw);
+
+        assert_eq!(repo.id, "fedora");
+        assert_eq!(repo.name, "Fedora Everything");
+        assert!(repo.enabled);
+        assert_eq!(repo.row(), json!(["fedora", "Fedora Everything", true]));
+    }
+
+    #[test]
+    fn package_record_filters_use_typed_fields() {
+        let records = [
+            PackageRecord {
+                name: "bash".into(),
+                evr: "5.2.26-3.fc41".into(),
+                arch: "x86_64".into(),
+                repo_id: "fedora".into(),
+                install_size: 1,
+                summary: "Shell".into(),
+            },
+            PackageRecord {
+                name: "vim".into(),
+                evr: "9.1.0-1.fc41".into(),
+                arch: "x86_64".into(),
+                repo_id: "updates".into(),
+                install_size: 2,
+                summary: "Editor".into(),
+            },
+        ];
+
+        let repos = ["updates".to_string()];
+        let filtered: Vec<&PackageRecord> = records
+            .iter()
+            .filter(|p| repos.is_empty() || repos.iter().any(|r| r == &p.repo_id))
+            .filter(|p| Some("vi").is_none_or(|pattern| p.name.contains(pattern)))
+            .collect();
+
+        assert_eq!(filtered.len(), 1);
+        assert_eq!(filtered[0].name, "vim");
     }
 
     #[test]
