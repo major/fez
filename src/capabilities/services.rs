@@ -2,7 +2,9 @@ use crate::capabilities::{render, View};
 use crate::cli::{Cli, ServicesAction};
 use crate::error::{FezError, Result};
 use crate::protocol::client::BridgeClient;
+use crate::protocol::variant::Variant;
 use crate::transport;
+use serde::Deserialize;
 use serde_json::{json, Value};
 use std::borrow::Cow;
 use std::io::IsTerminal;
@@ -433,15 +435,44 @@ fn reload_daemon(client: &mut BridgeClient, channel: &str) -> Result<()> {
     Ok(())
 }
 
-fn s(v: &Value, key: &str) -> String {
-    let field = v.get(key);
-    // cockpit-bridge wraps a{sv} dict values as D-Bus variants
-    // ({"t":"s","v":"active"}); journalctl/ListUnits fields are flat strings.
-    // Accept both: prefer the variant's "v" payload, else the value itself.
-    field
-        .and_then(|f| f.get("v").unwrap_or(f).as_str())
-        .unwrap_or("")
-        .to_string()
+/// systemd `Unit` interface properties read via `Properties.GetAll`.
+///
+/// cockpit delivers this `a{sv}` dict with each value wrapped as a D-Bus
+/// variant (`{"t":"s","v":"active"}`); [`Variant`] unwraps it transparently.
+/// Every field is `#[serde(default)]` so an absent property decodes to the
+/// empty string, matching the previous `s()` accessor's tolerance.
+#[derive(Debug, Default, Deserialize)]
+struct UnitProps {
+    #[serde(rename = "Id", default)]
+    id: Variant<String>,
+    #[serde(rename = "Description", default)]
+    description: Variant<String>,
+    #[serde(rename = "LoadState", default)]
+    load_state: Variant<String>,
+    #[serde(rename = "ActiveState", default)]
+    active_state: Variant<String>,
+    #[serde(rename = "SubState", default)]
+    sub_state: Variant<String>,
+    #[serde(rename = "UnitFileState", default)]
+    unit_file_state: Variant<String>,
+}
+
+/// A single journald entry from `journalctl --output=json`.
+///
+/// journald fields arrive as flat scalars (no variant envelope); [`Variant`]
+/// passes them through unchanged. Defaults keep partial entries decodable.
+#[derive(Debug, Default, Deserialize)]
+struct JournalLine {
+    #[serde(rename = "__REALTIME_TIMESTAMP", default)]
+    timestamp: Variant<String>,
+    #[serde(rename = "PRIORITY", default)]
+    priority: Variant<String>,
+    #[serde(rename = "SYSLOG_IDENTIFIER", default)]
+    identifier: Variant<String>,
+    #[serde(rename = "MESSAGE", default)]
+    message: Variant<String>,
+    #[serde(rename = "_PID", default)]
+    pid: Variant<String>,
 }
 
 fn protocol_decode_error(message: impl Into<String>) -> FezError {
@@ -561,23 +592,24 @@ fn status(client: &mut BridgeClient, host: String, unit: &str) -> Result<View> {
         Err(e) => return Err(e),
     };
     let out = client.dbus_call(&channel, &path, PROPS_IFACE, "GetAll", json!([UNIT_IFACE]))?;
-    let props = out.get(0).cloned().unwrap_or(Value::Null);
+    let props_val = out.get(0).cloned().unwrap_or_else(|| json!({}));
+    let props: UnitProps = serde_json::from_value(props_val).map_err(FezError::Decode)?;
 
     let data = json!({
-        "id": s(&props, "Id"),
-        "description": s(&props, "Description"),
-        "load_state": s(&props, "LoadState"),
-        "active_state": s(&props, "ActiveState"),
-        "sub_state": s(&props, "SubState"),
-        "unit_file_state": s(&props, "UnitFileState"),
+        "id": props.id.0,
+        "description": props.description.0,
+        "load_state": props.load_state.0,
+        "active_state": props.active_state.0,
+        "sub_state": props.sub_state.0,
+        "unit_file_state": props.unit_file_state.0,
     });
     let human = format!(
         "{} - {}\n  state: {} ({})\n  enabled: {}\n",
-        s(&props, "Id"),
-        s(&props, "Description"),
-        s(&props, "ActiveState"),
-        s(&props, "SubState"),
-        s(&props, "UnitFileState")
+        props.id.0,
+        props.description.0,
+        props.active_state.0,
+        props.sub_state.0,
+        props.unit_file_state.0
     );
     Ok(View::new("ServiceStatus", host, data, human))
 }
@@ -612,14 +644,14 @@ fn logs(
         // stream live; print each parsed line as it arrives.
         client.stream_each(&argv, |chunk| {
             for line in chunk.split(|&b| b == b'\n').filter(|l| !l.is_empty()) {
-                if let Ok(v) = serde_json::from_slice::<Value>(line) {
+                if let Ok(entry) = serde_json::from_slice::<JournalLine>(line) {
                     if as_json {
                         println!(
                             "{}",
-                            serde_json::to_string(&log_entry(&v)).unwrap_or_default()
+                            serde_json::to_string(&log_entry(&entry)).unwrap_or_default()
                         );
                     } else {
-                        println!("{}", log_human_line(&v));
+                        println!("{}", log_human_line(&entry));
                     }
                 }
             }
@@ -631,10 +663,10 @@ fn logs(
     let mut entries = Vec::new();
     let mut human = String::new();
     for line in blob.split(|&b| b == b'\n').filter(|l| !l.is_empty()) {
-        if let Ok(v) = serde_json::from_slice::<Value>(line) {
-            human.push_str(&log_human_line(&v));
+        if let Ok(entry) = serde_json::from_slice::<JournalLine>(line) {
+            human.push_str(&log_human_line(&entry));
             human.push('\n');
-            entries.push(log_entry(&v));
+            entries.push(log_entry(&entry));
         }
     }
     Ok(View::new(
@@ -645,28 +677,26 @@ fn logs(
     ))
 }
 
-fn log_entry(v: &Value) -> Value {
+fn log_entry(entry: &JournalLine) -> Value {
     json!({
-        "timestamp": s(v, "__REALTIME_TIMESTAMP"),
-        "priority": s(v, "PRIORITY"),
-        "identifier": s(v, "SYSLOG_IDENTIFIER"),
-        "message": s(v, "MESSAGE"),
-        "pid": s(v, "_PID"),
+        "timestamp": entry.timestamp.0,
+        "priority": entry.priority.0,
+        "identifier": entry.identifier.0,
+        "message": entry.message.0,
+        "pid": entry.pid.0,
     })
 }
 
-fn log_human_line(v: &Value) -> String {
+fn log_human_line(entry: &JournalLine) -> String {
     format!(
         "{}  {}: {}",
-        s(v, "__REALTIME_TIMESTAMP"),
-        s(v, "SYSLOG_IDENTIFIER"),
-        s(v, "MESSAGE")
+        entry.timestamp.0, entry.identifier.0, entry.message.0
     )
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{get_unit_path, mangle_unit, parse_list_units, s};
+    use super::{get_unit_path, mangle_unit, parse_list_units, JournalLine, UnitProps};
     use crate::error::FezError;
     use serde_json::json;
 
@@ -706,30 +736,34 @@ mod tests {
     }
 
     // Real cockpit-bridge returns a{sv} dicts with each value wrapped as a
-    // D-Bus variant: {"t":"s","v":"active"}. `s()` must unwrap that to "active".
+    // D-Bus variant: {"t":"s","v":"active"}. UnitProps unwraps via Variant<T>.
     #[test]
-    fn s_unwraps_string_variant() {
-        let props = json!({
+    fn unit_props_unwraps_variant_dict() {
+        let props: UnitProps = serde_json::from_value(json!({
+            "Id": {"t": "s", "v": "sshd.service"},
             "ActiveState": {"t": "s", "v": "active"},
             "UnitFileState": {"t": "s", "v": "enabled"},
-        });
-        assert_eq!(s(&props, "ActiveState"), "active");
-        assert_eq!(s(&props, "UnitFileState"), "enabled");
+        }))
+        .unwrap();
+        assert_eq!(props.id.0, "sshd.service");
+        assert_eq!(props.active_state.0, "active");
+        assert_eq!(props.unit_file_state.0, "enabled");
+        // Absent properties default to the empty string, as `s()` did.
+        assert_eq!(props.description.0, "");
     }
 
-    // journalctl JSON and ListUnits positional fields are flat strings, not
-    // variants. `s()` must keep returning them unchanged.
+    // journald JSON fields are flat strings, not variants; Variant<T> passes
+    // them through unchanged and absent fields default to empty.
     #[test]
-    fn s_passes_through_flat_string() {
-        let flat = json!({"MESSAGE": "hello"});
-        assert_eq!(s(&flat, "MESSAGE"), "hello");
-    }
-
-    // Missing keys yield an empty string.
-    #[test]
-    fn s_missing_key_is_empty() {
-        let props = json!({"ActiveState": {"t": "s", "v": "active"}});
-        assert_eq!(s(&props, "Nope"), "");
+    fn journal_line_reads_flat_fields() {
+        let entry: JournalLine = serde_json::from_value(json!({
+            "MESSAGE": "hello",
+            "SYSLOG_IDENTIFIER": "sshd",
+        }))
+        .unwrap();
+        assert_eq!(entry.message.0, "hello");
+        assert_eq!(entry.identifier.0, "sshd");
+        assert_eq!(entry.priority.0, "");
     }
 
     #[test]
