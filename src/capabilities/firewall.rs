@@ -1091,68 +1091,163 @@ fn confirm_hint() -> Value {
     })
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct RuntimeChangeData {
+    operation: String,
+    zone: String,
+    change: String,
+    timeout: Option<u32>,
+}
+
+impl RuntimeChangeData {
+    fn new(operation: &str, zone: &str, change: &str, timeout: Option<u32>) -> Self {
+        Self {
+            operation: operation.to_string(),
+            zone: zone.to_string(),
+            change: change.to_string(),
+            timeout,
+        }
+    }
+
+    fn data(&self) -> Value {
+        let mut data = json!({
+            "operation": self.operation,
+            "zone": self.zone,
+            "change": self.change,
+            "persisted": false,
+        });
+        if let Some(timeout) = self.timeout {
+            data["timeout"] = json!(timeout);
+        }
+        data
+    }
+
+    fn human(&self) -> String {
+        format!(
+            "{} {} in zone {} (runtime only)\n",
+            self.operation, self.change, self.zone
+        )
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct PersistedFirewallOperation {
+    operation: &'static str,
+}
+
+impl PersistedFirewallOperation {
+    fn data(self) -> Value {
+        json!({"operation": self.operation, "persisted": true})
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct PanicChangeData {
+    on: bool,
+}
+
+impl PanicChangeData {
+    fn data(self) -> Value {
+        json!({"operation": "panic", "panic_mode": self.on, "persisted": false})
+    }
+
+    fn human(self) -> String {
+        format!(
+            "panic mode {}\n",
+            if self.on { "enabled" } else { "disabled" }
+        )
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct MasqueradeChangeData {
+    zone: String,
+    on: bool,
+    timeout: Option<u32>,
+}
+
+impl MasqueradeChangeData {
+    fn new(zone: &str, on: bool, timeout: Option<u32>) -> Self {
+        Self {
+            zone: zone.to_string(),
+            on,
+            timeout,
+        }
+    }
+
+    fn change(&self) -> &'static str {
+        if self.on {
+            "+masquerade"
+        } else {
+            "-masquerade"
+        }
+    }
+
+    fn data(&self) -> Value {
+        let mut data = json!({
+            "operation": "masquerade",
+            "zone": self.zone,
+            "change": self.change(),
+            "masquerade": self.on,
+            "persisted": false,
+        });
+        if let Some(timeout) = self.timeout {
+            data["timeout"] = json!(timeout);
+        }
+        data
+    }
+
+    fn human(&self) -> String {
+        format!(
+            "masquerade {} in zone {} (runtime only)\n",
+            if self.on { "enabled" } else { "disabled" },
+            self.zone
+        )
+    }
+}
+
 /// Build the `FirewallChange` view for an add/remove/set mutation.
 fn change_view(host: String, op: &str, zone: &str, what: &str, timeout: Option<u32>) -> View {
-    let mut data = json!({
-        "operation": op,
-        "zone": zone,
-        "change": what,
-        "persisted": false,
-    });
-    if let Some(t) = timeout {
-        data["timeout"] = json!(t);
-    }
-    let human = format!("{op} {what} in zone {zone} (runtime only)\n");
-    View::new("FirewallChange", host, data, human).with_hints(confirm_hint())
+    let change = RuntimeChangeData::new(op, zone, what, timeout);
+    View::new("FirewallChange", host, change.data(), change.human()).with_hints(confirm_hint())
 }
 
 /// Build the `FirewallChange` view for `reload`.
 fn reload_view(host: String) -> View {
+    let operation = PersistedFirewallOperation {
+        operation: "reload",
+    };
     View::new(
         "FirewallChange",
         host,
-        json!({"operation": "reload", "persisted": true}),
+        operation.data(),
         "reloaded permanent config into runtime\n".into(),
     )
 }
 
 /// Build the `FirewallConfirm` view for `confirm`.
 fn confirm_view(host: String) -> View {
+    let operation = PersistedFirewallOperation {
+        operation: "confirm",
+    };
     View::new(
         "FirewallConfirm",
         host,
-        json!({"operation": "confirm", "persisted": true}),
+        operation.data(),
         "runtime config committed to permanent\n".into(),
     )
 }
 
 /// Build the `FirewallChange` view for `panic on|off`.
 fn panic_view(host: String, on: bool) -> View {
-    View::new(
-        "FirewallChange",
-        host,
-        json!({"operation": "panic", "panic_mode": on, "persisted": false}),
-        format!("panic mode {}\n", if on { "enabled" } else { "disabled" }),
-    )
+    let change = PanicChangeData { on };
+    View::new("FirewallChange", host, change.data(), change.human())
 }
 
 /// Build the `FirewallChange` view for `masquerade on|off`.
 fn masquerade_view(host: String, zone: &str, on: bool, timeout: Option<u32>) -> View {
-    let mut data = json!({
-        "operation": "masquerade",
-        "zone": zone,
-        "change": if on { "+masquerade" } else { "-masquerade" },
-        "masquerade": on,
-        "persisted": false,
-    });
-    if let Some(t) = timeout {
-        data["timeout"] = json!(t);
-    }
-    let human = format!(
-        "masquerade {} in zone {zone} (runtime only)\n",
-        if on { "enabled" } else { "disabled" }
-    );
-    View::new("FirewallChange", host, data, human).with_hints(confirm_hint())
+    let change = MasqueradeChangeData::new(zone, on, timeout);
+    View::new("FirewallChange", host, change.data(), change.human()).with_hints(confirm_hint())
 }
 
 #[cfg(test)]
@@ -1475,6 +1570,76 @@ mod tests {
         assert_eq!(
             detail.human(),
             "Zone:       public\nServices:   ssh\nPorts:      9090/tcp\nInterfaces: eth0\nSources:    192.0.2.0/24\nMasquerade: off\n"
+        );
+    }
+
+    #[test]
+    fn runtime_change_data_preserves_json_contract() {
+        let change = RuntimeChangeData::new("add-service", "public", "service http", Some(60));
+
+        assert_eq!(
+            change.data(),
+            json!({
+                "operation": "add-service",
+                "zone": "public",
+                "change": "service http",
+                "persisted": false,
+                "timeout": 60,
+            })
+        );
+        assert_eq!(
+            change.human(),
+            "add-service service http in zone public (runtime only)\n"
+        );
+    }
+
+    #[test]
+    fn persisted_firewall_operation_preserves_json_contract() {
+        let reload = PersistedFirewallOperation {
+            operation: "reload",
+        };
+        let confirm = PersistedFirewallOperation {
+            operation: "confirm",
+        };
+
+        assert_eq!(
+            reload.data(),
+            json!({"operation": "reload", "persisted": true})
+        );
+        assert_eq!(
+            confirm.data(),
+            json!({"operation": "confirm", "persisted": true})
+        );
+    }
+
+    #[test]
+    fn panic_change_data_preserves_json_contract() {
+        let change = PanicChangeData { on: true };
+
+        assert_eq!(
+            change.data(),
+            json!({"operation": "panic", "panic_mode": true, "persisted": false})
+        );
+        assert_eq!(change.human(), "panic mode enabled\n");
+    }
+
+    #[test]
+    fn masquerade_change_data_preserves_json_contract() {
+        let change = MasqueradeChangeData::new("public", false, None);
+
+        assert_eq!(
+            change.data(),
+            json!({
+                "operation": "masquerade",
+                "zone": "public",
+                "change": "-masquerade",
+                "masquerade": false,
+                "persisted": false,
+            })
+        );
+        assert_eq!(
+            change.human(),
+            "masquerade disabled in zone public (runtime only)\n"
         );
     }
 
