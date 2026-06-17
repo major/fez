@@ -6,3 +6,5 @@ pub mod client;
 pub mod frame;
 /// Control and D-Bus message types.
 pub mod message;
+/// Transparent decoding of cockpit `dbus-json3` variant envelopes.
+pub mod variant;
