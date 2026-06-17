@@ -126,6 +126,16 @@ struct NetworkDevice {
     dhcp4_config: Option<String>,
 }
 
+#[derive(Debug, Clone)]
+struct NetworkDeviceSummary {
+    interface: String,
+    device_type: String,
+    state: String,
+    ip4: String,
+    ip6: String,
+    mac: String,
+}
+
 #[derive(Debug, Clone, serde::Serialize)]
 struct IpConfig {
     addresses: Vec<String>,
@@ -239,6 +249,30 @@ impl NetworkDevice {
 
     fn state_name(&self) -> String {
         device_state_str(self.state)
+    }
+}
+
+impl NetworkDeviceSummary {
+    fn from_device(device: &NetworkDevice, ip4: &IpConfig, ip6: &Ipv6Config) -> Self {
+        Self {
+            interface: device.interface.clone(),
+            device_type: device.type_name(),
+            state: device.state_name(),
+            ip4: ip4.primary_address(),
+            ip6: ip6.primary_address(),
+            mac: device.mac.clone(),
+        }
+    }
+
+    fn table_row(&self) -> Vec<Value> {
+        vec![
+            json!(self.interface),
+            json!(self.device_type),
+            json!(self.state),
+            json!(self.ip4),
+            json!(self.ip6),
+            json!(self.mac),
+        ]
     }
 }
 
@@ -433,14 +467,7 @@ fn list(client: &mut BridgeClient, channel: &str, host: String, all: bool) -> Re
         }
         let ip4 = load_ip4_config(client, channel, device.ip4_config.as_deref())?;
         let ip6 = load_ip6_config(client, channel, device.ip6_config.as_deref())?;
-        devices.push(json!({
-            "interface": device.interface,
-            "type": device.type_name(),
-            "state": device.state_name(),
-            "ip4": ip4.primary_address(),
-            "ip6": ip6.primary_address(),
-            "mac": device.mac,
-        }));
+        devices.push(NetworkDeviceSummary::from_device(&device, &ip4, &ip6));
     }
 
     let mut human = format!(
@@ -450,18 +477,14 @@ fn list(client: &mut BridgeClient, channel: &str, host: String, all: bool) -> Re
     for d in &devices {
         human.push_str(&format!(
             "{:<14} {:<10} {:<13} {:<20} {}\n",
-            ds(d, "interface"),
-            ds(d, "type"),
-            ds(d, "state"),
-            ds(d, "ip4"),
-            ds(d, "mac"),
+            d.interface, d.device_type, d.state, d.ip4, d.mac,
         ));
     }
 
     let columns = ["interface", "type", "state", "ip4", "ip6", "mac"];
     let rows: Vec<Value> = devices
         .iter()
-        .map(|d| Value::Array(columns.iter().map(|c| d[*c].clone()).collect()))
+        .map(|d| Value::Array(d.table_row()))
         .collect();
     Ok(View::new(
         "NetworkDeviceList",
@@ -504,9 +527,9 @@ fn show(client: &mut BridgeClient, channel: &str, host: String, device: &str) ->
         connection,
         dhcp4,
     };
+    let human = render_show_human(&detail);
     let data = serde_json::to_value(detail).map_err(FezError::Decode)?;
 
-    let human = render_show_human(&data);
     Ok(View::new("NetworkDeviceDetail", host, data, human))
 }
 
@@ -555,56 +578,25 @@ fn domains_list(ip_props: &Value) -> Vec<String> {
 }
 
 /// Render the human form of a `network show` detail object.
-fn render_show_human(d: &Value) -> String {
+fn render_show_human(d: &NetworkDeviceDetail) -> String {
     let mut out = String::new();
-    out.push_str(&format!("Device:    {}\n", json_str(d, "interface")));
-    out.push_str(&format!("Type:      {}\n", json_str(d, "type")));
-    out.push_str(&format!("State:     {}\n", json_str(d, "state")));
-    out.push_str(&format!("MAC:       {}\n", json_str(d, "mac")));
-    out.push_str(&format!(
-        "MTU:       {}\n",
-        d.get("mtu").and_then(Value::as_u64).unwrap_or(0)
-    ));
-    let ip4 = &d["ipv4"];
-    out.push_str(&format!("IPv4:      {}\n", join_arr(ip4, "addresses")));
-    out.push_str(&format!("Gateway:   {}\n", json_str(ip4, "gateway")));
-    out.push_str(&format!("DNS:       {}\n", join_arr(ip4, "dns")));
-    out.push_str(&format!("Domains:   {}\n", join_arr(ip4, "domains")));
-    out.push_str(&format!(
-        "IPv6:      {}\n",
-        join_arr(&d["ipv6"], "addresses")
-    ));
-    if let Some(conn) = d.get("connection").filter(|c| !c.is_null()) {
+    out.push_str(&format!("Device:    {}\n", d.interface));
+    out.push_str(&format!("Type:      {}\n", d.device_type));
+    out.push_str(&format!("State:     {}\n", d.state));
+    out.push_str(&format!("MAC:       {}\n", d.mac));
+    out.push_str(&format!("MTU:       {}\n", d.mtu));
+    out.push_str(&format!("IPv4:      {}\n", d.ipv4.addresses.join(", ")));
+    out.push_str(&format!("Gateway:   {}\n", d.ipv4.gateway));
+    out.push_str(&format!("DNS:       {}\n", d.ipv4.dns.join(", ")));
+    out.push_str(&format!("Domains:   {}\n", d.ipv4.domains.join(", ")));
+    out.push_str(&format!("IPv6:      {}\n", d.ipv6.addresses.join(", ")));
+    if let Some(conn) = &d.connection {
         out.push_str(&format!(
             "Connection: {} ({})\n",
-            json_str(conn, "id"),
-            json_str(conn, "type")
+            conn.id, conn.connection_type
         ));
     }
     out
-}
-
-/// Fetch a string field from a JSON object, empty when absent.
-fn json_str(v: &Value, key: &str) -> String {
-    v.get(key).and_then(Value::as_str).unwrap_or("").to_string()
-}
-
-/// Join a JSON string array field with commas, empty when absent.
-fn join_arr(v: &Value, key: &str) -> String {
-    v.get(key)
-        .and_then(Value::as_array)
-        .map(|arr| {
-            arr.iter()
-                .filter_map(Value::as_str)
-                .collect::<Vec<_>>()
-                .join(", ")
-        })
-        .unwrap_or_default()
-}
-
-/// Fetch a string field from a device row object built by [`list`].
-fn ds(v: &Value, key: &str) -> String {
-    v.get(key).and_then(Value::as_str).unwrap_or("").to_string()
 }
 
 #[cfg(test)]
@@ -718,6 +710,84 @@ mod tests {
         assert!(device.should_list(true));
         assert_eq!(device.type_name(), "ethernet");
         assert_eq!(device.state_name(), "activated");
+    }
+
+    #[test]
+    fn list_summary_projects_display_and_table_rows() {
+        let device = NetworkDevice {
+            interface: "eth0".into(),
+            device_type: 1,
+            state: 100,
+            managed: true,
+            mac: "52:54:00:00:00:01".into(),
+            mtu: 1500,
+            ip4_config: None,
+            ip6_config: None,
+            active_connection: None,
+            dhcp4_config: None,
+        };
+        let ip4 = IpConfig {
+            addresses: vec!["192.0.2.10/24".into()],
+            gateway: "192.0.2.1".into(),
+            dns: Vec::new(),
+            domains: Vec::new(),
+        };
+        let ip6 = Ipv6Config {
+            addresses: vec!["2001:db8::10/64".into()],
+        };
+
+        let summary = NetworkDeviceSummary::from_device(&device, &ip4, &ip6);
+
+        assert_eq!(summary.interface, "eth0");
+        assert_eq!(summary.device_type, "ethernet");
+        assert_eq!(summary.state, "activated");
+        assert_eq!(summary.ip4, "192.0.2.10");
+        assert_eq!(summary.ip6, "2001:db8::10");
+        assert_eq!(summary.mac, "52:54:00:00:00:01");
+        assert_eq!(
+            summary.table_row(),
+            vec![
+                json!("eth0"),
+                json!("ethernet"),
+                json!("activated"),
+                json!("192.0.2.10"),
+                json!("2001:db8::10"),
+                json!("52:54:00:00:00:01"),
+            ]
+        );
+    }
+
+    #[test]
+    fn show_human_renders_typed_detail() {
+        let detail = NetworkDeviceDetail {
+            interface: "eth0".into(),
+            device_type: "ethernet".into(),
+            state: "activated".into(),
+            mac: "52:54:00:00:00:01".into(),
+            mtu: 1500,
+            ipv4: IpConfig {
+                addresses: vec!["192.0.2.10/24".into()],
+                gateway: "192.0.2.1".into(),
+                dns: vec!["1.1.1.1".into()],
+                domains: vec!["example.test".into()],
+            },
+            ipv6: Ipv6Config {
+                addresses: vec!["2001:db8::10/64".into()],
+            },
+            connection: Some(ActiveConnection {
+                id: "Wired".into(),
+                connection_type: "802-3-ethernet".into(),
+                default: true,
+            }),
+            dhcp4: None,
+        };
+
+        let human = render_show_human(&detail);
+
+        assert!(human.contains("Device:    eth0"));
+        assert!(human.contains("IPv4:      192.0.2.10/24"));
+        assert!(human.contains("DNS:       1.1.1.1"));
+        assert!(human.contains("Connection: Wired (802-3-ethernet)"));
     }
 
     #[test]
