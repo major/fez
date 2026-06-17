@@ -231,6 +231,26 @@ fn services_logs_human() {
         .stdout(contains("listening"));
 }
 
+#[test]
+fn services_logs_follow_json_streams_entries() {
+    fez_fake()
+        .args(["services", "logs", "sshd.service", "--follow", "--json"])
+        .assert()
+        .success()
+        .stdout(contains("\"message\":\"Server listening on port 22.\""))
+        .stdout(contains("\"message\":\"Accepted publickey for fedora\""));
+}
+
+#[test]
+fn services_logs_follow_human_streams_entries() {
+    fez_fake()
+        .args(["services", "logs", "sshd.service", "--follow"])
+        .assert()
+        .success()
+        .stdout(contains("sshd: Server listening on port 22."))
+        .stdout(contains("sshd: Accepted publickey for fedora"));
+}
+
 // `BridgeClient`, `LocalTransport`, and `json` are already imported at the top
 // of tests/services.rs (Plan 1). Reuse the existing `fake_transport()` helper.
 #[test]
