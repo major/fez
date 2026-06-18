@@ -16,52 +16,52 @@ mod services;
 #[derive(Serialize, Clone)]
 pub struct Input {
     /// Input name as used on the command line.
-    pub name: String,
+    pub name: &'static str,
     /// Input value type (currently always `"string"`).
     #[serde(rename = "type")]
-    pub ty: String,
+    pub ty: &'static str,
     /// Whether the input must be supplied.
     pub required: bool,
     /// Default value used when the input is omitted, if any.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub default: Option<String>,
+    pub default: Option<&'static str>,
     /// Allowed values for constrained inputs, if any.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub choices: Option<Vec<String>>,
+    pub choices: Option<Vec<&'static str>>,
 }
 
 #[derive(Serialize, Clone)]
 pub(crate) struct FlagSchema {
-    pub(crate) name: String,
+    pub(crate) name: &'static str,
     #[serde(rename = "type")]
-    pub(crate) ty: String,
-    pub(crate) description: String,
+    pub(crate) ty: &'static str,
+    pub(crate) description: &'static str,
     pub(crate) repeatable: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub(crate) default: Option<String>,
+    pub(crate) default: Option<&'static str>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub(crate) choices: Option<Vec<String>>,
+    pub(crate) choices: Option<Vec<&'static str>>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
-    pub(crate) conflicts_with: Vec<String>,
+    pub(crate) conflicts_with: Vec<&'static str>,
 }
 
 /// A complete description of one capability.
 #[derive(Clone)]
 pub struct Descriptor {
     /// Dotted capability id (e.g. `services.start`).
-    pub id: String,
+    pub id: &'static str,
     /// One-line human summary (maps to clap `about`).
-    pub summary: String,
+    pub summary: &'static str,
     /// Full description (maps to clap `long_about`).
-    pub long: String,
+    pub long: &'static str,
     /// Whether invoking the capability requires elevated privileges.
     pub privileged: bool,
     /// The envelope `kind` this capability emits.
-    pub output_kind: String,
+    pub output_kind: &'static str,
     /// Inputs the capability accepts.
     pub inputs: Vec<Input>,
     /// Flags the capability honors.
-    pub flags: Vec<String>,
+    pub flags: Vec<&'static str>,
     /// Example invocations (maps to clap `after_help`).
     pub examples: Vec<String>,
 }
@@ -132,43 +132,42 @@ impl Descriptor {
     pub(crate) fn flag_schema(&self) -> Vec<FlagSchema> {
         self.flags
             .iter()
-            .map(|flag| flag_schema(&self.id, flag))
+            .map(|flag| flag_schema(self.id, flag))
             .collect()
     }
 
     fn output_schema(&self) -> Value {
         let mut output = json!({
             "kind": self.output_kind,
-            "schema": schemas::output_schema(&self.output_kind),
+            "schema": schemas::output_schema(self.output_kind),
             "error": schemas::error_schema(),
             "error_envelope": schemas::error_envelope_schema(),
         });
-        let has_dry_run = self.flags.iter().any(|f| f == "--dry-run");
-        if let Some(alternates) = schemas::alternate_output_schemas(&self.output_kind, has_dry_run)
-        {
+        let has_dry_run = self.flags.contains(&"--dry-run");
+        if let Some(alternates) = schemas::alternate_output_schemas(self.output_kind, has_dry_run) {
             output["alternates"] = alternates;
         }
         output
     }
 }
 
-fn input(name: &str, required: bool) -> Input {
+fn input(name: &'static str, required: bool) -> Input {
     Input {
-        name: name.into(),
-        ty: "string".into(),
+        name,
+        ty: "string",
         required,
         default: None,
         choices: None,
     }
 }
 
-fn input_choices(name: &str, required: bool, choices: &[&str]) -> Input {
+fn input_choices(name: &'static str, required: bool, choices: &[&'static str]) -> Input {
     Input {
-        name: name.into(),
-        ty: "string".into(),
+        name,
+        ty: "string",
         required,
         default: None,
-        choices: Some(choices.iter().map(|choice| (*choice).to_string()).collect()),
+        choices: Some(choices.to_vec()),
     }
 }
 
@@ -197,7 +196,7 @@ static FLAG_TABLE: &[(&str, &str, &str, bool, Option<&str>, &[&str])] = &[
     ("--timeout",   "integer", "Auto-revert the runtime firewall change after this many seconds.",           false, None,             &[]),
 ];
 
-fn flag_schema(capability_id: &str, flag: &str) -> FlagSchema {
+fn flag_schema(capability_id: &str, flag: &'static str) -> FlagSchema {
     // Per-capability override: packages.repolist --all has different semantics.
     let row = if flag == "--all" && capability_id == "packages.repolist" {
         (
@@ -224,36 +223,31 @@ fn flag_schema(capability_id: &str, flag: &str) -> FlagSchema {
     };
     let (_, ty, description, repeatable, default, conflicts_with) = row;
     FlagSchema {
-        name: flag.to_string(),
-        ty: ty.to_string(),
-        description: description.to_string(),
+        name: flag,
+        ty,
+        description,
         repeatable,
-        default: default.map(str::to_string),
+        default,
         choices: None,
-        conflicts_with: conflicts_with.iter().map(|s| (*s).to_string()).collect(),
+        conflicts_with: conflicts_with.to_vec(),
     }
 }
 
 fn mutation(
-    id: &str,
-    summary: &str,
-    long: &str,
-    output_kind: &str,
-    extra_flags: &[&str],
+    id: &'static str,
+    summary: &'static str,
+    long: &'static str,
+    output_kind: &'static str,
+    extra_flags: &[&'static str],
 ) -> Descriptor {
-    let mut flags = vec![
-        "--host".to_string(),
-        "--json".to_string(),
-        "--dry-run".to_string(),
-        "--force".to_string(),
-    ];
-    flags.extend(extra_flags.iter().map(|f| f.to_string()));
+    let mut flags = vec!["--host", "--json", "--dry-run", "--force"];
+    flags.extend_from_slice(extra_flags);
     Descriptor {
-        id: id.into(),
-        summary: summary.into(),
-        long: long.into(),
+        id,
+        summary,
+        long,
         privileged: true,
-        output_kind: output_kind.into(),
+        output_kind,
         inputs: vec![input("unit", true)],
         flags,
         // Include the required <UNIT>: agents copy examples verbatim, and an
@@ -263,22 +257,16 @@ fn mutation(
     }
 }
 
-fn enablement(id: &str, summary: &str, long: &str) -> Descriptor {
+fn enablement(id: &'static str, summary: &'static str, long: &'static str) -> Descriptor {
     let verb = id.rsplit('.').next().expect("capability id has a verb");
     Descriptor {
-        id: id.into(),
-        summary: summary.into(),
-        long: long.into(),
+        id,
+        summary,
+        long,
         privileged: true,
-        output_kind: "ServiceEnablement".into(),
+        output_kind: "ServiceEnablement",
         inputs: vec![input("unit", true)],
-        flags: vec![
-            "--host".into(),
-            "--json".into(),
-            "--dry-run".into(),
-            "--force".into(),
-            "--now".into(),
-        ],
+        flags: vec!["--host", "--json", "--dry-run", "--force", "--now"],
         examples: vec![
             format!("fez services {verb} chronyd.service --json"),
             format!("fez services {verb} chronyd.service --now"),
@@ -387,17 +375,17 @@ mod tests {
         // default and a choices list so the branches in render_text are
         // exercised.
         let d = Descriptor {
-            id: "test.synthetic".into(),
-            summary: "synthetic".into(),
-            long: String::new(),
+            id: "test.synthetic",
+            summary: "synthetic",
+            long: "",
             privileged: false,
-            output_kind: "ServiceList".into(),
+            output_kind: "ServiceList",
             inputs: vec![Input {
-                name: "scope".into(),
-                ty: "string".into(),
+                name: "scope",
+                ty: "string",
                 required: false,
-                default: Some("installed".into()),
-                choices: Some(vec!["installed".into(), "available".into()]),
+                default: Some("installed"),
+                choices: Some(vec!["installed", "available"]),
             }],
             flags: vec![],
             examples: vec!["fez test.synthetic".into()],

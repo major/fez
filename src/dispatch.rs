@@ -7,53 +7,8 @@ use std::io::Write;
 pub fn run(cli: Cli) -> i32 {
     let host = cli.resolved_host();
     match &cli.command {
-        TopCommand::Capabilities => {
-            let ids: Vec<String> = capability::registry().into_iter().map(|d| d.id).collect();
-            if cli.json {
-                println!(
-                    "{}",
-                    Envelope::ok("CapabilityList", &host, json!({"capabilities": ids}))
-                        .to_json_string()
-                );
-            } else {
-                ids.iter().for_each(|id| println!("{id}"));
-            }
-            0
-        }
-        TopCommand::Describe { capability: id } => match capability::find(id) {
-            Some(d) => {
-                if cli.json {
-                    let data = serde_json::to_value(&d).unwrap_or_else(
-                        |e| json!({"error": format!("descriptor serialization error: {e}")}),
-                    );
-                    println!(
-                        "{}",
-                        Envelope::ok("CapabilityDescriptor", &host, data).to_json_string()
-                    );
-                } else {
-                    print!("{}", d.render_text());
-                }
-                0
-            }
-            None => {
-                // Discovery error: honor --json with a fez/v1 envelope (#52).
-                if cli.json {
-                    let env = Envelope::error(
-                        "Error",
-                        &host,
-                        crate::envelope::ApiError {
-                            code: "not-found".into(),
-                            message: format!("unknown capability: {id}"),
-                            detail: Some(json!({ "capability": id })),
-                        },
-                    );
-                    println!("{}", env.to_json_string());
-                } else {
-                    eprintln!("unknown capability: {id}");
-                }
-                4
-            }
-        },
+        TopCommand::Capabilities => run_capabilities(&cli, &host),
+        TopCommand::Describe { capability: id } => run_describe(&cli, &host, id),
         TopCommand::Guide => crate::guide::run(&host, cli.json),
         TopCommand::Completions { shell } => {
             let mut cmd = crate::cli::command();
@@ -74,5 +29,55 @@ pub fn run(cli: Cli) -> i32 {
         TopCommand::Network { action } => crate::capabilities::network::dispatch(&cli, action),
         TopCommand::Firewall { action } => crate::capabilities::firewall::dispatch(&cli, action),
         TopCommand::Mcp { expanded_tools } => crate::mcp::run_with_host(&host, *expanded_tools),
+    }
+}
+
+fn run_capabilities(cli: &Cli, host: &str) -> i32 {
+    let ids: Vec<&str> = capability::registry().into_iter().map(|d| d.id).collect();
+    if cli.json {
+        println!(
+            "{}",
+            Envelope::ok("CapabilityList", host, json!({"capabilities": ids})).to_json_string()
+        );
+    } else {
+        ids.iter().for_each(|id| println!("{id}"));
+    }
+    0
+}
+
+fn run_describe(cli: &Cli, host: &str, id: &str) -> i32 {
+    match capability::find(id) {
+        Some(d) => {
+            if cli.json {
+                let data = serde_json::to_value(&d).unwrap_or_else(
+                    |e| json!({"error": format!("descriptor serialization error: {e}")}),
+                );
+                println!(
+                    "{}",
+                    Envelope::ok("CapabilityDescriptor", host, data).to_json_string()
+                );
+            } else {
+                print!("{}", d.render_text());
+            }
+            0
+        }
+        None => {
+            // Discovery error: honor --json with a fez/v1 envelope (#52).
+            if cli.json {
+                let env = Envelope::error(
+                    "Error",
+                    host,
+                    crate::envelope::ApiError {
+                        code: "not-found".into(),
+                        message: format!("unknown capability: {id}"),
+                        detail: Some(json!({ "capability": id })),
+                    },
+                );
+                println!("{}", env.to_json_string());
+            } else {
+                eprintln!("unknown capability: {id}");
+            }
+            4
+        }
     }
 }

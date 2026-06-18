@@ -2,9 +2,8 @@
 
 use super::zone::{compute_drift, is_config_info_denied, permanent_zone, runtime_zone};
 use super::{arg_str, arg_str_vec, fw_call, open_channel, FW_IFACE, FW_ZONE_IFACE};
-use crate::capabilities::View;
+use crate::capabilities::{CapabilityContext, View};
 use crate::error::{FezError, Result};
-use crate::protocol::client::BridgeClient;
 use serde_json::{json, Value};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -136,25 +135,25 @@ impl FirewallZoneDetail {
 /// channel that escalates first. A host with no usable escalation mechanism
 /// therefore fails `status` with `access-denied` (exit 11) rather than
 /// silently reporting empty drift.
-pub(super) fn status(client: &mut BridgeClient, channel: &str, host: String) -> Result<View> {
+pub(super) fn status(ctx: &mut CapabilityContext<'_>) -> Result<View> {
     let default_zone = arg_str(&fw_call(
-        client,
-        channel,
+        ctx.client,
+        ctx.channel,
         FW_IFACE,
         "getDefaultZone",
         json!([]),
     )?);
     let panic = arg_bool(&fw_call(
-        client,
-        channel,
+        ctx.client,
+        ctx.channel,
         FW_IFACE,
         "queryPanicMode",
         json!([]),
     )?);
-    let runtime = runtime_zone(client, channel, &default_zone)?;
+    let runtime = runtime_zone(ctx.client, ctx.channel, &default_zone)?;
     // Permanent config is polkit-gated; read it on a privileged channel.
-    let priv_channel = open_channel(client, true)?;
-    let drift = match permanent_zone(client, &priv_channel, &default_zone) {
+    let priv_channel = open_channel(ctx.client, true)?;
+    let drift = match permanent_zone(ctx.client, &priv_channel, &default_zone) {
         Ok(permanent) => Some(compute_drift(
             &runtime.services,
             &permanent.services,
@@ -167,6 +166,11 @@ pub(super) fn status(client: &mut BridgeClient, channel: &str, host: String) -> 
         Err(e) => return Err(e),
     };
     let status = FirewallStatusData::from_runtime(default_zone, panic, runtime.masquerade, drift);
+    Ok(build_status_view(&status, ctx.host))
+}
+
+/// Assemble the human-readable text, hints, and `View` from collected status data.
+fn build_status_view(status: &FirewallStatusData, host: &str) -> View {
     let data = status.data();
     let mut human = status.human_prefix();
     let hints = if !status.pending_changes_available {
@@ -188,21 +192,21 @@ pub(super) fn status(client: &mut BridgeClient, channel: &str, host: String) -> 
             "pending": status.pending_changes,
         }))
     };
-    Ok(View::new("FirewallStatus", host, data, human).with_hints_opt(hints))
+    View::new("FirewallStatus", host, data, human).with_hints_opt(hints)
 }
 
 /// `firewall list`: every zone with a per-zone summary.
-pub(super) fn list(client: &mut BridgeClient, channel: &str, host: String) -> Result<View> {
+pub(super) fn list(ctx: &mut CapabilityContext<'_>) -> Result<View> {
     let zones = arg_str_vec(&fw_call(
-        client,
-        channel,
+        ctx.client,
+        ctx.channel,
         FW_ZONE_IFACE,
         "getZones",
         json!([]),
     )?);
     let default_zone = arg_str(&fw_call(
-        client,
-        channel,
+        ctx.client,
+        ctx.channel,
         FW_IFACE,
         "getDefaultZone",
         json!([]),
@@ -215,42 +219,46 @@ pub(super) fn list(client: &mut BridgeClient, channel: &str, host: String) -> Re
         "ZONE", "DEFAULT", "SERVICES", "PORTS", "INTERFACES"
     );
     for zone in &zones {
-        let runtime = runtime_zone(client, channel, zone)?;
-        let interfaces = arg_str_vec(&fw_call(
-            client,
-            channel,
-            FW_ZONE_IFACE,
-            "getInterfaces",
-            json!([zone]),
-        )?);
-        let summary = FirewallZoneSummary {
-            zone: zone.clone(),
-            is_default: *zone == default_zone,
-            services: runtime.services,
-            ports: runtime.ports,
-            interfaces,
-        };
+        let summary = build_zone_summary(ctx, zone, &default_zone)?;
         human.push_str(&summary.human_row());
         rows.push(summary.row());
     }
     Ok(View::new(
         "FirewallZoneList",
-        host,
+        ctx.host,
         crate::envelope::table_data(&columns, rows),
         human,
     ))
 }
 
-/// `firewall show <zone>`: one zone's full detail.
-pub(super) fn show(
-    client: &mut BridgeClient,
-    channel: &str,
-    host: String,
+/// Query runtime state and interfaces for one zone and return its summary.
+fn build_zone_summary(
+    ctx: &mut CapabilityContext<'_>,
     zone: &str,
-) -> Result<View> {
+    default_zone: &str,
+) -> Result<FirewallZoneSummary> {
+    let runtime = runtime_zone(ctx.client, ctx.channel, zone)?;
+    let interfaces = arg_str_vec(&fw_call(
+        ctx.client,
+        ctx.channel,
+        FW_ZONE_IFACE,
+        "getInterfaces",
+        json!([zone]),
+    )?);
+    Ok(FirewallZoneSummary {
+        zone: zone.to_string(),
+        is_default: zone == default_zone,
+        services: runtime.services,
+        ports: runtime.ports,
+        interfaces,
+    })
+}
+
+/// `firewall show <zone>`: one zone's full detail.
+pub(super) fn show(ctx: &mut CapabilityContext<'_>, zone: &str) -> Result<View> {
     let zones = arg_str_vec(&fw_call(
-        client,
-        channel,
+        ctx.client,
+        ctx.channel,
         FW_ZONE_IFACE,
         "getZones",
         json!([]),
@@ -258,17 +266,17 @@ pub(super) fn show(
     if !zones.iter().any(|z| z == zone) {
         return Err(FezError::NotFound(format!("firewall zone {zone}")));
     }
-    let runtime = runtime_zone(client, channel, zone)?;
+    let runtime = runtime_zone(ctx.client, ctx.channel, zone)?;
     let interfaces = arg_str_vec(&fw_call(
-        client,
-        channel,
+        ctx.client,
+        ctx.channel,
         FW_ZONE_IFACE,
         "getInterfaces",
         json!([zone]),
     )?);
     let sources = arg_str_vec(&fw_call(
-        client,
-        channel,
+        ctx.client,
+        ctx.channel,
         FW_ZONE_IFACE,
         "getSources",
         json!([zone]),
@@ -283,17 +291,17 @@ pub(super) fn show(
     };
     Ok(View::new(
         "FirewallZone",
-        host,
+        ctx.host,
         detail.data(),
         detail.human(),
     ))
 }
 
 /// `firewall services`: the service catalog firewalld knows about.
-pub(super) fn services(client: &mut BridgeClient, channel: &str, host: String) -> Result<View> {
+pub(super) fn services(ctx: &mut CapabilityContext<'_>) -> Result<View> {
     let mut catalog = arg_str_vec(&fw_call(
-        client,
-        channel,
+        ctx.client,
+        ctx.channel,
         FW_IFACE,
         "listServices",
         json!([]),
@@ -306,7 +314,7 @@ pub(super) fn services(client: &mut BridgeClient, channel: &str, host: String) -
     }
     Ok(View::new(
         "FirewallServiceCatalog",
-        host,
+        ctx.host,
         json!({ "services": catalog }),
         human,
     ))

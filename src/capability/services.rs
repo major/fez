@@ -6,48 +6,45 @@ use super::{enablement, input, mutation, Descriptor};
 pub(super) fn descriptors() -> Vec<Descriptor> {
     vec![
         Descriptor {
-            id: "services.list".into(),
-            summary: "List systemd units".into(),
+            id: "services.list",
+            summary: "List systemd units",
             long: "List systemd units on the target host. Use --state to filter by \
-        active state (e.g. active, failed, inactive). Read-only; never mutates."
-                .into(),
+        active state (e.g. active, failed, inactive). Read-only; never mutates.",
             privileged: false,
-            output_kind: "ServiceList".into(),
+            output_kind: "ServiceList",
             inputs: vec![input("state", false)],
-            flags: vec!["--host".into(), "--json".into(), "--state".into()],
+            flags: vec!["--host", "--json", "--state"],
             examples: vec![
                 "fez services list --state failed --json".into(),
                 "fez --host web01 services list".into(),
             ],
         },
         Descriptor {
-            id: "services.status".into(),
-            summary: "Show one unit's status".into(),
+            id: "services.status",
+            summary: "Show one unit's status",
             long: "Show the current status of a single systemd unit (active state, \
-        sub-state, enablement). Read-only."
-                .into(),
+        sub-state, enablement). Read-only.",
             privileged: false,
-            output_kind: "ServiceStatus".into(),
+            output_kind: "ServiceStatus",
             inputs: vec![input("unit", true)],
-            flags: vec!["--host".into(), "--json".into()],
+            flags: vec!["--host", "--json"],
             examples: vec!["fez services status sshd.service --json".into()],
         },
         Descriptor {
-            id: "services.logs".into(),
-            summary: "Read a unit's journal".into(),
+            id: "services.logs",
+            summary: "Read a unit's journal",
             long: "Read journal entries for a unit. Filter with --since and --priority \
-        (journalctl syntax), cap with --lines, or stream with --follow. Read-only."
-                .into(),
+        (journalctl syntax), cap with --lines, or stream with --follow. Read-only.",
             privileged: false,
-            output_kind: "LogEntries".into(),
+            output_kind: "LogEntries",
             inputs: vec![input("unit", true)],
             flags: vec![
-                "--host".into(),
-                "--json".into(),
-                "--since".into(),
-                "--priority".into(),
-                "--lines".into(),
-                "--follow".into(),
+                "--host",
+                "--json",
+                "--since",
+                "--priority",
+                "--lines",
+                "--follow",
             ],
             examples: vec![
                 "fez services logs sshd.service --lines 100 --json".into(),

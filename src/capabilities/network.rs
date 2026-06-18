@@ -6,7 +6,7 @@
 //! `network show <device>` (full per-device detail). Read-only: no mutation,
 //! no privilege escalation.
 
-use crate::capabilities::{render, View};
+use crate::capabilities::{render, CapabilityContext, View};
 use crate::cli::{Cli, NetworkAction};
 use crate::error::{FezError, Result};
 use crate::protocol::client::BridgeClient;
@@ -35,9 +35,14 @@ fn run(cli: &Cli, action: &NetworkAction) -> Result<View> {
     let mut client = crate::capabilities::connect(cli)?;
     let host = client.host().to_string();
     let channel = client.dbus_open(NM_NAME)?;
+    let mut ctx = CapabilityContext {
+        client: &mut client,
+        channel: &channel,
+        host: &host,
+    };
     match action {
-        NetworkAction::List { all } => list(&mut client, &channel, host, *all),
-        NetworkAction::Show { device } => show(&mut client, &channel, host, device),
+        NetworkAction::List { all } => list(&mut ctx, *all),
+        NetworkAction::Show { device } => show(&mut ctx, device),
     }
 }
 
@@ -454,17 +459,18 @@ fn device_paths(client: &mut BridgeClient, channel: &str) -> Result<Vec<String>>
 }
 
 /// List network devices, hiding unmanaged virtual interfaces unless `all`.
-fn list(client: &mut BridgeClient, channel: &str, host: String, all: bool) -> Result<View> {
-    let paths = device_paths(client, channel)?;
+fn list(ctx: &mut CapabilityContext<'_>, all: bool) -> Result<View> {
+    let paths = device_paths(ctx.client, ctx.channel)?;
 
     let mut devices = Vec::new();
     for path in &paths {
-        let device = NetworkDevice::from_props(&get_all(client, channel, path, DEVICE_IFACE)?);
+        let device =
+            NetworkDevice::from_props(&get_all(ctx.client, ctx.channel, path, DEVICE_IFACE)?);
         if !device.should_list(all) {
             continue;
         }
-        let ip4 = load_ip4_config(client, channel, device.ip4_config.as_deref())?;
-        let ip6 = load_ip6_config(client, channel, device.ip6_config.as_deref())?;
+        let ip4 = load_ip4_config(ctx.client, ctx.channel, device.ip4_config.as_deref())?;
+        let ip6 = load_ip6_config(ctx.client, ctx.channel, device.ip6_config.as_deref())?;
         devices.push(NetworkDeviceSummary::from_device(&device, &ip4, &ip6));
     }
 
@@ -486,20 +492,21 @@ fn list(client: &mut BridgeClient, channel: &str, host: String, all: bool) -> Re
         .collect();
     Ok(View::new(
         "NetworkDeviceList",
-        host,
+        ctx.host,
         crate::envelope::table_data(&columns, rows),
         human,
     ))
 }
 
 /// Show one device's full network detail, chasing NM's object indirection.
-fn show(client: &mut BridgeClient, channel: &str, host: String, device: &str) -> Result<View> {
-    let paths = device_paths(client, channel)?;
+fn show(ctx: &mut CapabilityContext<'_>, device: &str) -> Result<View> {
+    let paths = device_paths(ctx.client, ctx.channel)?;
 
     // Find the device whose Interface matches the requested name.
     let mut found: Option<NetworkDevice> = None;
     for path in &paths {
-        let candidate = NetworkDevice::from_props(&get_all(client, channel, path, DEVICE_IFACE)?);
+        let candidate =
+            NetworkDevice::from_props(&get_all(ctx.client, ctx.channel, path, DEVICE_IFACE)?);
         if candidate.interface == device {
             found = Some(candidate);
             break;
@@ -507,10 +514,11 @@ fn show(client: &mut BridgeClient, channel: &str, host: String, device: &str) ->
     }
     let device = found.ok_or_else(|| FezError::NotFound(format!("network device {device}")))?;
 
-    let ipv4 = load_ip4_config(client, channel, device.ip4_config.as_deref())?;
-    let ipv6 = load_ip6_config(client, channel, device.ip6_config.as_deref())?;
-    let connection = load_active_connection(client, channel, device.active_connection.as_deref())?;
-    let dhcp4 = load_dhcp4_options(client, channel, device.dhcp4_config.as_deref())?;
+    let ipv4 = load_ip4_config(ctx.client, ctx.channel, device.ip4_config.as_deref())?;
+    let ipv6 = load_ip6_config(ctx.client, ctx.channel, device.ip6_config.as_deref())?;
+    let connection =
+        load_active_connection(ctx.client, ctx.channel, device.active_connection.as_deref())?;
+    let dhcp4 = load_dhcp4_options(ctx.client, ctx.channel, device.dhcp4_config.as_deref())?;
     let device_type = device.type_name();
     let state = device.state_name();
 
@@ -528,7 +536,7 @@ fn show(client: &mut BridgeClient, channel: &str, host: String, device: &str) ->
     let human = render_show_human(&detail);
     let data = serde_json::to_value(detail).map_err(FezError::Decode)?;
 
-    Ok(View::new("NetworkDeviceDetail", host, data, human))
+    Ok(View::new("NetworkDeviceDetail", ctx.host, data, human))
 }
 
 /// Flatten an `a{sv}` options map by unwrapping each variant value, so the

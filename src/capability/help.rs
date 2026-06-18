@@ -45,7 +45,7 @@ fn inject_at(mut cmd: Command, path: &mut Vec<String>) -> Command {
         if let Some(id) = path_to_id(&parts) {
             let d = capability::find(&id).expect("id resolved");
             cmd = cmd
-                .long_about(d.long.clone())
+                .long_about(d.long)
                 .after_help(examples_block(&d.examples));
             // Hide any safety global the descriptor does not advertise, so a
             // leaf's help mirrors its descriptor `flags` exactly. The flags are
