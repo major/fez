@@ -227,6 +227,29 @@ impl FezError {
             _ => None,
         }
     }
+
+    /// Safe read-only follow-up hints for actionable errors.
+    ///
+    /// Returns a hints block suitable for the `fez/v1` error envelope, or
+    /// `None` for errors without a useful next-step suggestion. The hint is
+    /// derived from the error's own fields so it is correct regardless of which
+    /// capability produced the error.
+    ///
+    /// - `DependencyMissing`: exposes the `remediation` text already carried by
+    ///   the error, so the agent can act without parsing the `message` string.
+    /// - `UnsupportedApi`: tells the caller the feature is absent on this host
+    ///   and should not be retried.
+    pub fn hints(&self) -> Option<Value> {
+        match self {
+            FezError::DependencyMissing { remediation, .. } => {
+                Some(json!({ "remediation": remediation }))
+            }
+            FezError::UnsupportedApi(method) => Some(json!({
+                "unsupported": format!("this host does not expose {method}; treat the feature as unsupported"),
+            })),
+            _ => None,
+        }
+    }
 }
 
 fn problem_code(p: &str) -> &'static str {

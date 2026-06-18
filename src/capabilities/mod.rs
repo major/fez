@@ -106,27 +106,10 @@ impl View {
 /// On success: emits the `fez/v1` envelope under `--json` (with `hints` when
 /// present) or the human text otherwise, and returns `0`. A `pre_rendered`
 /// view prints nothing and returns `0`. On error: emits an error envelope
-/// (with structured [`crate::error::FezError::detail`]) under `--json` or a
-/// `error: ...` line otherwise, and returns the error's exit code.
-///
-/// This attaches no error-specific `hints`; a capability that wants safe
-/// read-only follow-up hints on its error envelopes calls [`render_with_hints`]
-/// instead.
+/// (with structured [`crate::error::FezError::detail`] and any
+/// [`crate::error::FezError::hints`]) under `--json` or an `error: ...` line
+/// otherwise, and returns the error's exit code.
 pub fn render(cli: &Cli, result: Result<View>) -> i32 {
-    render_with_hints(cli, result, |_| None)
-}
-
-/// [`render`] with a per-capability error-hints hook.
-///
-/// `error_hints` maps a failing [`crate::error::FezError`] to an optional
-/// envelope `hints` block (safe read-only follow-ups, e.g. a service-status
-/// check). It runs only on the error path and only under `--json`; the success
-/// path and plain-text error path are identical to [`render`]. Domain-specific
-/// hint wording therefore stays in the capability, not in the shared error type.
-pub fn render_with_hints<F>(cli: &Cli, result: Result<View>, error_hints: F) -> i32
-where
-    F: FnOnce(&crate::error::FezError) -> Option<Value>,
-{
     let host = cli.resolved_host();
     match result {
         Ok(view) => {
@@ -155,7 +138,7 @@ where
                         detail: e.detail(),
                     },
                 );
-                if let Some(h) = error_hints(&e) {
+                if let Some(h) = e.hints() {
                     env = env.with_hints(h);
                 }
                 println!("{}", env.to_json_string());
@@ -167,9 +150,23 @@ where
     }
 }
 
+/// Deprecated alias for [`render`].
+///
+/// Previously accepted a per-capability `error_hints` hook; hints now live on
+/// [`crate::error::FezError::hints`] so the hook is unused. Kept temporarily
+/// to avoid a breaking change; callers should migrate to [`render`].
+#[deprecated(since = "0.0.0", note = "use render(); hints are on FezError::hints()")]
+#[allow(dead_code)]
+pub fn render_with_hints<F>(cli: &Cli, result: Result<View>, _error_hints: F) -> i32
+where
+    F: FnOnce(&crate::error::FezError) -> Option<Value>,
+{
+    render(cli, result)
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{render, render_with_hints, View};
+    use super::{render, View};
     use crate::cli::Cli;
     use crate::error::FezError;
     use clap::Parser;
@@ -290,21 +287,30 @@ mod tests {
     }
 
     #[test]
-    fn render_with_hints_runs_hook_on_error_and_returns_exit_code() {
+    fn render_dependency_missing_emits_hints_from_error() {
+        // DependencyMissing carries hints via FezError::hints(); verify the
+        // exit code is correct (the envelope content is checked by integration
+        // tests).
         let c = cli(&["fez", "--json", "firewall", "status"]);
-        let err = FezError::UnsupportedApi("getMasquerade".into());
+        let err = FezError::DependencyMissing {
+            component: "firewalld".into(),
+            dbus_name: "org.fedoraproject.FirewallD1".into(),
+            remediation: "dnf install firewalld".into(),
+        };
         let expected = err.exit_code();
-        let called = std::cell::Cell::new(false);
-        let exit = render_with_hints(&c, Err(err), |_| {
-            called.set(true);
-            Some(json!({"unsupported": "treat as unavailable"}))
-        });
-        assert_eq!(exit, expected);
-        assert!(called.get(), "hook runs on the error path");
+        assert_eq!(render(&c, Err(err)), expected);
     }
 
     #[test]
-    fn render_with_hints_skips_hook_on_success() {
+    fn render_unsupported_api_emits_hints_from_error() {
+        let c = cli(&["fez", "--json", "firewall", "status"]);
+        let err = FezError::UnsupportedApi("getMasquerade".into());
+        let expected = err.exit_code();
+        assert_eq!(render(&c, Err(err)), expected);
+    }
+
+    #[test]
+    fn render_success_does_not_add_hints_from_error() {
         let c = cli(&["fez", "--json", "firewall", "status"]);
         let v = View::new(
             "FirewallStatus",
@@ -312,13 +318,7 @@ mod tests {
             json!({}),
             "ok\n".into(),
         );
-        let called = std::cell::Cell::new(false);
-        let exit = render_with_hints(&c, Ok(v), |_| {
-            called.set(true);
-            None
-        });
-        assert_eq!(exit, 0);
-        assert!(!called.get(), "hook does not run on the success path");
+        assert_eq!(render(&c, Ok(v)), 0);
     }
 }
 

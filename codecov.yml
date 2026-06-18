@@ -19,5 +19,5 @@ coverage:
 
 # Test-only code that should not count toward project coverage.
 ignore:
-  - "src/bin/fake_bridge.rs"
+  - "src/bin/fake_bridge/"
   - "tests/"

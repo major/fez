@@ -482,8 +482,10 @@ fn unreachable_firewalld_includes_remediation_detail() {
         .code(9)
         .stdout(contains("\"code\":\"dependency-missing\""))
         .stdout(contains("firewalld.service"))
-        // A safe read-only follow-up hint points at the service-status check.
+        // A safe read-only follow-up hint carries the remediation text, which
+        // includes a fez service-status check command (from FezError::hints).
         .stdout(contains("\"hints\""))
+        .stdout(contains("\"remediation\""))
         .stdout(contains("fez services status firewalld.service"));
 }
 
