@@ -671,7 +671,7 @@ fn plan_view(
     plan: &PkPlan,
     dry_run: bool,
 ) -> PkView {
-    use crate::capabilities::packages::{plan_human, plan_kind};
+    use super::{plan_human, plan_kind};
     let verb = mutation.verb();
     let counts = (
         plan.install.len(),
