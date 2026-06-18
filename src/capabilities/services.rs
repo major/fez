@@ -3,7 +3,6 @@ use crate::cli::{Cli, ServicesAction};
 use crate::error::{FezError, Result};
 use crate::protocol::client::BridgeClient;
 use crate::protocol::variant::Variant;
-use crate::transport;
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::borrow::Cow;
@@ -177,8 +176,7 @@ pub fn dispatch(cli: &Cli, action: &ServicesAction) -> i32 {
 }
 
 fn run_read(cli: &Cli, action: ReadAction<'_>) -> Result<View> {
-    let transport = transport::from_host(cli.host.as_deref());
-    let mut client = BridgeClient::connect(transport.as_ref())?;
+    let mut client = crate::capabilities::connect(cli)?;
     let host = client.host().to_string();
     match action {
         ReadAction::List { state } => list(&mut client, host, state),
@@ -306,8 +304,7 @@ fn mutation_view(m: &Mutation, host: &str, unit: &str, data: Value) -> View {
 }
 
 fn execute(cli: &Cli, m: &Mutation, host: &str, unit: &str) -> Result<View> {
-    let transport = transport::from_host(cli.host.as_deref());
-    let mut client = BridgeClient::connect(transport.as_ref())?;
+    let mut client = crate::capabilities::connect(cli)?;
     let channel = client.dbus_open_privileged("org.freedesktop.systemd1")?;
     // Helper for the simple `*Unit` ops, which differ only by manager method.
     // Keeping it a fn (not a closure) avoids capturing `client`, so the

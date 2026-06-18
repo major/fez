@@ -10,7 +10,6 @@ use crate::capabilities::{render_with_hints, View};
 use crate::cli::{Cli, FirewallAction};
 use crate::error::{is_service_unknown, FezError, Result};
 use crate::protocol::client::BridgeClient;
-use crate::transport;
 use serde_json::{json, Value};
 
 const FW_NAME: &str = "org.fedoraproject.FirewallD1";
@@ -161,8 +160,7 @@ fn classify(action: &FirewallAction) -> Plan<'_> {
 
 /// Connect to the bridge and dispatch the requested action.
 fn run(cli: &Cli, action: &FirewallAction) -> Result<View> {
-    let transport = transport::from_host(cli.host.as_deref());
-    let mut client = BridgeClient::connect(transport.as_ref())?;
+    let mut client = crate::capabilities::connect(cli)?;
     let host = client.host().to_string();
     match classify(action) {
         Plan::Read(ReadAction::Status) => {
@@ -830,240 +828,332 @@ fn mutate(
     action: Mutation<'_>,
 ) -> Result<View> {
     let channel = open_channel(client, true)?;
-
+    let ch = channel.as_str();
     match action {
         Mutation::AddService {
             service,
             zone,
             timeout,
-        } => {
-            let zone = effective_zone(client, &channel, zone)?;
-            let t = i64::from(timeout.unwrap_or(0));
-            run_audited(
-                client,
-                &channel,
-                &host,
-                AuditedFirewallCall::new(
-                    "add-service",
-                    format!("{zone}:{service}"),
-                    FW_ZONE_IFACE,
-                    "addService",
-                    json!([zone, service, t]),
-                ),
-            )?;
-            Ok(change_view(
-                host,
-                "add-service",
-                &zone,
-                &format!("service {service}"),
-                timeout,
-            ))
-        }
+        } => mutate_add_service(client, ch, host, service, zone, timeout),
         Mutation::RemoveService { service, zone } => {
-            let zone = effective_zone(client, &channel, zone)?;
-            crate::safety::check_firewall_service_removal(service, &session_services(), cli.force)?;
-            run_audited(
-                client,
-                &channel,
-                &host,
-                AuditedFirewallCall::new(
-                    "remove-service",
-                    format!("{zone}:{service}"),
-                    FW_ZONE_IFACE,
-                    "removeService",
-                    json!([zone, service]),
-                ),
-            )?;
-            Ok(change_view(
-                host,
-                "remove-service",
-                &zone,
-                &format!("service {service}"),
-                None,
-            ))
+            mutate_remove_service(cli, client, ch, host, service, zone)
         }
         Mutation::AddPort {
             port,
             zone,
             timeout,
-        } => {
-            let spec = parse_port_spec(port)?;
-            let zone = effective_zone(client, &channel, zone)?;
-            let t = i64::from(timeout.unwrap_or(0));
-            let label = spec.label();
-            run_audited(
-                client,
-                &channel,
-                &host,
-                AuditedFirewallCall::new(
-                    "add-port",
-                    format!("{zone}:{label}"),
-                    FW_ZONE_IFACE,
-                    "addPort",
-                    json!([zone, spec.port.to_string(), spec.proto, t]),
-                ),
-            )?;
-            Ok(change_view(
-                host,
-                "add-port",
-                &zone,
-                &format!("port {label}"),
-                timeout,
-            ))
-        }
+        } => mutate_add_port(client, ch, host, port, zone, timeout),
         Mutation::RemovePort { port, zone } => {
-            let spec = parse_port_spec(port)?;
-            let zone = effective_zone(client, &channel, zone)?;
-            crate::safety::check_firewall_port_removal(spec.port, &session_ports(), cli.force)?;
-            let label = spec.label();
-            run_audited(
-                client,
-                &channel,
-                &host,
-                AuditedFirewallCall::new(
-                    "remove-port",
-                    format!("{zone}:{label}"),
-                    FW_ZONE_IFACE,
-                    "removePort",
-                    json!([zone, spec.port.to_string(), spec.proto]),
-                ),
-            )?;
-            Ok(change_view(
-                host,
-                "remove-port",
-                &zone,
-                &format!("port {label}"),
-                None,
-            ))
+            mutate_remove_port(cli, client, ch, host, port, zone)
         }
-        Mutation::SetDefaultZone { zone } => {
-            crate::safety::check_firewall_default_zone(cli.force)?;
-            run_audited(
-                client,
-                &channel,
-                &host,
-                AuditedFirewallCall::new(
-                    "set-default-zone",
-                    zone,
-                    FW_IFACE,
-                    "setDefaultZone",
-                    json!([zone]),
-                ),
-            )?;
-            Ok(change_view(
-                host,
-                "set-default-zone",
-                zone,
-                "default zone",
-                None,
-            ))
-        }
-        Mutation::Reload => {
-            let default_zone = arg_str(&fw_call(
-                client,
-                &channel,
-                FW_IFACE,
-                "getDefaultZone",
-                json!([]),
-            )?);
-            let runtime = runtime_zone(client, &channel, &default_zone)?;
-            let has_drift = match permanent_zone(client, &channel, &default_zone) {
-                Ok(permanent) => !compute_drift(
-                    &runtime.services,
-                    &permanent.services,
-                    &runtime.ports,
-                    &permanent.ports,
-                    runtime.masquerade,
-                    permanent.masquerade,
-                )
-                .is_empty(),
-                Err(e) if is_config_info_denied(&e) => true,
-                Err(e) => return Err(e),
-            };
-            crate::safety::check_firewall_reload(has_drift, cli.force)?;
-            run_audited(
-                client,
-                &channel,
-                &host,
-                AuditedFirewallCall::new("reload", "firewall", FW_IFACE, "reload", json!([])),
-            )?;
-            Ok(reload_view(host))
-        }
-        Mutation::Confirm => {
-            run_audited(
-                client,
-                &channel,
-                &host,
-                AuditedFirewallCall::new(
-                    "confirm",
-                    "firewall",
-                    FW_IFACE,
-                    "runtimeToPermanent",
-                    json!([]),
-                ),
-            )?;
-            Ok(confirm_view(host))
-        }
-        Mutation::Panic { state } => {
-            let on = state == "on";
-            if on {
-                crate::safety::check_firewall_panic_on(cli.force)?;
-            }
-            let method = if on {
-                "enablePanicMode"
-            } else {
-                "disablePanicMode"
-            };
-            run_audited(
-                client,
-                &channel,
-                &host,
-                AuditedFirewallCall::new(
-                    format!("panic-{state}"),
-                    "firewall",
-                    FW_IFACE,
-                    method,
-                    json!([]),
-                ),
-            )?;
-            Ok(panic_view(host, on))
-        }
+        Mutation::SetDefaultZone { zone } => mutate_set_default_zone(cli, client, ch, host, zone),
+        Mutation::Reload => mutate_reload(cli, client, ch, host),
+        Mutation::Confirm => mutate_confirm(client, ch, host),
+        Mutation::Panic { state } => mutate_panic(cli, client, ch, host, state),
         Mutation::Masquerade {
             state,
             zone,
             timeout,
-        } => {
-            let on = state == "on";
-            let zone = effective_zone(client, &channel, zone)?;
-            if !on {
-                crate::safety::check_firewall_masquerade_off(cli.force)?;
-            }
-            let (method, args) = if on {
-                let t = i64::from(timeout.unwrap_or(0));
-                ("addMasquerade", json!([zone, t]))
-            } else {
-                ("removeMasquerade", json!([zone]))
-            };
-            run_audited(
-                client,
-                &channel,
-                &host,
-                AuditedFirewallCall::new(
-                    format!("masquerade-{state}"),
-                    zone.as_str(),
-                    FW_ZONE_IFACE,
-                    method,
-                    args,
-                ),
-            )?;
-            Ok(masquerade_view(
-                host,
-                &zone,
-                on,
-                if on { timeout } else { None },
-            ))
-        }
+        } => mutate_masquerade(cli, client, ch, host, state, zone, timeout),
     }
+}
+
+/// `firewall add-service`: open a service in a zone (runtime-only).
+fn mutate_add_service(
+    client: &mut BridgeClient,
+    channel: &str,
+    host: String,
+    service: &str,
+    zone: Option<&str>,
+    timeout: Option<u32>,
+) -> Result<View> {
+    let zone = effective_zone(client, channel, zone)?;
+    let t = i64::from(timeout.unwrap_or(0));
+    run_audited(
+        client,
+        channel,
+        &host,
+        AuditedFirewallCall::new(
+            "add-service",
+            format!("{zone}:{service}"),
+            FW_ZONE_IFACE,
+            "addService",
+            json!([zone, service, t]),
+        ),
+    )?;
+    Ok(change_view(
+        host,
+        "add-service",
+        &zone,
+        &format!("service {service}"),
+        timeout,
+    ))
+}
+
+/// `firewall remove-service`: close a service in a zone, gated by the
+/// lockout guard ([`crate::safety::check_firewall_service_removal`]).
+fn mutate_remove_service(
+    cli: &Cli,
+    client: &mut BridgeClient,
+    channel: &str,
+    host: String,
+    service: &str,
+    zone: Option<&str>,
+) -> Result<View> {
+    let zone = effective_zone(client, channel, zone)?;
+    crate::safety::check_firewall_service_removal(service, &session_services(), cli.force)?;
+    run_audited(
+        client,
+        channel,
+        &host,
+        AuditedFirewallCall::new(
+            "remove-service",
+            format!("{zone}:{service}"),
+            FW_ZONE_IFACE,
+            "removeService",
+            json!([zone, service]),
+        ),
+    )?;
+    Ok(change_view(
+        host,
+        "remove-service",
+        &zone,
+        &format!("service {service}"),
+        None,
+    ))
+}
+
+/// `firewall add-port`: open a `port/proto` in a zone (runtime-only).
+fn mutate_add_port(
+    client: &mut BridgeClient,
+    channel: &str,
+    host: String,
+    port: &str,
+    zone: Option<&str>,
+    timeout: Option<u32>,
+) -> Result<View> {
+    let spec = parse_port_spec(port)?;
+    let zone = effective_zone(client, channel, zone)?;
+    let t = i64::from(timeout.unwrap_or(0));
+    let label = spec.label();
+    run_audited(
+        client,
+        channel,
+        &host,
+        AuditedFirewallCall::new(
+            "add-port",
+            format!("{zone}:{label}"),
+            FW_ZONE_IFACE,
+            "addPort",
+            json!([zone, spec.port.to_string(), spec.proto, t]),
+        ),
+    )?;
+    Ok(change_view(
+        host,
+        "add-port",
+        &zone,
+        &format!("port {label}"),
+        timeout,
+    ))
+}
+
+/// `firewall remove-port`: close a `port/proto` in a zone, gated by the
+/// lockout guard ([`crate::safety::check_firewall_port_removal`]).
+fn mutate_remove_port(
+    cli: &Cli,
+    client: &mut BridgeClient,
+    channel: &str,
+    host: String,
+    port: &str,
+    zone: Option<&str>,
+) -> Result<View> {
+    let spec = parse_port_spec(port)?;
+    let zone = effective_zone(client, channel, zone)?;
+    crate::safety::check_firewall_port_removal(spec.port, &session_ports(), cli.force)?;
+    let label = spec.label();
+    run_audited(
+        client,
+        channel,
+        &host,
+        AuditedFirewallCall::new(
+            "remove-port",
+            format!("{zone}:{label}"),
+            FW_ZONE_IFACE,
+            "removePort",
+            json!([zone, spec.port.to_string(), spec.proto]),
+        ),
+    )?;
+    Ok(change_view(
+        host,
+        "remove-port",
+        &zone,
+        &format!("port {label}"),
+        None,
+    ))
+}
+
+/// `firewall set-default-zone`: change the default zone, gated by
+/// [`crate::safety::check_firewall_default_zone`].
+fn mutate_set_default_zone(
+    cli: &Cli,
+    client: &mut BridgeClient,
+    channel: &str,
+    host: String,
+    zone: &str,
+) -> Result<View> {
+    crate::safety::check_firewall_default_zone(cli.force)?;
+    run_audited(
+        client,
+        channel,
+        &host,
+        AuditedFirewallCall::new(
+            "set-default-zone",
+            zone,
+            FW_IFACE,
+            "setDefaultZone",
+            json!([zone]),
+        ),
+    )?;
+    Ok(change_view(
+        host,
+        "set-default-zone",
+        zone,
+        "default zone",
+        None,
+    ))
+}
+
+/// `firewall reload`: re-apply permanent config. Reads live runtime-vs-
+/// permanent drift so the safety guard ([`crate::safety::check_firewall_reload`])
+/// can warn about discarding uncommitted runtime changes.
+fn mutate_reload(
+    cli: &Cli,
+    client: &mut BridgeClient,
+    channel: &str,
+    host: String,
+) -> Result<View> {
+    let default_zone = arg_str(&fw_call(
+        client,
+        channel,
+        FW_IFACE,
+        "getDefaultZone",
+        json!([]),
+    )?);
+    let runtime = runtime_zone(client, channel, &default_zone)?;
+    let has_drift = match permanent_zone(client, channel, &default_zone) {
+        Ok(permanent) => !compute_drift(
+            &runtime.services,
+            &permanent.services,
+            &runtime.ports,
+            &permanent.ports,
+            runtime.masquerade,
+            permanent.masquerade,
+        )
+        .is_empty(),
+        Err(e) if is_config_info_denied(&e) => true,
+        Err(e) => return Err(e),
+    };
+    crate::safety::check_firewall_reload(has_drift, cli.force)?;
+    run_audited(
+        client,
+        channel,
+        &host,
+        AuditedFirewallCall::new("reload", "firewall", FW_IFACE, "reload", json!([])),
+    )?;
+    Ok(reload_view(host))
+}
+
+/// `firewall confirm`: commit runtime changes to permanent
+/// (`runtimeToPermanent`).
+fn mutate_confirm(client: &mut BridgeClient, channel: &str, host: String) -> Result<View> {
+    run_audited(
+        client,
+        channel,
+        &host,
+        AuditedFirewallCall::new(
+            "confirm",
+            "firewall",
+            FW_IFACE,
+            "runtimeToPermanent",
+            json!([]),
+        ),
+    )?;
+    Ok(confirm_view(host))
+}
+
+/// `firewall panic on|off`: toggle panic mode. Turning it *on* drops all
+/// traffic, so it is gated by [`crate::safety::check_firewall_panic_on`].
+fn mutate_panic(
+    cli: &Cli,
+    client: &mut BridgeClient,
+    channel: &str,
+    host: String,
+    state: &str,
+) -> Result<View> {
+    let on = state == "on";
+    if on {
+        crate::safety::check_firewall_panic_on(cli.force)?;
+    }
+    let method = if on {
+        "enablePanicMode"
+    } else {
+        "disablePanicMode"
+    };
+    run_audited(
+        client,
+        channel,
+        &host,
+        AuditedFirewallCall::new(
+            format!("panic-{state}"),
+            "firewall",
+            FW_IFACE,
+            method,
+            json!([]),
+        ),
+    )?;
+    Ok(panic_view(host, on))
+}
+
+/// `firewall masquerade on|off`: toggle NAT masquerade in a zone. Turning it
+/// *off* is gated by [`crate::safety::check_firewall_masquerade_off`].
+fn mutate_masquerade(
+    cli: &Cli,
+    client: &mut BridgeClient,
+    channel: &str,
+    host: String,
+    state: &str,
+    zone: Option<&str>,
+    timeout: Option<u32>,
+) -> Result<View> {
+    let on = state == "on";
+    let zone = effective_zone(client, channel, zone)?;
+    if !on {
+        crate::safety::check_firewall_masquerade_off(cli.force)?;
+    }
+    let (method, args) = if on {
+        let t = i64::from(timeout.unwrap_or(0));
+        ("addMasquerade", json!([zone, t]))
+    } else {
+        ("removeMasquerade", json!([zone]))
+    };
+    run_audited(
+        client,
+        channel,
+        &host,
+        AuditedFirewallCall::new(
+            format!("masquerade-{state}"),
+            zone.as_str(),
+            FW_ZONE_IFACE,
+            method,
+            args,
+        ),
+    )?;
+    Ok(masquerade_view(
+        host,
+        &zone,
+        on,
+        if on { timeout } else { None },
+    ))
 }
 
 /// A firewalld method call plus the audit metadata that describes it.

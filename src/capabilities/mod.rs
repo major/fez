@@ -2,8 +2,44 @@
 
 use crate::cli::Cli;
 use crate::envelope::{ApiError, Envelope};
-use crate::error::Result;
+use crate::error::{FezError, Result};
+use crate::protocol::client::BridgeClient;
 use serde_json::Value;
+
+/// Connect a bridge client to this invocation's target host.
+///
+/// Collapses the `from_host` + [`BridgeClient::connect`] bootstrap that every
+/// capability entry point repeats. The transport is dropped right after
+/// connect: [`BridgeClient::connect`] spawns the bridge child and keeps no
+/// borrow on it.
+///
+/// # Errors
+///
+/// Propagates any spawn or handshake error from [`BridgeClient::connect`].
+pub fn connect(cli: &Cli) -> Result<BridgeClient> {
+    let transport = crate::transport::from_host(cli.host.as_deref());
+    BridgeClient::connect(transport.as_ref())
+}
+
+/// Map a daemon-absent D-Bus error to `missing`, passing everything else through.
+///
+/// dnf5daemon and firewalld report "the service isn't there" as a
+/// `ServiceUnknown` D-Bus error ([`crate::error::is_service_unknown`]);
+/// capabilities translate that into a dependency-missing error. Every other
+/// result (including unrelated `Dbus` errors) is returned unchanged.
+///
+/// # Errors
+///
+/// Returns `missing()` on a service-unknown `Dbus` error, otherwise the
+/// original result's error.
+pub fn map_service_unknown<T>(res: Result<T>, missing: impl FnOnce() -> FezError) -> Result<T> {
+    match res {
+        Err(FezError::Dbus { name, .. }) if crate::error::is_service_unknown(&name) => {
+            Err(missing())
+        }
+        other => other,
+    }
+}
 
 /// A rendered capability result: the JSON payload plus its human form.
 ///
@@ -141,6 +177,32 @@ mod tests {
 
     fn cli(args: &[&str]) -> Cli {
         Cli::try_parse_from(args).expect("args parse")
+    }
+
+    #[test]
+    fn map_service_unknown_maps_only_service_unknown_dbus_errors() {
+        // ServiceUnknown -> the caller's dependency-missing error.
+        let mapped = super::map_service_unknown::<()>(
+            Err(FezError::Dbus {
+                name: "org.freedesktop.DBus.Error.ServiceUnknown".into(),
+                message: "gone".into(),
+            }),
+            || FezError::NotFound("daemon".into()),
+        );
+        assert!(matches!(mapped, Err(FezError::NotFound(_))));
+
+        // An unrelated Dbus error passes through untouched.
+        let other = super::map_service_unknown::<()>(
+            Err(FezError::Dbus {
+                name: "org.freedesktop.DBus.Error.AccessDenied".into(),
+                message: "no".into(),
+            }),
+            || FezError::NotFound("daemon".into()),
+        );
+        assert!(matches!(other, Err(FezError::Dbus { .. })));
+
+        // Ok passes through.
+        assert!(super::map_service_unknown(Ok(7), || FezError::NotFound("x".into())).is_ok());
     }
 
     #[test]

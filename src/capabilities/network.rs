@@ -10,7 +10,6 @@ use crate::capabilities::{render, View};
 use crate::cli::{Cli, NetworkAction};
 use crate::error::{FezError, Result};
 use crate::protocol::client::BridgeClient;
-use crate::transport;
 use serde_json::{json, Value};
 
 const NM_NAME: &str = "org.freedesktop.NetworkManager";
@@ -33,8 +32,7 @@ pub fn dispatch(cli: &Cli, action: &NetworkAction) -> i32 {
 
 /// Connect to the bridge and dispatch the requested read action.
 fn run(cli: &Cli, action: &NetworkAction) -> Result<View> {
-    let transport = transport::from_host(cli.host.as_deref());
-    let mut client = BridgeClient::connect(transport.as_ref())?;
+    let mut client = crate::capabilities::connect(cli)?;
     let host = client.host().to_string();
     let channel = client.dbus_open(NM_NAME)?;
     match action {
