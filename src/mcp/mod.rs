@@ -114,12 +114,10 @@ fn handle_line_with_context(line: &str, context: &ServerContext) -> Option<Respo
 }
 
 fn initialize_result(params: &Value, context: &ServerContext) -> Value {
-    // Echo the client's requested protocol version when present, else our default.
     let version = params
         .get("protocolVersion")
         .and_then(Value::as_str)
-        .unwrap_or(PROTOCOL_VERSION)
-        .to_string();
+        .unwrap_or(PROTOCOL_VERSION);
     json!({
         "protocolVersion": version,
         "capabilities": { "tools": {} },
@@ -203,30 +201,28 @@ fn expanded_tool_description(d: &capability::Descriptor) -> String {
 
 fn expanded_tool_schema(d: &capability::Descriptor) -> Value {
     let mut properties = serde_json::Map::new();
-    let mut required = Vec::new();
-
+    let mut required: Vec<Value> = Vec::new();
     for input in &d.inputs {
         properties.insert(input.name.clone(), input_schema(d, input));
         if input.required {
-            required.push(Value::String(input.name.clone()));
+            required.push(json!(input.name));
         }
     }
-
     for flag in d.flag_schema() {
         if flag.name == "--json" {
             continue;
         }
         properties.insert(flag_arg_name(&flag.name), flag_schema(&flag));
     }
-
-    let mut schema = serde_json::Map::new();
-    schema.insert("type".to_string(), Value::String("object".to_string()));
-    schema.insert("properties".to_string(), Value::Object(properties));
+    let mut schema = json!({
+        "type": "object",
+        "properties": properties,
+        "additionalProperties": false,
+    });
     if !required.is_empty() {
-        schema.insert("required".to_string(), Value::Array(required));
+        schema["required"] = json!(required);
     }
-    schema.insert("additionalProperties".to_string(), Value::Bool(false));
-    Value::Object(schema)
+    schema
 }
 
 fn input_schema(d: &capability::Descriptor, input: &capability::Input) -> Value {
@@ -238,19 +234,14 @@ fn input_schema(d: &capability::Descriptor, input: &capability::Input) -> Value 
             ]
         });
     }
-
-    let mut schema = serde_json::Map::new();
-    schema.insert("type".to_string(), Value::String(input.ty.clone()));
+    let mut schema = json!({ "type": input.ty });
     if let Some(default) = &input.default {
-        schema.insert("default".to_string(), Value::String(default.clone()));
+        schema["default"] = json!(default);
     }
     if let Some(choices) = &input.choices {
-        schema.insert(
-            "enum".to_string(),
-            Value::Array(choices.iter().cloned().map(Value::String).collect()),
-        );
+        schema["enum"] = json!(choices);
     }
-    Value::Object(schema)
+    schema
 }
 
 fn is_variadic_input(d: &capability::Descriptor, input: &capability::Input) -> bool {
@@ -258,42 +249,26 @@ fn is_variadic_input(d: &capability::Descriptor, input: &capability::Input) -> b
 }
 
 fn flag_schema(flag: &capability::FlagSchema) -> Value {
-    let mut schema = serde_json::Map::new();
-    if flag.repeatable {
-        schema.insert("type".to_string(), Value::String("array".to_string()));
-        schema.insert("items".to_string(), json!({ "type": flag.ty }));
+    let mut schema = if flag.repeatable {
+        json!({
+            "type": "array",
+            "items": { "type": flag.ty },
+            "description": flag.description,
+            "repeatable": true,
+        })
     } else {
-        schema.insert("type".to_string(), Value::String(flag.ty.clone()));
-    }
-    schema.insert(
-        "description".to_string(),
-        Value::String(flag.description.clone()),
-    );
-    if flag.repeatable {
-        schema.insert("repeatable".to_string(), Value::Bool(true));
-    }
+        json!({ "type": flag.ty, "description": flag.description })
+    };
     if let Some(default) = &flag.default {
-        schema.insert("default".to_string(), Value::String(default.clone()));
+        schema["default"] = json!(default);
     }
     if let Some(choices) = &flag.choices {
-        schema.insert(
-            "enum".to_string(),
-            Value::Array(choices.iter().cloned().map(Value::String).collect()),
-        );
+        schema["enum"] = json!(choices);
     }
     if !flag.conflicts_with.is_empty() {
-        schema.insert(
-            "conflicts_with".to_string(),
-            Value::Array(
-                flag.conflicts_with
-                    .iter()
-                    .cloned()
-                    .map(Value::String)
-                    .collect(),
-            ),
-        );
+        schema["conflicts_with"] = json!(flag.conflicts_with);
     }
-    Value::Object(schema)
+    schema
 }
 
 fn flag_arg_name(flag: &str) -> String {
@@ -392,8 +367,6 @@ fn invoke_expanded(
     context: &ServerContext,
 ) -> Result<Value, (i64, String)> {
     let mut inputs = serde_json::Map::new();
-    let mut wrapped = serde_json::Map::new();
-
     for input in &descriptor.inputs {
         if let Some(value) = args.get(&input.name) {
             inputs.insert(input.name.clone(), value.clone());
@@ -410,17 +383,17 @@ fn invoke_expanded(
             }
         }
     }
-    wrapped.insert("inputs".to_string(), Value::Object(inputs));
+    let mut wrapped = json!({ "inputs": inputs });
     if let Some(value) = args.get("host") {
-        wrapped.insert("host".to_string(), value.clone());
+        wrapped["host"] = value.clone();
     }
     if let Some(value) = args.get("dry_run") {
-        wrapped.insert("dry_run".to_string(), value.clone());
+        wrapped["dry_run"] = value.clone();
     }
     if let Some(value) = args.get("force") {
-        wrapped.insert("force".to_string(), value.clone());
+        wrapped["force"] = value.clone();
     }
-    invoke(&descriptor.id, &Value::Object(wrapped), context)
+    invoke(&descriptor.id, &wrapped, context)
 }
 
 /// Translate an invoke request into `fez` argv. The capability id becomes the
