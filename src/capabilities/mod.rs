@@ -323,7 +323,7 @@ mod tests {
 }
 
 /// systemd service management capabilities.
-pub mod service;
+pub mod services;
 
 /// RPM package management capabilities (via dnf5daemon).
 pub mod package;

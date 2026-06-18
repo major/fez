@@ -24,7 +24,7 @@ pub fn run(cli: Cli) -> i32 {
             std::io::stdout().write_all(&buf).expect("write man page");
             0
         }
-        TopCommand::Services { action } => crate::capabilities::service::dispatch(&cli, action),
+        TopCommand::Services { action } => crate::capabilities::services::dispatch(&cli, action),
         TopCommand::Packages { action } => crate::capabilities::package::dispatch(&cli, action),
         TopCommand::Network { action } => crate::capabilities::network::dispatch(&cli, action),
         TopCommand::Firewall { action } => crate::capabilities::firewall::dispatch(&cli, action),
