@@ -41,6 +41,17 @@ pub fn map_service_unknown<T>(res: Result<T>, missing: impl FnOnce() -> FezError
     }
 }
 
+/// Shared context for capability functions: bundles the bridge client,
+/// channel, and target host to avoid threading them as separate parameters.
+pub(crate) struct CapabilityContext<'a> {
+    /// Bridge client connection.
+    pub(crate) client: &'a mut BridgeClient,
+    /// Open D-Bus channel path.
+    pub(crate) channel: &'a str,
+    /// Resolved target host name.
+    pub(crate) host: &'a str,
+}
+
 /// A rendered capability result: the JSON payload plus its human form.
 ///
 /// Every capability handler returns one of these (wrapped in [`Result`]); the
@@ -66,10 +77,10 @@ pub struct View {
 
 impl View {
     /// A bare view: no hints, not pre-rendered. The common case.
-    pub fn new(kind: &'static str, host: String, data: Value, human: String) -> Self {
+    pub fn new(kind: &'static str, host: impl Into<String>, data: Value, human: String) -> Self {
         View {
             kind,
-            host,
+            host: host.into(),
             data,
             human,
             hints: None,
@@ -204,7 +215,7 @@ mod tests {
 
     #[test]
     fn new_is_bare() {
-        let v = View::new("Kind", "host".into(), json!({"a": 1}), "human\n".into());
+        let v = View::new("Kind", "host", json!({"a": 1}), "human\n".into());
         assert_eq!(v.kind, "Kind");
         assert_eq!(v.host, "host");
         assert_eq!(v.human, "human\n");
@@ -214,43 +225,37 @@ mod tests {
 
     #[test]
     fn with_hints_sets_hints() {
-        let v = View::new("K", "h".into(), json!(null), String::new())
-            .with_hints(json!({"reverse": "fez x"}));
+        let v =
+            View::new("K", "h", json!(null), String::new()).with_hints(json!({"reverse": "fez x"}));
         assert_eq!(v.hints.unwrap()["reverse"], "fez x");
     }
 
     #[test]
     fn with_hints_opt_passes_through() {
-        let some = View::new("K", "h".into(), json!(null), String::new())
-            .with_hints_opt(Some(json!({"k": 1})));
+        let some =
+            View::new("K", "h", json!(null), String::new()).with_hints_opt(Some(json!({"k": 1})));
         assert!(some.hints.is_some());
-        let none = View::new("K", "h".into(), json!(null), String::new()).with_hints_opt(None);
+        let none = View::new("K", "h", json!(null), String::new()).with_hints_opt(None);
         assert!(none.hints.is_none());
     }
 
     #[test]
     fn pre_rendered_marks_the_view() {
-        let v = View::new("K", "h".into(), json!(null), String::new()).pre_rendered();
+        let v = View::new("K", "h", json!(null), String::new()).pre_rendered();
         assert!(v.pre_rendered);
     }
 
     #[test]
     fn render_pre_rendered_view_is_silent_success() {
         let c = cli(&["fez", "services", "list"]);
-        let v =
-            View::new("LogEntries", "localhost".into(), json!(null), String::new()).pre_rendered();
+        let v = View::new("LogEntries", "localhost", json!(null), String::new()).pre_rendered();
         assert_eq!(render(&c, Ok(v)), 0);
     }
 
     #[test]
     fn render_ok_human_returns_zero() {
         let c = cli(&["fez", "services", "list"]);
-        let v = View::new(
-            "ServiceList",
-            "localhost".into(),
-            json!({"a": 1}),
-            "out\n".into(),
-        );
+        let v = View::new("ServiceList", "localhost", json!({"a": 1}), "out\n".into());
         assert_eq!(render(&c, Ok(v)), 0);
     }
 
@@ -259,7 +264,7 @@ mod tests {
         let c = cli(&["fez", "--json", "services", "stop", "x"]);
         let v = View::new(
             "Stopped",
-            "localhost".into(),
+            "localhost",
             json!({"unit": "x"}),
             "stopped\n".into(),
         )
@@ -312,12 +317,7 @@ mod tests {
     #[test]
     fn render_success_does_not_add_hints_from_error() {
         let c = cli(&["fez", "--json", "firewall", "status"]);
-        let v = View::new(
-            "FirewallStatus",
-            "localhost".into(),
-            json!({}),
-            "ok\n".into(),
-        );
+        let v = View::new("FirewallStatus", "localhost", json!({}), "ok\n".into());
         assert_eq!(render(&c, Ok(v)), 0);
     }
 }

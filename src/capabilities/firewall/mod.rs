@@ -10,7 +10,7 @@ mod mutations;
 mod reads;
 mod zone;
 
-use crate::capabilities::{render, View};
+use crate::capabilities::{render, CapabilityContext, View};
 use crate::cli::{Cli, FirewallAction};
 use crate::error::{is_service_unknown, FezError, Result};
 use crate::protocol::client::BridgeClient;
@@ -147,23 +147,21 @@ fn run(cli: &Cli, action: &FirewallAction) -> Result<View> {
     let mut client = crate::capabilities::connect(cli)?;
     let host = client.host().to_string();
     match classify(action) {
-        Plan::Read(ReadAction::Status) => {
+        Plan::Read(read) => {
             let ch = open_channel(&mut client, false)?;
-            reads::status(&mut client, &ch, host)
+            let mut ctx = CapabilityContext {
+                client: &mut client,
+                channel: &ch,
+                host: &host,
+            };
+            match read {
+                ReadAction::Status => reads::status(&mut ctx),
+                ReadAction::List => reads::list(&mut ctx),
+                ReadAction::Show { zone } => reads::show(&mut ctx, zone),
+                ReadAction::Services => reads::services(&mut ctx),
+            }
         }
-        Plan::Read(ReadAction::List) => {
-            let ch = open_channel(&mut client, false)?;
-            reads::list(&mut client, &ch, host)
-        }
-        Plan::Read(ReadAction::Show { zone }) => {
-            let ch = open_channel(&mut client, false)?;
-            reads::show(&mut client, &ch, host, zone)
-        }
-        Plan::Read(ReadAction::Services) => {
-            let ch = open_channel(&mut client, false)?;
-            reads::services(&mut client, &ch, host)
-        }
-        Plan::Mutate(mutation) => mutations::mutate(cli, &mut client, host, mutation),
+        Plan::Mutate(mutation) => mutations::mutate(cli, &mut client, &host, mutation),
     }
 }
 

@@ -1,4 +1,4 @@
-use crate::capabilities::{render, View};
+use crate::capabilities::{render, CapabilityContext, View};
 use crate::cli::{Cli, ServicesAction};
 use crate::error::{FezError, Result};
 use crate::protocol::client::BridgeClient;
@@ -306,19 +306,20 @@ fn mutation_view(m: &Mutation, host: &str, unit: &str, data: Value) -> View {
 fn execute(cli: &Cli, m: &Mutation, host: &str, unit: &str) -> Result<View> {
     let mut client = crate::capabilities::connect(cli)?;
     let channel = client.dbus_open_privileged("org.freedesktop.systemd1")?;
+    let mut ctx = CapabilityContext {
+        client: &mut client,
+        channel: &channel,
+        host,
+    };
     // Helper for the simple `*Unit` ops, which differ only by manager method.
-    // Keeping it a fn (not a closure) avoids capturing `client`, so the
-    // enablement arms below can still borrow it.
     fn simple_unit(
-        client: &mut BridgeClient,
-        channel: &str,
+        ctx: &mut CapabilityContext<'_>,
         m: &Mutation,
-        host: &str,
         unit: &str,
         method: &str,
     ) -> Result<View> {
-        let out = client.dbus_call(
-            channel,
+        let out = ctx.client.dbus_call(
+            ctx.channel,
             MGR_PATH,
             MGR_IFACE,
             method,
@@ -327,22 +328,18 @@ fn execute(cli: &Cli, m: &Mutation, host: &str, unit: &str) -> Result<View> {
         let job = out.get(0).and_then(Value::as_str).unwrap_or("").to_string();
         Ok(mutation_view(
             m,
-            host,
+            ctx.host,
             unit,
-            json!({"operation": m.verb(), "unit": unit, "host": host, "job": job}),
+            json!({"operation": m.verb(), "unit": unit, "host": ctx.host, "job": job}),
         ))
     }
     match m {
-        Mutation::Start => simple_unit(&mut client, &channel, m, host, unit, "StartUnit"),
-        Mutation::Stop => simple_unit(&mut client, &channel, m, host, unit, "StopUnit"),
-        Mutation::Restart => simple_unit(&mut client, &channel, m, host, unit, "RestartUnit"),
-        Mutation::Reload => simple_unit(&mut client, &channel, m, host, unit, "ReloadUnit"),
-        Mutation::Enable { now } => {
-            execute_enablement(&mut client, &channel, Enablement::Enable, host, unit, *now)
-        }
-        Mutation::Disable { now } => {
-            execute_enablement(&mut client, &channel, Enablement::Disable, host, unit, *now)
-        }
+        Mutation::Start => simple_unit(&mut ctx, m, unit, "StartUnit"),
+        Mutation::Stop => simple_unit(&mut ctx, m, unit, "StopUnit"),
+        Mutation::Restart => simple_unit(&mut ctx, m, unit, "RestartUnit"),
+        Mutation::Reload => simple_unit(&mut ctx, m, unit, "ReloadUnit"),
+        Mutation::Enable { now } => execute_enablement(&mut ctx, Enablement::Enable, unit, *now),
+        Mutation::Disable { now } => execute_enablement(&mut ctx, Enablement::Disable, unit, *now),
     }
 }
 
@@ -391,25 +388,25 @@ impl Enablement {
 }
 
 fn execute_enablement(
-    client: &mut BridgeClient,
-    channel: &str,
+    ctx: &mut CapabilityContext<'_>,
     op: Enablement,
-    host: &str,
     unit: &str,
     now: bool,
 ) -> Result<View> {
     let call = op.unit_file_call(unit);
-    let out = client.dbus_call(channel, MGR_PATH, MGR_IFACE, call.method, call.args)?;
+    let out = ctx
+        .client
+        .dbus_call(ctx.channel, MGR_PATH, MGR_IFACE, call.method, call.args)?;
     let changes = out
         .get(call.changes_index)
         .cloned()
         .unwrap_or_else(|| json!([]));
 
     // Unit file changes leave systemd's cached UnitFileState stale until reload.
-    reload_daemon(client, channel)?;
+    reload_daemon(ctx.client, ctx.channel)?;
     if now {
-        client.dbus_call(
-            channel,
+        ctx.client.dbus_call(
+            ctx.channel,
             MGR_PATH,
             MGR_IFACE,
             call.followup_method,
@@ -419,9 +416,9 @@ fn execute_enablement(
     let m = op.mutation(now);
     Ok(mutation_view(
         &m,
-        host,
+        ctx.host,
         unit,
-        json!({"operation": m.verb(), "unit": unit, "host": host, "now": now, "changes": changes}),
+        json!({"operation": m.verb(), "unit": unit, "host": ctx.host, "now": now, "changes": changes}),
     ))
 }
 

@@ -5,7 +5,7 @@
 //! unprivileged and render a [`View`], mutations resolve the transaction first,
 //! apply removal guardrails, audit, then execute. Every dnf5daemon session is
 //! closed best-effort on every return path so the daemon never leaks sessions.
-use crate::capabilities::{render, View};
+use crate::capabilities::{render, CapabilityContext, View};
 use crate::cli::{Cli, PackagesAction};
 use crate::error::{FezError, Result};
 use crate::protocol::client::BridgeClient;
@@ -336,14 +336,19 @@ fn run_read(cli: &Cli, action: ReadAction<'_>) -> Result<View> {
         }
         Err(e) => return Err(e),
     };
-    let result = match action {
-        ReadAction::List(filters) => list(&mut client, &channel, &session, host, filters),
-        ReadAction::Info { spec } => info(&mut client, &channel, &session, host, spec),
-        ReadAction::Search { pattern } => search(&mut client, &channel, &session, host, pattern),
-        ReadAction::CheckUpdate => check_update(&mut client, &channel, &session, host),
-        ReadAction::Repolist { filter } => repolist(&mut client, &channel, &session, host, filter),
+    let mut ctx = CapabilityContext {
+        client: &mut client,
+        channel: &channel,
+        host: &host,
     };
-    close_session(&mut client, &channel, &session);
+    let result = match action {
+        ReadAction::List(filters) => list(&mut ctx, &session, filters),
+        ReadAction::Info { spec } => info(&mut ctx, &session, spec),
+        ReadAction::Search { pattern } => search(&mut ctx, &session, pattern),
+        ReadAction::CheckUpdate => check_update(&mut ctx, &session),
+        ReadAction::Repolist { filter } => repolist(&mut ctx, &session, filter),
+    };
+    close_session(ctx.client, ctx.channel, &session);
     result
 }
 
@@ -416,19 +421,13 @@ fn rpm_list(
         .unwrap_or_default())
 }
 
-fn list(
-    client: &mut BridgeClient,
-    channel: &str,
-    session: &str,
-    host: String,
-    filters: ListFilters<'_>,
-) -> Result<View> {
+fn list(ctx: &mut CapabilityContext<'_>, session: &str, filters: ListFilters<'_>) -> Result<View> {
     let scope = if filters.available {
         "available"
     } else {
         "installed"
     };
-    let packages = rpm_list(client, channel, session, scope, &[])?;
+    let packages = rpm_list(ctx.client, ctx.channel, session, scope, &[])?;
     // dnf5daemon's Rpm.list has no server-side repo filter (only install/upgrade
     // accept `repo_ids`, for resolution), so we filter client-side on the exact
     // `repo_id`. Multiple --repo flags union: a row is kept if its repo id is in
@@ -474,17 +473,11 @@ fn list(
     } else {
         None
     };
-    Ok(View::new("PackageList", host, data, human).with_hints_opt(hints))
+    Ok(View::new("PackageList", ctx.host, data, human).with_hints_opt(hints))
 }
 
-fn info(
-    client: &mut BridgeClient,
-    channel: &str,
-    session: &str,
-    host: String,
-    spec: &str,
-) -> Result<View> {
-    let packages = rpm_list(client, channel, session, "all", &[spec.to_string()])?;
+fn info(ctx: &mut CapabilityContext<'_>, session: &str, spec: &str) -> Result<View> {
+    let packages = rpm_list(ctx.client, ctx.channel, session, "all", &[spec.to_string()])?;
     let first = packages
         .first()
         .ok_or_else(|| FezError::NotFound(spec.to_string()))?;
@@ -499,18 +492,12 @@ fn info(
         first.install_size,
         first.summary,
     );
-    Ok(View::new("PackageInfo", host, pkg, human))
+    Ok(View::new("PackageInfo", ctx.host, pkg, human))
 }
 
-fn search(
-    client: &mut BridgeClient,
-    channel: &str,
-    session: &str,
-    host: String,
-    pattern: &str,
-) -> Result<View> {
+fn search(ctx: &mut CapabilityContext<'_>, session: &str, pattern: &str) -> Result<View> {
     let glob = format!("*{pattern}*");
-    let packages = rpm_list(client, channel, session, "available", &[glob])?;
+    let packages = rpm_list(ctx.client, ctx.channel, session, "available", &[glob])?;
     let mut human = String::new();
     for p in &packages {
         human.push_str(&format!("{} - {}\n", p.name, p.summary));
@@ -519,16 +506,11 @@ fn search(
     let mut data = crate::envelope::table_data(PKG_COLUMNS, rows);
     data["pattern"] = json!(pattern);
     data["backend"] = json!("dnf5daemon");
-    Ok(View::new("PackageSearch", host, data, human))
+    Ok(View::new("PackageSearch", ctx.host, data, human))
 }
 
-fn check_update(
-    client: &mut BridgeClient,
-    channel: &str,
-    session: &str,
-    host: String,
-) -> Result<View> {
-    let packages = rpm_list(client, channel, session, "upgrades", &[])?;
+fn check_update(ctx: &mut CapabilityContext<'_>, session: &str) -> Result<View> {
+    let packages = rpm_list(ctx.client, ctx.channel, session, "upgrades", &[])?;
     let mut human = format!("{:<24} {:<20} {}\n", "NAME", "VERSION", "REPO");
     for p in &packages {
         human.push_str(&format!("{:<24} {:<20} {}\n", p.name, p.evr, p.repo_id,));
@@ -536,7 +518,7 @@ fn check_update(
     let rows: Vec<Value> = packages.iter().map(PackageRecord::row).collect();
     let mut data = crate::envelope::table_data(PKG_COLUMNS, rows);
     data["backend"] = json!("dnf5daemon");
-    Ok(View::new("PackageUpdates", host, data, human))
+    Ok(View::new("PackageUpdates", ctx.host, data, human))
 }
 
 /// Column order for the columnar `RepoList` payload (`enabled` stays a bool).
@@ -563,15 +545,9 @@ impl RepoRecord {
     }
 }
 
-fn repolist(
-    client: &mut BridgeClient,
-    channel: &str,
-    session: &str,
-    host: String,
-    filter: RepoFilter,
-) -> Result<View> {
-    let out = client.dbus_call(
-        channel,
+fn repolist(ctx: &mut CapabilityContext<'_>, session: &str, filter: RepoFilter) -> Result<View> {
+    let out = ctx.client.dbus_call(
+        ctx.channel,
         session,
         REPO_IFACE,
         "list",
@@ -596,7 +572,7 @@ fn repolist(
     }
     let mut data = crate::envelope::table_data(REPO_COLUMNS, rows);
     data["backend"] = json!("dnf5daemon");
-    Ok(View::new("RepoList", host, data, human))
+    Ok(View::new("RepoList", ctx.host, data, human))
 }
 
 /// A resolved dnf5daemon transaction, bucketed by action for rendering and
@@ -756,8 +732,13 @@ fn run_mutation(cli: &Cli, m: Mutation, specs: &[String]) -> Result<View> {
     };
     // Do the work in an inner closure so the session is closed on every path,
     // success or failure, before the result propagates.
-    let result = mutation_inner(cli, &mut client, &channel, &session, m, specs, &host);
-    close_session(&mut client, &channel, &session);
+    let mut ctx = CapabilityContext {
+        client: &mut client,
+        channel: &channel,
+        host: &host,
+    };
+    let result = mutation_inner(cli, &mut ctx, &session, m, specs);
+    close_session(ctx.client, ctx.channel, &session);
     result
 }
 
@@ -777,35 +758,46 @@ fn mutate_via_packagekit(
     Ok(from_pk(view, host.to_string()))
 }
 
-#[allow(clippy::too_many_arguments)]
 fn mutation_inner(
     cli: &Cli,
-    client: &mut BridgeClient,
-    channel: &str,
+    ctx: &mut CapabilityContext<'_>,
     session: &str,
     m: Mutation,
     specs: &[String],
-    host: &str,
 ) -> Result<View> {
     // 1. Stage the goal.
-    client.dbus_call(channel, session, RPM_IFACE, m.method(), json!([specs, {}]))?;
+    ctx.client.dbus_call(
+        ctx.channel,
+        session,
+        RPM_IFACE,
+        m.method(),
+        json!([specs, {}]),
+    )?;
     // 2. Resolve into a concrete plan.
-    let out = client.dbus_call(channel, session, GOAL_IFACE, "resolve", json!([{}]))?;
+    let out = ctx
+        .client
+        .dbus_call(ctx.channel, session, GOAL_IFACE, "resolve", json!([{}]))?;
     let items = out.get(0).cloned().unwrap_or(Value::Null);
     let plan = parse_plan(&items);
 
     // 3. Dry-run: report the plan without executing.
     if cli.dry_run {
-        return Ok(plan_view(m, host, specs, &plan, true));
+        return Ok(plan_view(m, ctx.host, specs, &plan, true));
     }
 
     // 4. Removal guardrails (protected package / cascade) before any execution.
     crate::safety::check_removal_plan(&plan.remove_names, cli.force)?;
 
     // 5. Audit attempt, execute, audit result.
-    crate::audit::run_audited(host, m.verb(), &specs.join(","), || {
-        client.dbus_call(channel, session, GOAL_IFACE, "do_transaction", json!([{}]))?;
-        Ok(plan_view(m, host, specs, &plan, false))
+    crate::audit::run_audited(ctx.host, m.verb(), &specs.join(","), || {
+        ctx.client.dbus_call(
+            ctx.channel,
+            session,
+            GOAL_IFACE,
+            "do_transaction",
+            json!([{}]),
+        )?;
+        Ok(plan_view(m, ctx.host, specs, &plan, false))
     })
 }
 
