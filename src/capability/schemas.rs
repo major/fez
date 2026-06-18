@@ -257,7 +257,16 @@ fn package_list_schema() -> Value {
             "limit": nullable_integer_prop(), "offset": integer_prop(),
             "next_offset": nullable_integer_prop(),
         }),
-        &["scope", "repos", "name", "total", "returned", "limit", "offset", "next_offset"],
+        &[
+            "scope",
+            "repos",
+            "name",
+            "total",
+            "returned",
+            "limit",
+            "offset",
+            "next_offset",
+        ],
     )
 }
 
@@ -281,7 +290,17 @@ fn network_device_detail_schema() -> Value {
             }}),
             "dhcp4": nullable_object_prop(),
         }),
-        &["interface", "type", "state", "mac", "mtu", "ipv4", "ipv6", "connection", "dhcp4"],
+        &[
+            "interface",
+            "type",
+            "state",
+            "mac",
+            "mtu",
+            "ipv4",
+            "ipv6",
+            "connection",
+            "dhcp4",
+        ],
     )
 }
 
@@ -292,7 +311,14 @@ fn firewall_status_schema() -> Value {
             "panic_mode": boolean_prop(), "masquerade": boolean_prop(),
             "pending_changes": array_prop(), "pending_changes_available": boolean_prop(),
         }),
-        &["running", "default_zone", "panic_mode", "masquerade", "pending_changes", "pending_changes_available"],
+        &[
+            "running",
+            "default_zone",
+            "panic_mode",
+            "masquerade",
+            "pending_changes",
+            "pending_changes_available",
+        ],
     )
 }
 
@@ -302,7 +328,14 @@ fn firewall_zone_schema() -> Value {
             "zone": string_prop(), "services": array_prop(), "ports": array_prop(),
             "interfaces": array_prop(), "sources": array_prop(), "masquerade": boolean_prop(),
         }),
-        &["zone", "services", "ports", "interfaces", "sources", "masquerade"],
+        &[
+            "zone",
+            "services",
+            "ports",
+            "interfaces",
+            "sources",
+            "masquerade",
+        ],
     )
 }
 
@@ -319,33 +352,36 @@ fn firewall_change_schema() -> Value {
 }
 
 fn firewall_confirm_schema() -> Value {
-    object_schema(json!({"operation": string_prop(), "persisted": boolean_prop()}), &["operation", "persisted"])
+    object_schema(
+        json!({"operation": string_prop(), "persisted": boolean_prop()}),
+        &["operation", "persisted"],
+    )
 }
 
 /// Dispatch output kind to its JSON Schema. Adding a new kind requires only a
 /// new named function above and one entry in this match.
 pub(super) fn output_schema(kind: &str) -> Value {
     match kind {
-        "ServiceList"          => table_schema(SERVICE_LIST_COLUMNS, json!({}), &[]),
-        "ServiceStatus"        => service_status_schema(),
-        "LogEntries"           => log_entries_schema(),
-        "ServiceMutation"      => service_mutation_schema(),
-        "ServiceEnablement"    => service_enablement_schema(),
-        "PackageList"          => package_list_schema(),
-        "PackageInfo"          => package_info_schema(),
-        "PackageSearch"        => package_table_schema(json!({"pattern": string_prop()}), &["pattern"]),
-        "PackageUpdates"       => package_table_schema(json!({}), &[]),
-        "RepoList"             => repo_list_schema(),
-        "PackageMutation"      => package_mutation_schema(),
-        "NetworkDeviceList"    => table_schema(NETWORK_LIST_COLUMNS, json!({}), &[]),
-        "NetworkDeviceDetail"  => network_device_detail_schema(),
-        "FirewallStatus"       => firewall_status_schema(),
-        "FirewallZoneList"     => table_schema(FIREWALL_ZONE_LIST_COLUMNS, json!({}), &[]),
-        "FirewallZone"         => firewall_zone_schema(),
+        "ServiceList" => table_schema(SERVICE_LIST_COLUMNS, json!({}), &[]),
+        "ServiceStatus" => service_status_schema(),
+        "LogEntries" => log_entries_schema(),
+        "ServiceMutation" => service_mutation_schema(),
+        "ServiceEnablement" => service_enablement_schema(),
+        "PackageList" => package_list_schema(),
+        "PackageInfo" => package_info_schema(),
+        "PackageSearch" => package_table_schema(json!({"pattern": string_prop()}), &["pattern"]),
+        "PackageUpdates" => package_table_schema(json!({}), &[]),
+        "RepoList" => repo_list_schema(),
+        "PackageMutation" => package_mutation_schema(),
+        "NetworkDeviceList" => table_schema(NETWORK_LIST_COLUMNS, json!({}), &[]),
+        "NetworkDeviceDetail" => network_device_detail_schema(),
+        "FirewallStatus" => firewall_status_schema(),
+        "FirewallZoneList" => table_schema(FIREWALL_ZONE_LIST_COLUMNS, json!({}), &[]),
+        "FirewallZone" => firewall_zone_schema(),
         "FirewallServiceCatalog" => object_schema(json!({"services": array_prop()}), &["services"]),
-        "FirewallChange"       => firewall_change_schema(),
-        "FirewallConfirm"      => firewall_confirm_schema(),
-        _                      => object_schema(json!({}), &[]),
+        "FirewallChange" => firewall_change_schema(),
+        "FirewallConfirm" => firewall_confirm_schema(),
+        _ => object_schema(json!({}), &[]),
     }
 }
 

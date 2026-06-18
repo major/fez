@@ -35,40 +35,84 @@ pub(super) fn systemd_reply(
                     *escalated = true;
                     ok_reply(id, json!([]))
                 }
-                _ => err_reply(id, "cockpit.Superuser.Error", format!("mechanism {name:?} cannot start")),
+                _ => err_reply(
+                    id,
+                    "cockpit.Superuser.Error",
+                    format!("mechanism {name:?} cannot start"),
+                ),
             }
         }
-        "ListUnits" => ok_reply(id, json!([[
-            ["sshd.service","OpenSSH server daemon","loaded","active","running","",
-             "/org/freedesktop/systemd1/unit/sshd_2eservice",0,"",ROOT_PATH],
-            ["chronyd.service","NTP client/server","loaded","inactive","dead","",
-             "/org/freedesktop/systemd1/unit/chronyd_2eservice",0,"",ROOT_PATH],
-        ]])),
-        "GetUnit" | "LoadUnit" => ok_reply(id, json!(["/org/freedesktop/systemd1/unit/sshd_2eservice"])),
-        "GetAll" => ok_reply(id, json!([{
-            "Id":{"t":"s","v":"sshd.service"},
-            "Description":{"t":"s","v":"OpenSSH server daemon"},
-            "LoadState":{"t":"s","v":"loaded"},
-            "ActiveState":{"t":"s","v":"active"},
-            "SubState":{"t":"s","v":"running"},
-            "UnitFileState":{"t":"s","v":"enabled"}
-        }])),
+        "ListUnits" => ok_reply(
+            id,
+            json!([[
+                [
+                    "sshd.service",
+                    "OpenSSH server daemon",
+                    "loaded",
+                    "active",
+                    "running",
+                    "",
+                    "/org/freedesktop/systemd1/unit/sshd_2eservice",
+                    0,
+                    "",
+                    ROOT_PATH
+                ],
+                [
+                    "chronyd.service",
+                    "NTP client/server",
+                    "loaded",
+                    "inactive",
+                    "dead",
+                    "",
+                    "/org/freedesktop/systemd1/unit/chronyd_2eservice",
+                    0,
+                    "",
+                    ROOT_PATH
+                ],
+            ]]),
+        ),
+        "GetUnit" | "LoadUnit" => {
+            ok_reply(id, json!(["/org/freedesktop/systemd1/unit/sshd_2eservice"]))
+        }
+        "GetAll" => ok_reply(
+            id,
+            json!([{
+                "Id":{"t":"s","v":"sshd.service"},
+                "Description":{"t":"s","v":"OpenSSH server daemon"},
+                "LoadState":{"t":"s","v":"loaded"},
+                "ActiveState":{"t":"s","v":"active"},
+                "SubState":{"t":"s","v":"running"},
+                "UnitFileState":{"t":"s","v":"enabled"}
+            }]),
+        ),
         "StartUnit" | "StopUnit" | "RestartUnit" | "ReloadUnit" => {
             ok_reply(id, json!(["/org/freedesktop/systemd1/job/42"]))
         }
         "Reload" => ok_reply(id, json!([])),
-        "EnableUnitFiles" => ok_reply(id, json!([
-            true,
-            [["symlink",
-              "/etc/systemd/system/multi-user.target.wants/chronyd.service",
-              "/usr/lib/systemd/system/chronyd.service"]],
-        ])),
-        "DisableUnitFiles" => ok_reply(id, json!([
-            [["unlink",
-              "/etc/systemd/system/multi-user.target.wants/chronyd.service",
-              ""]],
-        ])),
+        "EnableUnitFiles" => ok_reply(
+            id,
+            json!([
+                true,
+                [[
+                    "symlink",
+                    "/etc/systemd/system/multi-user.target.wants/chronyd.service",
+                    "/usr/lib/systemd/system/chronyd.service"
+                ]],
+            ]),
+        ),
+        "DisableUnitFiles" => ok_reply(
+            id,
+            json!([[[
+                "unlink",
+                "/etc/systemd/system/multi-user.target.wants/chronyd.service",
+                ""
+            ]],]),
+        ),
         "close_session" => ok_reply(id, json!([true])),
-        other => err_reply(id, "org.freedesktop.DBus.Error.UnknownMethod", format!("no fake for {other}")),
+        other => err_reply(
+            id,
+            "org.freedesktop.DBus.Error.UnknownMethod",
+            format!("no fake for {other}"),
+        ),
     }
 }

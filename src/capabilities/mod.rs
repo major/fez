@@ -312,7 +312,12 @@ mod tests {
     #[test]
     fn render_success_does_not_add_hints_from_error() {
         let c = cli(&["fez", "--json", "firewall", "status"]);
-        let v = View::new("FirewallStatus", "localhost".into(), json!({}), "ok\n".into());
+        let v = View::new(
+            "FirewallStatus",
+            "localhost".into(),
+            json!({}),
+            "ok\n".into(),
+        );
         assert_eq!(render(&c, Ok(v)), 0);
     }
 }

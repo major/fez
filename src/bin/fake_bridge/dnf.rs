@@ -49,28 +49,49 @@ pub(super) fn dnf_reply(method: &str, iface: &str, id: &Value) -> Value {
     match method {
         "open_session" => {
             if std::env::var_os("FEZ_FAKE_NO_DNF5").is_some() {
-                err_reply(id, SERVICE_UNKNOWN, "The name org.rpm.dnf.v0 was not provided by any .service files".into())
+                err_reply(
+                    id,
+                    SERVICE_UNKNOWN,
+                    "The name org.rpm.dnf.v0 was not provided by any .service files".into(),
+                )
             } else {
                 ok_reply(id, json!([SESSION_PATH]))
             }
         }
-        "list" if iface.ends_with(".rpm.Repo") => ok_reply(id, json!([[
-            dnf_repo("fedora", "Fedora", true),
-            dnf_repo("updates-testing", "Fedora - Testing", false),
-        ]])),
+        "list" if iface.ends_with(".rpm.Repo") => ok_reply(
+            id,
+            json!([[
+                dnf_repo("fedora", "Fedora", true),
+                dnf_repo("updates-testing", "Fedora - Testing", false),
+            ]]),
+        ),
         "list" => {
             let packages = match std::env::var("FEZ_FAKE_PACKAGE_COUNT")
                 .ok()
                 .and_then(|s| s.parse::<usize>().ok())
             {
                 Some(count) => (0..count)
-                    .map(|i| dnf_package(&format!("pkg{i:04}"), "1.0-1.fc40", "x86_64", "fedora", 1024))
+                    .map(|i| {
+                        dnf_package(
+                            &format!("pkg{i:04}"),
+                            "1.0-1.fc40",
+                            "x86_64",
+                            "fedora",
+                            1024,
+                        )
+                    })
                     .collect(),
                 None => vec![
                     dnf_package("bash", "5.2.26-1.fc40", "x86_64", "fedora", 7_340_032),
                     dnf_package("htop", "3.3.0-1.fc40", "x86_64", "fedora", 245_760),
                     dnf_package("nginx", "1.24.0-7.fc40", "x86_64", "fedora", 1_572_864),
-                    dnf_package("vim-enhanced", "9.1.0-1.fc40", "x86_64", "updates", 3_145_728),
+                    dnf_package(
+                        "vim-enhanced",
+                        "9.1.0-1.fc40",
+                        "x86_64",
+                        "updates",
+                        3_145_728,
+                    ),
                 ],
             };
             ok_reply(id, json!([packages]))

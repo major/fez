@@ -102,7 +102,13 @@ fn main() -> io::Result<()> {
                 handle_open(&ctrl, &mut stdout, &mut escalated, &mut privileged_channels)?;
             }
         } else {
-            handle_data(&frame, &mut stdout, &bridges, &mut escalated, &privileged_channels);
+            handle_data(
+                &frame,
+                &mut stdout,
+                &bridges,
+                &mut escalated,
+                &privileged_channels,
+            );
         }
     }
     Ok(())

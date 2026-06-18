@@ -144,7 +144,8 @@ impl Descriptor {
             "error_envelope": schemas::error_envelope_schema(),
         });
         let has_dry_run = self.flags.iter().any(|f| f == "--dry-run");
-        if let Some(alternates) = schemas::alternate_output_schemas(&self.output_kind, has_dry_run) {
+        if let Some(alternates) = schemas::alternate_output_schemas(&self.output_kind, has_dry_run)
+        {
             output["alternates"] = alternates;
         }
         output
@@ -174,6 +175,7 @@ fn input_choices(name: &str, required: bool, choices: &[&str]) -> Input {
 /// Static flag-spec table. Each row: (flag, ty, description, repeatable, default, conflicts_with).
 /// Adding a new flag requires only a new row here.
 #[rustfmt::skip]
+#[allow(clippy::type_complexity)] // ponytail: flat tuple table; struct when a second consumer appears
 static FLAG_TABLE: &[(&str, &str, &str, bool, Option<&str>, &[&str])] = &[
     ("--host",      "string",  "Target host. Defaults to localhost.",                                        false, Some("localhost"), &[]),
     ("--json",      "boolean", "Emit a fez/v1 JSON envelope.",                                               false, None,             &[]),
@@ -198,13 +200,27 @@ static FLAG_TABLE: &[(&str, &str, &str, bool, Option<&str>, &[&str])] = &[
 fn flag_schema(capability_id: &str, flag: &str) -> FlagSchema {
     // Per-capability override: packages.repolist --all has different semantics.
     let row = if flag == "--all" && capability_id == "packages.repolist" {
-        ("--all", "boolean", "Show all repositories.", false, None, ["--enabled", "--disabled"].as_slice())
+        (
+            "--all",
+            "boolean",
+            "Show all repositories.",
+            false,
+            None,
+            ["--enabled", "--disabled"].as_slice(),
+        )
     } else {
         FLAG_TABLE
             .iter()
             .find(|(f, ..)| *f == flag)
             .map(|&(f, ty, desc, rep, def, cw)| (f, ty, desc, rep, def, cw))
-            .unwrap_or(("", "string", "Capability-specific flag.", false, None, [].as_slice()))
+            .unwrap_or((
+                "",
+                "string",
+                "Capability-specific flag.",
+                false,
+                None,
+                [].as_slice(),
+            ))
     };
     let (_, ty, description, repeatable, default, conflicts_with) = row;
     FlagSchema {

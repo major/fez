@@ -24,12 +24,15 @@ pub(super) const NM_MGR_PATH: &str = "/org/freedesktop/NetworkManager";
 pub(super) fn nm_reply(path: &str, method: &str, id: &Value) -> Value {
     if path == NM_MGR_PATH {
         return match method {
-            "GetDevices" => ok_reply(id, json!([[
-                format!("{NM_MGR_PATH}/Devices/1"),
-                format!("{NM_MGR_PATH}/Devices/2"),
-                format!("{NM_MGR_PATH}/Devices/3"),
-                format!("{NM_MGR_PATH}/Devices/9"),
-            ]])),
+            "GetDevices" => ok_reply(
+                id,
+                json!([[
+                    format!("{NM_MGR_PATH}/Devices/1"),
+                    format!("{NM_MGR_PATH}/Devices/2"),
+                    format!("{NM_MGR_PATH}/Devices/3"),
+                    format!("{NM_MGR_PATH}/Devices/9"),
+                ]]),
+            ),
             other => nm_unknown(other, id),
         };
     }
@@ -41,49 +44,61 @@ pub(super) fn nm_reply(path: &str, method: &str, id: &Value) -> Value {
     }
     if path.starts_with(&format!("{NM_MGR_PATH}/IP4Config/")) {
         return match method {
-            "GetAll" => ok_reply(id, json!([{
-                "AddressData": {"t":"aa{sv}","v":[
-                    {"address":{"t":"s","v":"192.168.10.20"},"prefix":{"t":"u","v":24}}
-                ]},
-                "Gateway": {"t":"s","v":"192.168.10.1"},
-                "NameserverData": {"t":"aa{sv}","v":[
-                    {"address":{"t":"s","v":"192.168.10.1"}},
-                    {"address":{"t":"s","v":"1.1.1.1"}}
-                ]},
-                "Domains": {"t":"as","v":["lan"]},
-            }])),
+            "GetAll" => ok_reply(
+                id,
+                json!([{
+                    "AddressData": {"t":"aa{sv}","v":[
+                        {"address":{"t":"s","v":"192.168.10.20"},"prefix":{"t":"u","v":24}}
+                    ]},
+                    "Gateway": {"t":"s","v":"192.168.10.1"},
+                    "NameserverData": {"t":"aa{sv}","v":[
+                        {"address":{"t":"s","v":"192.168.10.1"}},
+                        {"address":{"t":"s","v":"1.1.1.1"}}
+                    ]},
+                    "Domains": {"t":"as","v":["lan"]},
+                }]),
+            ),
             other => nm_unknown(other, id),
         };
     }
     if path.starts_with(&format!("{NM_MGR_PATH}/IP6Config/")) {
         return match method {
-            "GetAll" => ok_reply(id, json!([{
-                "AddressData": {"t":"aa{sv}","v":[
-                    {"address":{"t":"s","v":"fd00::20"},"prefix":{"t":"u","v":64}}
-                ]},
-                "Gateway": {"t":"s","v":"fd00::1"},
-            }])),
+            "GetAll" => ok_reply(
+                id,
+                json!([{
+                    "AddressData": {"t":"aa{sv}","v":[
+                        {"address":{"t":"s","v":"fd00::20"},"prefix":{"t":"u","v":64}}
+                    ]},
+                    "Gateway": {"t":"s","v":"fd00::1"},
+                }]),
+            ),
             other => nm_unknown(other, id),
         };
     }
     if path.starts_with(&format!("{NM_MGR_PATH}/ActiveConnection/")) {
         return match method {
-            "GetAll" => ok_reply(id, json!([{
-                "Id": {"t":"s","v":"enp1s0"},
-                "Type": {"t":"s","v":"802-3-ethernet"},
-                "Default": {"t":"b","v":true},
-            }])),
+            "GetAll" => ok_reply(
+                id,
+                json!([{
+                    "Id": {"t":"s","v":"enp1s0"},
+                    "Type": {"t":"s","v":"802-3-ethernet"},
+                    "Default": {"t":"b","v":true},
+                }]),
+            ),
             other => nm_unknown(other, id),
         };
     }
     if path.starts_with(&format!("{NM_MGR_PATH}/DHCP4Config/")) {
         return match method {
-            "GetAll" => ok_reply(id, json!([{
-                "Options": {"t":"a{sv}","v":{
-                    "routers": {"t":"s","v":"192.168.10.1"},
-                    "ip_address": {"t":"s","v":"192.168.10.20"},
-                }},
-            }])),
+            "GetAll" => ok_reply(
+                id,
+                json!([{
+                    "Options": {"t":"a{sv}","v":{
+                        "routers": {"t":"s","v":"192.168.10.1"},
+                        "ip_address": {"t":"s","v":"192.168.10.20"},
+                    }},
+                }]),
+            ),
             other => nm_unknown(other, id),
         };
     }
@@ -135,21 +150,28 @@ fn nm_device_props(n: &str, id: &Value) -> Value {
             ROOT_PATH.to_string(),
         ),
     };
-    ok_reply(id, json!([{
-        "Interface": {"t":"s","v":iface},
-        "DeviceType": {"t":"u","v":dtype},
-        "State": {"t":"u","v":state},
-        "Managed": {"t":"b","v":managed},
-        "HwAddress": {"t":"s","v":"52:54:00:12:34:56"},
-        "Mtu": {"t":"u","v":1500},
-        "Ip4Config": {"t":"o","v":ip4},
-        "Ip6Config": {"t":"o","v":ip6},
-        "ActiveConnection": {"t":"o","v":active},
-        "Dhcp4Config": {"t":"o","v":dhcp4},
-    }]))
+    ok_reply(
+        id,
+        json!([{
+            "Interface": {"t":"s","v":iface},
+            "DeviceType": {"t":"u","v":dtype},
+            "State": {"t":"u","v":state},
+            "Managed": {"t":"b","v":managed},
+            "HwAddress": {"t":"s","v":"52:54:00:12:34:56"},
+            "Mtu": {"t":"u","v":1500},
+            "Ip4Config": {"t":"o","v":ip4},
+            "Ip6Config": {"t":"o","v":ip6},
+            "ActiveConnection": {"t":"o","v":active},
+            "Dhcp4Config": {"t":"o","v":dhcp4},
+        }]),
+    )
 }
 
 /// Unknown-method D-Bus error for a NM call the fake does not model.
 fn nm_unknown(method: &str, id: &Value) -> Value {
-    err_reply(id, "org.freedesktop.DBus.Error.UnknownMethod", format!("no NM fake for {method}"))
+    err_reply(
+        id,
+        "org.freedesktop.DBus.Error.UnknownMethod",
+        format!("no NM fake for {method}"),
+    )
 }

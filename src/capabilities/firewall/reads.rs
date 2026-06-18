@@ -1,8 +1,6 @@
 //! Read-only firewall queries: status, list, show, services.
 
-use super::zone::{
-    compute_drift, is_config_info_denied, permanent_zone, runtime_zone,
-};
+use super::zone::{compute_drift, is_config_info_denied, permanent_zone, runtime_zone};
 use super::{arg_str, arg_str_vec, fw_call, open_channel, FW_IFACE, FW_ZONE_IFACE};
 use crate::capabilities::View;
 use crate::error::{FezError, Result};
@@ -138,11 +136,7 @@ impl FirewallZoneDetail {
 /// channel that escalates first. A host with no usable escalation mechanism
 /// therefore fails `status` with `access-denied` (exit 11) rather than
 /// silently reporting empty drift.
-pub(super) fn status(
-    client: &mut BridgeClient,
-    channel: &str,
-    host: String,
-) -> Result<View> {
+pub(super) fn status(client: &mut BridgeClient, channel: &str, host: String) -> Result<View> {
     let default_zone = arg_str(&fw_call(
         client,
         channel,
@@ -198,11 +192,7 @@ pub(super) fn status(
 }
 
 /// `firewall list`: every zone with a per-zone summary.
-pub(super) fn list(
-    client: &mut BridgeClient,
-    channel: &str,
-    host: String,
-) -> Result<View> {
+pub(super) fn list(client: &mut BridgeClient, channel: &str, host: String) -> Result<View> {
     let zones = arg_str_vec(&fw_call(
         client,
         channel,
@@ -300,11 +290,7 @@ pub(super) fn show(
 }
 
 /// `firewall services`: the service catalog firewalld knows about.
-pub(super) fn services(
-    client: &mut BridgeClient,
-    channel: &str,
-    host: String,
-) -> Result<View> {
+pub(super) fn services(client: &mut BridgeClient, channel: &str, host: String) -> Result<View> {
     let mut catalog = arg_str_vec(&fw_call(
         client,
         channel,

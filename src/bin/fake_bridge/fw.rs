@@ -34,7 +34,11 @@ pub(super) fn fw_reply(
     id: &Value,
 ) -> Value {
     if std::env::var_os("FEZ_FAKE_NO_FIREWALLD").is_some() {
-        return err_reply(id, "org.freedesktop.DBus.Error.ServiceUnknown", "The name org.fedoraproject.FirewallD1 was not provided by any .service files".into());
+        return err_reply(
+            id,
+            "org.freedesktop.DBus.Error.ServiceUnknown",
+            "The name org.fedoraproject.FirewallD1 was not provided by any .service files".into(),
+        );
     }
     if path == FW_CONFIG_PATH && std::env::var_os("FEZ_FAKE_CONFIG_UNKNOWN_METHOD").is_some() {
         return fw_unknown(method, id);
@@ -49,7 +53,9 @@ pub(super) fn fw_reply(
             return fw_access_denied(id);
         }
         return match (iface, method) {
-            (FW_CONFIG_ZONE_IFACE, "getServices") => ok_reply(id, json!([["ssh", "dhcpv6-client"]])),
+            (FW_CONFIG_ZONE_IFACE, "getServices") => {
+                ok_reply(id, json!([["ssh", "dhcpv6-client"]]))
+            }
             (FW_CONFIG_ZONE_IFACE, "getPorts") => ok_reply(id, json!([[]])),
             (FW_CONFIG_ZONE_IFACE, "getMasquerade") => ok_reply(id, json!([false])),
             (_, other) => fw_unknown(other, id),
@@ -60,7 +66,9 @@ pub(super) fn fw_reply(
             return fw_access_denied(id);
         }
         return match (iface, method) {
-            (FW_CONFIG_IFACE, "getZoneByName") => ok_reply(id, json!([format!("{FW_CONFIG_PATH}/zone/0")])),
+            (FW_CONFIG_IFACE, "getZoneByName") => {
+                ok_reply(id, json!([format!("{FW_CONFIG_PATH}/zone/0")]))
+            }
             (_, other) => fw_unknown(other, id),
         };
     }
@@ -68,8 +76,13 @@ pub(super) fn fw_reply(
     let zone = args.first().and_then(Value::as_str).unwrap_or("");
     match (iface, method) {
         (FW_IFACE, "getDefaultZone") => ok_reply(id, json!(["public"])),
-        (FW_IFACE, "listServices") => ok_reply(id, json!([["ssh", "http", "https", "cockpit", "dhcpv6-client"]])),
-        (FW_IFACE, "queryPanicMode") => ok_reply(id, json!([std::env::var_os("FEZ_FAKE_PANIC").is_some()])),
+        (FW_IFACE, "listServices") => ok_reply(
+            id,
+            json!([["ssh", "http", "https", "cockpit", "dhcpv6-client"]]),
+        ),
+        (FW_IFACE, "queryPanicMode") => {
+            ok_reply(id, json!([std::env::var_os("FEZ_FAKE_PANIC").is_some()]))
+        }
         (FW_ZONE_IFACE, "getZones") => ok_reply(id, json!([["public", "internal", "drop"]])),
         (FW_ZONE_IFACE, "getServices") => ok_reply(id, json!([["ssh", "dhcpv6-client"]])),
         (FW_ZONE_IFACE, "getPorts") => {
@@ -81,14 +94,22 @@ pub(super) fn fw_reply(
             }
         }
         (FW_ZONE_IFACE, "getInterfaces") => {
-            if zone == "public" { ok_reply(id, json!([["enp1s0"]])) } else { ok_reply(id, json!([[]])) }
+            if zone == "public" {
+                ok_reply(id, json!([["enp1s0"]]))
+            } else {
+                ok_reply(id, json!([[]]))
+            }
         }
         (FW_ZONE_IFACE, "getSources") => ok_reply(id, json!([[]])),
         (FW_ZONE_IFACE, "getMasquerade") => {
             if std::env::var_os("FEZ_FAKE_NO_MASQUERADE").is_some() {
                 return fw_unknown("getMasquerade", id);
             }
-            if zone == "public" { ok_reply(id, json!([true])) } else { ok_reply(id, json!([false])) }
+            if zone == "public" {
+                ok_reply(id, json!([true]))
+            } else {
+                ok_reply(id, json!([false]))
+            }
         }
         (
             FW_ZONE_IFACE,
@@ -102,13 +123,25 @@ pub(super) fn fw_reply(
 }
 
 fn fw_unknown(method: &str, id: &Value) -> Value {
-    err_reply(id, "org.freedesktop.DBus.Error.UnknownMethod", format!("no firewalld fake for {method}"))
+    err_reply(
+        id,
+        "org.freedesktop.DBus.Error.UnknownMethod",
+        format!("no firewalld fake for {method}"),
+    )
 }
 
 fn fw_access_denied(id: &Value) -> Value {
-    err_reply(id, "org.freedesktop.DBus.Error.AccessDenied", "permanent config read requires authorization (PK_ACTION_CONFIG)".into())
+    err_reply(
+        id,
+        "org.freedesktop.DBus.Error.AccessDenied",
+        "permanent config read requires authorization (PK_ACTION_CONFIG)".into(),
+    )
 }
 
 fn fw_config_info_denied(id: &Value) -> Value {
-    err_reply(id, "org.fedoraproject.FirewallD1.NotAuthorizedException", "Not Authorized(polkit): org.fedoraproject.FirewallD1.config.info".into())
+    err_reply(
+        id,
+        "org.fedoraproject.FirewallD1.NotAuthorizedException",
+        "Not Authorized(polkit): org.fedoraproject.FirewallD1.config.info".into(),
+    )
 }
