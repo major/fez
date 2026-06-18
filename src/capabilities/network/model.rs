@@ -1,58 +1,12 @@
-//! NetworkManager inspection capability.
-//!
-//! Reads the readable NetworkManager surface over the cockpit-bridge
-//! `dbus-json3` channel (`org.freedesktop.NetworkManager`, system bus,
-//! unprivileged). Two actions: `network list` (device inventory) and
-//! `network show <device>` (full per-device detail). Read-only: no mutation,
-//! no privilege escalation.
-
-use crate::capabilities::{render, CapabilityContext, View};
-use crate::cli::{Cli, NetworkAction};
 use crate::error::{FezError, Result};
-use crate::protocol::client::BridgeClient;
 use crate::protocol::variant::Variant;
-use serde_json::{json, Value};
+use serde_json::Value;
 
-const NM_NAME: &str = "org.freedesktop.NetworkManager";
-const NM_MGR_PATH: &str = "/org/freedesktop/NetworkManager";
-const NM_MGR_IFACE: &str = "org.freedesktop.NetworkManager";
-const PROPS_IFACE: &str = "org.freedesktop.DBus.Properties";
-const DEVICE_IFACE: &str = "org.freedesktop.NetworkManager.Device";
-const IP4_IFACE: &str = "org.freedesktop.NetworkManager.IP4Config";
-const IP6_IFACE: &str = "org.freedesktop.NetworkManager.IP6Config";
-const ACTIVE_IFACE: &str = "org.freedesktop.NetworkManager.Connection.Active";
-const DHCP4_IFACE: &str = "org.freedesktop.NetworkManager.DHCP4Config";
-
-/// Route a parsed `network` action to its handler and render the result.
-///
-/// Returns the process exit code.
-pub fn dispatch(cli: &Cli, action: &NetworkAction) -> i32 {
-    let result = run(cli, action);
-    render(cli, result)
-}
-
-/// Connect to the bridge and dispatch the requested read action.
-fn run(cli: &Cli, action: &NetworkAction) -> Result<View> {
-    let mut client = crate::capabilities::connect(cli)?;
-    let host = client.host().to_string();
-    let channel = client.dbus_open(NM_NAME)?;
-    let mut ctx = CapabilityContext {
-        client: &mut client,
-        channel: &channel,
-        host: &host,
-    };
-    match action {
-        NetworkAction::List { all } => list(&mut ctx, *all),
-        NetworkAction::Show { device } => show(&mut ctx, device),
-    }
-}
-
-/// Render a [`View`] (or error) to stdout/stderr and return the exit code.
 /// Decode an `NMDeviceType` (`u`) to its short string.
 ///
 /// Mirrors the upstream `NMDeviceType` enum. Unrecognized values render as
 /// `type-<n>` so a new NM enum value degrades gracefully.
-fn device_type_str(n: u64) -> String {
+pub(super) fn device_type_str(n: u64) -> String {
     match n {
         0 => "unknown",
         1 => "ethernet",
@@ -83,7 +37,7 @@ fn device_type_str(n: u64) -> String {
 ///
 /// Mirrors the upstream `NMDeviceState` enum. Unrecognized values render as
 /// `state-<n>`.
-fn device_state_str(n: u64) -> String {
+pub(super) fn device_state_str(n: u64) -> String {
     match n {
         0 => "unknown",
         10 => "unmanaged",
@@ -117,69 +71,69 @@ const PHYSICAL_TYPES: [u64; 8] = [
 ];
 
 #[derive(Debug, Clone)]
-struct NetworkDevice {
-    interface: String,
+pub(super) struct NetworkDevice {
+    pub(super) interface: String,
     device_type: u64,
     state: u64,
     managed: bool,
-    mac: String,
-    mtu: u64,
-    ip4_config: Option<String>,
-    ip6_config: Option<String>,
-    active_connection: Option<String>,
-    dhcp4_config: Option<String>,
+    pub(super) mac: String,
+    pub(super) mtu: u64,
+    pub(super) ip4_config: Option<String>,
+    pub(super) ip6_config: Option<String>,
+    pub(super) active_connection: Option<String>,
+    pub(super) dhcp4_config: Option<String>,
 }
 
 #[derive(Debug, Clone)]
-struct NetworkDeviceSummary {
-    interface: String,
-    device_type: String,
-    state: String,
-    ip4: String,
+pub(super) struct NetworkDeviceSummary {
+    pub(super) interface: String,
+    pub(super) device_type: String,
+    pub(super) state: String,
+    pub(super) ip4: String,
     ip6: String,
-    mac: String,
+    pub(super) mac: String,
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
-struct IpConfig {
-    addresses: Vec<String>,
-    gateway: String,
-    dns: Vec<String>,
-    domains: Vec<String>,
+pub(super) struct IpConfig {
+    pub(super) addresses: Vec<String>,
+    pub(super) gateway: String,
+    pub(super) dns: Vec<String>,
+    pub(super) domains: Vec<String>,
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
-struct Ipv6Config {
-    addresses: Vec<String>,
+pub(super) struct Ipv6Config {
+    pub(super) addresses: Vec<String>,
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
-struct ActiveConnection {
-    id: String,
+pub(super) struct ActiveConnection {
+    pub(super) id: String,
     #[serde(rename = "type")]
-    connection_type: String,
-    default: bool,
+    pub(super) connection_type: String,
+    pub(super) default: bool,
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
-struct NetworkDeviceDetail {
-    interface: String,
+pub(super) struct NetworkDeviceDetail {
+    pub(super) interface: String,
     #[serde(rename = "type")]
-    device_type: String,
-    state: String,
-    mac: String,
-    mtu: u64,
-    ipv4: IpConfig,
-    ipv6: Ipv6Config,
-    connection: Option<ActiveConnection>,
-    dhcp4: Option<Value>,
+    pub(super) device_type: String,
+    pub(super) state: String,
+    pub(super) mac: String,
+    pub(super) mtu: u64,
+    pub(super) ipv4: IpConfig,
+    pub(super) ipv6: Ipv6Config,
+    pub(super) connection: Option<ActiveConnection>,
+    pub(super) dhcp4: Option<Value>,
 }
 
 /// Whether a device should appear in `network list` without `--all`.
 ///
 /// Keeps managed devices and physical/interesting types; hides unmanaged
 /// virtual interfaces (container `veth`, `tun`, etc.).
-fn keep_device(device_type: u64, managed: bool) -> bool {
+pub(super) fn keep_device(device_type: u64, managed: bool) -> bool {
     managed || PHYSICAL_TYPES.contains(&device_type)
 }
 
@@ -209,7 +163,7 @@ struct DeviceProps {
 }
 
 /// Treat the NM null object path `"/"` and empty string as absent.
-fn nm_path(s: String) -> Option<String> {
+pub(super) fn nm_path(s: String) -> Option<String> {
     if s.is_empty() || s == "/" {
         None
     } else {
@@ -276,7 +230,7 @@ fn format_addresses(entries: &[AddressDataEntry]) -> Vec<String> {
 }
 
 impl NetworkDevice {
-    fn from_value(val: Value) -> Result<Self> {
+    pub(super) fn from_value(val: Value) -> Result<Self> {
         let props: DeviceProps = serde_json::from_value(val).map_err(FezError::Decode)?;
         Ok(Self {
             interface: props.interface.0,
@@ -292,21 +246,21 @@ impl NetworkDevice {
         })
     }
 
-    fn should_list(&self, all: bool) -> bool {
+    pub(super) fn should_list(&self, all: bool) -> bool {
         all || keep_device(self.device_type, self.managed)
     }
 
-    fn type_name(&self) -> String {
+    pub(super) fn type_name(&self) -> String {
         device_type_str(self.device_type)
     }
 
-    fn state_name(&self) -> String {
+    pub(super) fn state_name(&self) -> String {
         device_state_str(self.state)
     }
 }
 
 impl NetworkDeviceSummary {
-    fn from_device(device: &NetworkDevice, ip4: &IpConfig, ip6: &Ipv6Config) -> Self {
+    pub(super) fn from_device(device: &NetworkDevice, ip4: &IpConfig, ip6: &Ipv6Config) -> Self {
         Self {
             interface: device.interface.clone(),
             device_type: device.type_name(),
@@ -317,20 +271,20 @@ impl NetworkDeviceSummary {
         }
     }
 
-    fn table_row(&self) -> Vec<Value> {
+    pub(super) fn table_row(&self) -> Vec<Value> {
         vec![
-            json!(self.interface),
-            json!(self.device_type),
-            json!(self.state),
-            json!(self.ip4),
-            json!(self.ip6),
-            json!(self.mac),
+            serde_json::json!(self.interface),
+            serde_json::json!(self.device_type),
+            serde_json::json!(self.state),
+            serde_json::json!(self.ip4),
+            serde_json::json!(self.ip6),
+            serde_json::json!(self.mac),
         ]
     }
 }
 
 impl IpConfig {
-    fn from_value(val: Value) -> Result<Self> {
+    pub(super) fn from_value(val: Value) -> Result<Self> {
         let props: IpProps = serde_json::from_value(val).map_err(FezError::Decode)?;
         Ok(Self {
             addresses: format_addresses(&props.address_data.0),
@@ -346,7 +300,7 @@ impl IpConfig {
         })
     }
 
-    fn empty() -> Self {
+    pub(super) fn empty() -> Self {
         Self {
             addresses: Vec::new(),
             gateway: String::new(),
@@ -369,14 +323,14 @@ impl IpConfig {
 }
 
 impl Ipv6Config {
-    fn from_value(val: Value) -> Result<Self> {
+    pub(super) fn from_value(val: Value) -> Result<Self> {
         let props: IpProps = serde_json::from_value(val).map_err(FezError::Decode)?;
         Ok(Self {
             addresses: format_addresses(&props.address_data.0),
         })
     }
 
-    fn empty() -> Self {
+    pub(super) fn empty() -> Self {
         Self {
             addresses: Vec::new(),
         }
@@ -396,7 +350,7 @@ impl Ipv6Config {
 }
 
 impl ActiveConnection {
-    fn from_value(val: Value) -> Result<Self> {
+    pub(super) fn from_value(val: Value) -> Result<Self> {
         let props: ActiveConnectionProps = serde_json::from_value(val).map_err(FezError::Decode)?;
         Ok(Self {
             id: props.id.0,
@@ -406,208 +360,10 @@ impl ActiveConnection {
     }
 }
 
-/// `GetAll` the properties of a NM object, returning the unwrapped `a{sv}` map.
-///
-/// A `GetAll` always returns one out-arg (the property dict); a missing one is
-/// a malformed reply, not an empty object, so it surfaces as an error rather
-/// than being silently treated as a device with no properties.
-fn get_all(client: &mut BridgeClient, channel: &str, path: &str, iface: &str) -> Result<Value> {
-    let out = client.dbus_call(channel, path, PROPS_IFACE, "GetAll", json!([iface]))?;
-    out.get(0)
-        .cloned()
-        .ok_or_else(|| FezError::Problem(format!("GetAll({iface}) returned no value")))
-}
-
-fn load_ip4_config(
-    client: &mut BridgeClient,
-    channel: &str,
-    path: Option<&str>,
-) -> Result<IpConfig> {
-    match path {
-        Some(path) => IpConfig::from_value(get_all(client, channel, path, IP4_IFACE)?),
-        None => Ok(IpConfig::empty()),
-    }
-}
-
-fn load_ip6_config(
-    client: &mut BridgeClient,
-    channel: &str,
-    path: Option<&str>,
-) -> Result<Ipv6Config> {
-    match path {
-        Some(path) => Ipv6Config::from_value(get_all(client, channel, path, IP6_IFACE)?),
-        None => Ok(Ipv6Config::empty()),
-    }
-}
-
-fn load_active_connection(
-    client: &mut BridgeClient,
-    channel: &str,
-    path: Option<&str>,
-) -> Result<Option<ActiveConnection>> {
-    match path {
-        Some(path) => {
-            let val = get_all(client, channel, path, ACTIVE_IFACE)?;
-            Ok(Some(ActiveConnection::from_value(val)?))
-        }
-        None => Ok(None),
-    }
-}
-
-fn load_dhcp4_options(
-    client: &mut BridgeClient,
-    channel: &str,
-    path: Option<&str>,
-) -> Result<Option<Value>> {
-    match path {
-        Some(path) => {
-            let val = get_all(client, channel, path, DHCP4_IFACE)?;
-            // ponytail: manual unwrap here — dynamic keys can't be a derive struct
-            Ok(val
-                .get("Options")
-                .map(|v| v.get("v").unwrap_or(v))
-                .and_then(flatten_options))
-        }
-        None => Ok(None),
-    }
-}
-
-/// Call `GetDevices` on the manager and return the device object paths.
-///
-/// `GetDevices` always returns one out-arg (an array of object paths); a
-/// missing or non-array first out-arg is a malformed reply, not "no devices",
-/// so it errors rather than silently yielding an empty inventory.
-fn device_paths(client: &mut BridgeClient, channel: &str) -> Result<Vec<String>> {
-    let out = client.dbus_call(channel, NM_MGR_PATH, NM_MGR_IFACE, "GetDevices", json!([]))?;
-    let arr = out
-        .get(0)
-        .and_then(Value::as_array)
-        .ok_or_else(|| FezError::Problem("GetDevices returned a non-array response".into()))?;
-    Ok(arr
-        .iter()
-        .filter_map(|v| v.as_str().map(str::to_string))
-        .collect())
-}
-
-/// List network devices, hiding unmanaged virtual interfaces unless `all`.
-fn list(ctx: &mut CapabilityContext<'_>, all: bool) -> Result<View> {
-    let paths = device_paths(ctx.client, ctx.channel)?;
-
-    let mut devices = Vec::new();
-    for path in &paths {
-        let device =
-            NetworkDevice::from_value(get_all(ctx.client, ctx.channel, path, DEVICE_IFACE)?)?;
-        if !device.should_list(all) {
-            continue;
-        }
-        let ip4 = load_ip4_config(ctx.client, ctx.channel, device.ip4_config.as_deref())?;
-        let ip6 = load_ip6_config(ctx.client, ctx.channel, device.ip6_config.as_deref())?;
-        devices.push(NetworkDeviceSummary::from_device(&device, &ip4, &ip6));
-    }
-
-    let mut human = format!(
-        "{:<14} {:<10} {:<13} {:<20} {}\n",
-        "DEVICE", "TYPE", "STATE", "IPV4", "MAC"
-    );
-    for d in &devices {
-        human.push_str(&format!(
-            "{:<14} {:<10} {:<13} {:<20} {}\n",
-            d.interface, d.device_type, d.state, d.ip4, d.mac,
-        ));
-    }
-
-    let columns = ["interface", "type", "state", "ip4", "ip6", "mac"];
-    let rows: Vec<Value> = devices
-        .iter()
-        .map(|d| Value::Array(d.table_row()))
-        .collect();
-    Ok(View::new(
-        "NetworkDeviceList",
-        ctx.host,
-        crate::envelope::table_data(&columns, rows),
-        human,
-    ))
-}
-
-/// Show one device's full network detail, chasing NM's object indirection.
-fn show(ctx: &mut CapabilityContext<'_>, device: &str) -> Result<View> {
-    let paths = device_paths(ctx.client, ctx.channel)?;
-
-    // Find the device whose Interface matches the requested name.
-    let mut found: Option<NetworkDevice> = None;
-    for path in &paths {
-        let candidate =
-            NetworkDevice::from_value(get_all(ctx.client, ctx.channel, path, DEVICE_IFACE)?)?;
-        if candidate.interface == device {
-            found = Some(candidate);
-            break;
-        }
-    }
-    let device = found.ok_or_else(|| FezError::NotFound(format!("network device {device}")))?;
-
-    let ipv4 = load_ip4_config(ctx.client, ctx.channel, device.ip4_config.as_deref())?;
-    let ipv6 = load_ip6_config(ctx.client, ctx.channel, device.ip6_config.as_deref())?;
-    let connection =
-        load_active_connection(ctx.client, ctx.channel, device.active_connection.as_deref())?;
-    let dhcp4 = load_dhcp4_options(ctx.client, ctx.channel, device.dhcp4_config.as_deref())?;
-    let device_type = device.type_name();
-    let state = device.state_name();
-
-    let detail = NetworkDeviceDetail {
-        interface: device.interface,
-        device_type,
-        state,
-        mac: device.mac,
-        mtu: device.mtu,
-        ipv4,
-        ipv6,
-        connection,
-        dhcp4,
-    };
-    let human = render_show_human(&detail);
-    let data = serde_json::to_value(detail).map_err(FezError::Decode)?;
-
-    Ok(View::new("NetworkDeviceDetail", ctx.host, data, human))
-}
-
-/// Flatten an `a{sv}` options map by unwrapping each variant value, so the
-/// envelope carries plain scalars instead of the `{"t","v"}` wire shape.
-///
-/// ponytail: inline variant unwrap — dynamic DHCP keys can't use a derive struct
-fn flatten_options(opts: &Value) -> Option<Value> {
-    let obj = opts.as_object()?;
-    let flat: serde_json::Map<String, Value> = obj
-        .iter()
-        .map(|(k, v)| (k.clone(), v.get("v").unwrap_or(v).clone()))
-        .collect();
-    Some(Value::Object(flat))
-}
-
-/// Render the human form of a `network show` detail object.
-fn render_show_human(d: &NetworkDeviceDetail) -> String {
-    let mut out = String::new();
-    out.push_str(&format!("Device:    {}\n", d.interface));
-    out.push_str(&format!("Type:      {}\n", d.device_type));
-    out.push_str(&format!("State:     {}\n", d.state));
-    out.push_str(&format!("MAC:       {}\n", d.mac));
-    out.push_str(&format!("MTU:       {}\n", d.mtu));
-    out.push_str(&format!("IPv4:      {}\n", d.ipv4.addresses.join(", ")));
-    out.push_str(&format!("Gateway:   {}\n", d.ipv4.gateway));
-    out.push_str(&format!("DNS:       {}\n", d.ipv4.dns.join(", ")));
-    out.push_str(&format!("Domains:   {}\n", d.ipv4.domains.join(", ")));
-    out.push_str(&format!("IPv6:      {}\n", d.ipv6.addresses.join(", ")));
-    if let Some(conn) = &d.connection {
-        out.push_str(&format!(
-            "Connection: {} ({})\n",
-            conn.id, conn.connection_type
-        ));
-    }
-    out
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
 
     #[test]
     fn device_type_decodes_known_and_unknown() {
@@ -628,13 +384,9 @@ mod tests {
 
     #[test]
     fn filter_keeps_managed_and_physical_drops_unmanaged_virtual() {
-        // Managed ethernet kept.
         assert!(keep_device(1, true));
-        // Unmanaged loopback kept by type.
         assert!(keep_device(32, false));
-        // Unmanaged veth dropped.
         assert!(!keep_device(20, false));
-        // Managed veth kept (managed overrides type).
         assert!(keep_device(20, true));
     }
 
@@ -654,27 +406,14 @@ mod tests {
             },
             AddressDataEntry {
                 address: Variant("10.0.0.6".into()),
-                prefix: Variant(0), // absent prefix defaults to 0 → bare address
+                prefix: Variant(0),
             },
             AddressDataEntry {
                 address: Variant(String::new()),
-                prefix: Variant(24), // empty address → filtered out
+                prefix: Variant(24),
             },
         ];
         assert_eq!(format_addresses(&entries), vec!["10.0.0.5/24", "10.0.0.6"]);
-    }
-
-    #[test]
-    fn flatten_options_unwraps_variant_values() {
-        let opts = json!({
-            "routers": {"t":"s","v":"192.168.10.1"},
-            "lease_time": {"t":"s","v":"3600"},
-        });
-        let flat = flatten_options(&opts).unwrap();
-        assert_eq!(flat["routers"], json!("192.168.10.1"));
-        assert_eq!(flat["lease_time"], json!("3600"));
-        // A non-object input yields None.
-        assert_eq!(flatten_options(&json!("x")), None);
     }
 
     #[test]
@@ -762,39 +501,6 @@ mod tests {
                 json!("52:54:00:00:00:01"),
             ]
         );
-    }
-
-    #[test]
-    fn show_human_renders_typed_detail() {
-        let detail = NetworkDeviceDetail {
-            interface: "eth0".into(),
-            device_type: "ethernet".into(),
-            state: "activated".into(),
-            mac: "52:54:00:00:00:01".into(),
-            mtu: 1500,
-            ipv4: IpConfig {
-                addresses: vec!["192.0.2.10/24".into()],
-                gateway: "192.0.2.1".into(),
-                dns: vec!["1.1.1.1".into()],
-                domains: vec!["example.test".into()],
-            },
-            ipv6: Ipv6Config {
-                addresses: vec!["2001:db8::10/64".into()],
-            },
-            connection: Some(ActiveConnection {
-                id: "Wired".into(),
-                connection_type: "802-3-ethernet".into(),
-                default: true,
-            }),
-            dhcp4: None,
-        };
-
-        let human = render_show_human(&detail);
-
-        assert!(human.contains("Device:    eth0"));
-        assert!(human.contains("IPv4:      192.0.2.10/24"));
-        assert!(human.contains("DNS:       1.1.1.1"));
-        assert!(human.contains("Connection: Wired (802-3-ethernet)"));
     }
 
     #[test]
