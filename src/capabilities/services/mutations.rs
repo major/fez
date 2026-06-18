@@ -2,7 +2,6 @@ use super::{Mutation, MGR_IFACE, MGR_PATH};
 use crate::capabilities::{CapabilityContext, View};
 use crate::cli::Cli;
 use crate::error::{FezError, Result};
-use crate::protocol::client::BridgeClient;
 use serde_json::{json, Value};
 use std::io::IsTerminal;
 
@@ -171,114 +170,57 @@ fn execute(cli: &Cli, m: &Mutation, host: &str, unit: &str) -> Result<View> {
         Mutation::Stop => simple_unit(&mut ctx, m, unit, "StopUnit"),
         Mutation::Restart => simple_unit(&mut ctx, m, unit, "RestartUnit"),
         Mutation::Reload => simple_unit(&mut ctx, m, unit, "ReloadUnit"),
-        Mutation::Enable { now } => execute_enablement(&mut ctx, Enablement::Enable, unit, *now),
-        Mutation::Disable { now } => execute_enablement(&mut ctx, Enablement::Disable, unit, *now),
-    }
-}
-
-/// The two unit-file operations, split out of [`Mutation`] so the enablement
-/// path is total: every variant here maps to a real D-Bus call, so the simple
-/// `*Unit` ops cannot reach [`execute_enablement`] and no `unreachable!` is
-/// needed to satisfy exhaustiveness.
-#[derive(Clone, Copy)]
-enum Enablement {
-    Enable,
-    Disable,
-}
-
-struct EnablementCall {
-    method: &'static str,
-    followup_method: &'static str,
-    args: Value,
-    changes_index: usize,
-}
-
-impl Enablement {
-    /// The owning [`Mutation`] for `mutation_view`, with `now` threaded back in.
-    fn mutation(self, now: bool) -> Mutation {
-        match self {
-            Enablement::Enable => Mutation::Enable { now },
-            Enablement::Disable => Mutation::Disable { now },
-        }
-    }
-
-    fn unit_file_call(self, unit: &str) -> EnablementCall {
-        match self {
-            Enablement::Enable => EnablementCall {
-                method: "EnableUnitFiles",
-                followup_method: "StartUnit",
-                args: json!([[unit], false, false]),
-                changes_index: 1,
-            },
-            Enablement::Disable => EnablementCall {
-                method: "DisableUnitFiles",
-                followup_method: "StopUnit",
-                args: json!([[unit], false]),
-                changes_index: 0,
-            },
-        }
+        Mutation::Enable { now } => execute_enablement(
+            &mut ctx,
+            m,
+            unit,
+            *now,
+            (
+                "EnableUnitFiles",
+                "StartUnit",
+                json!([[unit], false, false]),
+                1,
+            ),
+        ),
+        Mutation::Disable { now } => execute_enablement(
+            &mut ctx,
+            m,
+            unit,
+            *now,
+            ("DisableUnitFiles", "StopUnit", json!([[unit], false]), 0),
+        ),
     }
 }
 
 fn execute_enablement(
     ctx: &mut CapabilityContext<'_>,
-    op: Enablement,
+    m: &Mutation,
     unit: &str,
     now: bool,
+    call: (&str, &str, Value, usize),
 ) -> Result<View> {
-    let call = op.unit_file_call(unit);
+    let (method, followup_method, args, changes_index) = call;
     let out = ctx
         .client
-        .dbus_call(ctx.channel, MGR_PATH, MGR_IFACE, call.method, call.args)?;
-    let changes = out
-        .get(call.changes_index)
-        .cloned()
-        .unwrap_or_else(|| json!([]));
+        .dbus_call(ctx.channel, MGR_PATH, MGR_IFACE, method, args)?;
+    let changes = out.get(changes_index).cloned().unwrap_or_else(|| json!([]));
 
     // Unit file changes leave systemd's cached UnitFileState stale until reload.
-    reload_daemon(ctx.client, ctx.channel)?;
+    ctx.client
+        .dbus_call(ctx.channel, MGR_PATH, MGR_IFACE, "Reload", json!([]))?;
     if now {
         ctx.client.dbus_call(
             ctx.channel,
             MGR_PATH,
             MGR_IFACE,
-            call.followup_method,
+            followup_method,
             json!([unit, "replace"]),
         )?;
     }
-    let m = op.mutation(now);
     Ok(mutation_view(
-        &m,
+        m,
         ctx.host,
         unit,
         json!({"operation": m.verb(), "unit": unit, "host": ctx.host, "now": now, "changes": changes}),
     ))
-}
-
-/// Ask systemd to reload its manager configuration so cached unit-file states
-/// reflect symlink changes made by EnableUnitFiles/DisableUnitFiles.
-fn reload_daemon(client: &mut BridgeClient, channel: &str) -> Result<()> {
-    client.dbus_call(channel, MGR_PATH, MGR_IFACE, "Reload", json!([]))?;
-    Ok(())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::Enablement;
-    use serde_json::json;
-
-    #[test]
-    fn enablement_describes_dbus_call_shape() {
-        let enable = Enablement::Enable.unit_file_call("sshd.service");
-        assert_eq!(enable.method, "EnableUnitFiles");
-        assert_eq!(enable.followup_method, "StartUnit");
-        assert_eq!(enable.args, json!([["sshd.service"], false, false]));
-        assert_eq!(enable.changes_index, 1);
-
-        let disable = Enablement::Disable.unit_file_call("sshd.service");
-        assert_eq!(disable.method, "DisableUnitFiles");
-        assert_eq!(disable.followup_method, "StopUnit");
-        assert_eq!(disable.args, json!([["sshd.service"], false]));
-        assert_eq!(disable.changes_index, 0);
-    }
 }

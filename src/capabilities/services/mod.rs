@@ -70,79 +70,49 @@ enum ReadAction<'a> {
     },
 }
 
-/// The read/mutate split of a parsed [`ServicesAction`].
-///
-/// [`classify`] is the single place that matches the full clap enum; everything
-/// downstream consumes one arm of this and is therefore total.
-enum Plan<'a> {
-    Read(ReadAction<'a>),
-    Mutate { mutation: Mutation, unit: &'a str },
-}
-
-/// Map the flat clap enum onto the read/mutate [`Plan`] split.
-///
-/// This is the only exhaustive match over [`ServicesAction`]; the rest of the
-/// module works off [`Plan`], so a new variant breaks the build here instead of
-/// hitting an `unreachable!` at runtime.
-fn classify(action: &ServicesAction) -> Plan<'_> {
-    match action {
-        ServicesAction::List { state } => Plan::Read(ReadAction::List {
-            state: state.as_deref(),
-        }),
-        ServicesAction::Status { unit } => Plan::Read(ReadAction::Status { unit }),
+/// Run the requested `services` subcommand and return the process exit code.
+pub fn dispatch(cli: &Cli, action: &ServicesAction) -> i32 {
+    let view = match action {
+        ServicesAction::List { state } => reads::run(
+            cli,
+            ReadAction::List {
+                state: state.as_deref(),
+            },
+        ),
+        ServicesAction::Status { unit } => reads::run(cli, ReadAction::Status { unit }),
         ServicesAction::Logs {
             unit,
             since,
             priority,
             lines,
             follow,
-        } => Plan::Read(ReadAction::Logs {
-            unit,
-            since: since.as_deref(),
-            priority: priority.as_deref(),
-            lines: *lines,
-            follow: *follow,
-        }),
-        ServicesAction::Start { unit } => Plan::Mutate {
-            mutation: Mutation::Start,
-            unit,
-        },
-        ServicesAction::Stop { unit } => Plan::Mutate {
-            mutation: Mutation::Stop,
-            unit,
-        },
-        ServicesAction::Restart { unit } => Plan::Mutate {
-            mutation: Mutation::Restart,
-            unit,
-        },
-        ServicesAction::Reload { unit } => Plan::Mutate {
-            mutation: Mutation::Reload,
-            unit,
-        },
-        ServicesAction::Enable { unit, now } => Plan::Mutate {
-            mutation: Mutation::Enable { now: *now },
-            unit,
-        },
-        ServicesAction::Disable { unit, now } => Plan::Mutate {
-            mutation: Mutation::Disable { now: *now },
-            unit,
-        },
-    }
-}
-
-/// Run the requested `services` subcommand and return the process exit code.
-pub fn dispatch(cli: &Cli, action: &ServicesAction) -> i32 {
-    let view = match classify(action) {
-        Plan::Read(read) => reads::run(cli, read),
-        Plan::Mutate { mutation, unit } => mutations::run(cli, mutation, unit),
+        } => reads::run(
+            cli,
+            ReadAction::Logs {
+                unit,
+                since: since.as_deref(),
+                priority: priority.as_deref(),
+                lines: *lines,
+                follow: *follow,
+            },
+        ),
+        ServicesAction::Start { unit } => mutations::run(cli, Mutation::Start, unit),
+        ServicesAction::Stop { unit } => mutations::run(cli, Mutation::Stop, unit),
+        ServicesAction::Restart { unit } => mutations::run(cli, Mutation::Restart, unit),
+        ServicesAction::Reload { unit } => mutations::run(cli, Mutation::Reload, unit),
+        ServicesAction::Enable { unit, now } => {
+            mutations::run(cli, Mutation::Enable { now: *now }, unit)
+        }
+        ServicesAction::Disable { unit, now } => {
+            mutations::run(cli, Mutation::Disable { now: *now }, unit)
+        }
     };
     render(cli, view)
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{classify, mangle_unit, Mutation, Plan};
-    use crate::cli::ServicesAction;
+    use super::mangle_unit;
 
     #[test]
     fn mangle_appends_service_to_bare_name() {
@@ -177,76 +147,5 @@ mod tests {
     #[test]
     fn mangle_does_not_double_suffix_service() {
         assert_eq!(mangle_unit("sshd.service"), "sshd.service");
-    }
-
-    #[test]
-    fn classify_routes_reads() {
-        assert!(matches!(
-            classify(&ServicesAction::List { state: None }),
-            Plan::Read(_)
-        ));
-        assert!(matches!(
-            classify(&ServicesAction::Status {
-                unit: "sshd".into()
-            }),
-            Plan::Read(_)
-        ));
-        assert!(matches!(
-            classify(&ServicesAction::Logs {
-                unit: "sshd".into(),
-                since: None,
-                priority: None,
-                lines: Some(50),
-                follow: false,
-            }),
-            Plan::Read(_)
-        ));
-    }
-
-    #[test]
-    fn classify_routes_mutations() {
-        let cases = [
-            (ServicesAction::Start { unit: "u".into() }, Mutation::Start),
-            (ServicesAction::Stop { unit: "u".into() }, Mutation::Stop),
-            (
-                ServicesAction::Restart { unit: "u".into() },
-                Mutation::Restart,
-            ),
-            (
-                ServicesAction::Reload { unit: "u".into() },
-                Mutation::Reload,
-            ),
-            (
-                ServicesAction::Enable {
-                    unit: "u".into(),
-                    now: true,
-                },
-                Mutation::Enable { now: true },
-            ),
-            (
-                ServicesAction::Disable {
-                    unit: "u".into(),
-                    now: false,
-                },
-                Mutation::Disable { now: false },
-            ),
-        ];
-        for (action, want) in cases {
-            match classify(&action) {
-                Plan::Mutate { mutation, unit } => {
-                    assert!(matches!(
-                        (mutation, want),
-                        (Mutation::Start, Mutation::Start)
-                            | (Mutation::Stop, Mutation::Stop)
-                            | (Mutation::Restart, Mutation::Restart)
-                            | (Mutation::Reload, Mutation::Reload)
-                            | (Mutation::Enable { .. }, Mutation::Enable { .. })
-                            | (Mutation::Disable { .. }, Mutation::Disable { .. })
-                    ));
-                    assert_eq!(unit, "u");
-                }
-                Plan::Read(_) => panic!("mutation classified as read"),
-            }
-        }
     }
 }
