@@ -6,7 +6,7 @@
 //! runtime-vs-permanent split that guards against lockout is firewalld's own,
 //! read live each call and committed only via `runtimeToPermanent`.
 
-use crate::capabilities::{render_with_hints, View};
+use crate::capabilities::{render, View};
 use crate::cli::{Cli, FirewallAction};
 use crate::error::{is_service_unknown, FezError, Result};
 use crate::protocol::client::BridgeClient;
@@ -21,31 +21,11 @@ const FW_CONFIG_IFACE: &str = "org.fedoraproject.FirewallD1.config";
 const FW_CONFIG_ZONE_IFACE: &str = "org.fedoraproject.FirewallD1.config.zone";
 
 /// Route a parsed `firewall` action to its handler and return the exit code.
-pub fn dispatch(cli: &Cli, action: &FirewallAction) -> i32 {
-    let view = run(cli, action);
-    render_with_hints(cli, view, error_hints)
-}
-
-/// Safe read-only follow-up hints for an actionable firewall error (issue #60).
 ///
-/// A `dependency-missing` failure points at the service-status check (fez
-/// cannot tell absent from stopped, so the hint covers both); an
-/// `unsupported-api` failure tells the caller the feature is unavailable on
-/// this firewalld and not to retry. Other errors carry no firewall-specific
-/// hint.
-fn error_hints(e: &FezError) -> Option<Value> {
-    match e {
-        FezError::DependencyMissing { .. } => Some(json!({
-            "checkService": "fez services status firewalld.service --json",
-            "install": "dnf install firewalld",
-        })),
-        FezError::UnsupportedApi(method) => Some(json!({
-            "unsupported": format!(
-                "firewalld on this host does not expose {method}; treat the feature as unsupported"
-            ),
-        })),
-        _ => None,
-    }
+/// Error hints (for `DependencyMissing` and `UnsupportedApi`) come from
+/// [`FezError::hints`] and are applied uniformly by [`render`].
+pub fn dispatch(cli: &Cli, action: &FirewallAction) -> i32 {
+    render(cli, run(cli, action))
 }
 
 /// The [`FezError::DependencyMissing`] returned when firewalld is absent.
@@ -53,7 +33,7 @@ fn dependency_missing() -> FezError {
     FezError::DependencyMissing {
         component: "firewalld".into(),
         dbus_name: FW_NAME.into(),
-        remediation: "Install firewalld on the target (dnf install firewalld) and enable+start it (systemctl enable --now firewalld.service), then retry.".into(),
+        remediation: "Check if firewalld is running: fez services status firewalld.service --json. If absent or stopped, install and start it: dnf install firewalld && systemctl enable --now firewalld.service.".into(),
     }
 }
 

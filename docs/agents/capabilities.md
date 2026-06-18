@@ -7,7 +7,7 @@ Read this before changing `src/capabilities/`, `src/protocol/`, `src/transport/`
 - `protocol/` - bridge wire protocol: framed JSON, message types including `DbusSignal`, `dbus_call` request/reply flow, and `dbus_call_collect` for signal-driven PackageKit calls.
 - `transport/` - `local` spawns the bridge; `ssh` shells out to the system OpenSSH client.
 - `capabilities/` - command implementations for services, packages, network, and firewall.
-- `capabilities/mod.rs` - shared `View` result and `render`/`render_with_hints` envelope shaping.
+- `capabilities/mod.rs` - shared `View` result and `render` envelope shaping.
 - `dispatch.rs` - routes parsed CLI commands to capabilities.
 - `safety.rs` - guardrails for protected units, dangerous package removals, and firewall lockout-prone actions.
 - `audit.rs` - append-only JSON-lines audit log. Each executed mutation writes attempt and result records.
@@ -16,7 +16,7 @@ Read this before changing `src/capabilities/`, `src/protocol/`, `src/transport/`
 
 Every capability returns `Result<View>` and routes dispatch through the shared renderer. `View` is the render-ready result: `kind`, `host`, `data`, `human`, optional `hints`, and a `pre_rendered` flag. Build it with `View::new(...)`, then `.with_hints`, `.with_hints_opt`, or `.pre_rendered()` as needed.
 
-`render(cli, Result<View>)` is the single stdout/envelope path. The error arm pulls structured detail from `FezError::detail()`, keeping envelope shaping in one place instead of one copy per capability. Capabilities that need safe read-only follow-up hints on error envelopes, currently firewall, route through `render_with_hints(cli, result, hint_fn)` so domain-specific hint wording stays in the capability rather than the shared error type.
+`render(cli, Result<View>)` is the single stdout/envelope path. The error arm pulls structured detail from `FezError::detail()` and actionable follow-up hints from `FezError::hints()`, keeping envelope shaping in one place instead of one copy per capability. `FezError::hints()` is the canonical hint contract: `DependencyMissing` errors expose their `remediation` field; `UnsupportedApi` errors note the missing method. All capabilities benefit from this uniformly — no per-capability hint hook is needed.
 
 ## Audit
 
