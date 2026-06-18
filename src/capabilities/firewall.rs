@@ -843,11 +843,13 @@ fn mutate(
                 client,
                 &channel,
                 &host,
-                "add-service",
-                &format!("{zone}:{service}"),
-                FW_ZONE_IFACE,
-                "addService",
-                json!([zone, service, t]),
+                AuditedFirewallCall::new(
+                    "add-service",
+                    format!("{zone}:{service}"),
+                    FW_ZONE_IFACE,
+                    "addService",
+                    json!([zone, service, t]),
+                ),
             )?;
             Ok(change_view(
                 host,
@@ -864,11 +866,13 @@ fn mutate(
                 client,
                 &channel,
                 &host,
-                "remove-service",
-                &format!("{zone}:{service}"),
-                FW_ZONE_IFACE,
-                "removeService",
-                json!([zone, service]),
+                AuditedFirewallCall::new(
+                    "remove-service",
+                    format!("{zone}:{service}"),
+                    FW_ZONE_IFACE,
+                    "removeService",
+                    json!([zone, service]),
+                ),
             )?;
             Ok(change_view(
                 host,
@@ -891,11 +895,13 @@ fn mutate(
                 client,
                 &channel,
                 &host,
-                "add-port",
-                &format!("{zone}:{label}"),
-                FW_ZONE_IFACE,
-                "addPort",
-                json!([zone, spec.port.to_string(), spec.proto, t]),
+                AuditedFirewallCall::new(
+                    "add-port",
+                    format!("{zone}:{label}"),
+                    FW_ZONE_IFACE,
+                    "addPort",
+                    json!([zone, spec.port.to_string(), spec.proto, t]),
+                ),
             )?;
             Ok(change_view(
                 host,
@@ -914,11 +920,13 @@ fn mutate(
                 client,
                 &channel,
                 &host,
-                "remove-port",
-                &format!("{zone}:{label}"),
-                FW_ZONE_IFACE,
-                "removePort",
-                json!([zone, spec.port.to_string(), spec.proto]),
+                AuditedFirewallCall::new(
+                    "remove-port",
+                    format!("{zone}:{label}"),
+                    FW_ZONE_IFACE,
+                    "removePort",
+                    json!([zone, spec.port.to_string(), spec.proto]),
+                ),
             )?;
             Ok(change_view(
                 host,
@@ -934,11 +942,13 @@ fn mutate(
                 client,
                 &channel,
                 &host,
-                "set-default-zone",
-                zone,
-                FW_IFACE,
-                "setDefaultZone",
-                json!([zone]),
+                AuditedFirewallCall::new(
+                    "set-default-zone",
+                    zone,
+                    FW_IFACE,
+                    "setDefaultZone",
+                    json!([zone]),
+                ),
             )?;
             Ok(change_view(
                 host,
@@ -975,11 +985,7 @@ fn mutate(
                 client,
                 &channel,
                 &host,
-                "reload",
-                "firewall",
-                FW_IFACE,
-                "reload",
-                json!([]),
+                AuditedFirewallCall::new("reload", "firewall", FW_IFACE, "reload", json!([])),
             )?;
             Ok(reload_view(host))
         }
@@ -988,11 +994,13 @@ fn mutate(
                 client,
                 &channel,
                 &host,
-                "confirm",
-                "firewall",
-                FW_IFACE,
-                "runtimeToPermanent",
-                json!([]),
+                AuditedFirewallCall::new(
+                    "confirm",
+                    "firewall",
+                    FW_IFACE,
+                    "runtimeToPermanent",
+                    json!([]),
+                ),
             )?;
             Ok(confirm_view(host))
         }
@@ -1010,11 +1018,13 @@ fn mutate(
                 client,
                 &channel,
                 &host,
-                &format!("panic-{state}"),
-                "firewall",
-                FW_IFACE,
-                method,
-                json!([]),
+                AuditedFirewallCall::new(
+                    format!("panic-{state}"),
+                    "firewall",
+                    FW_IFACE,
+                    method,
+                    json!([]),
+                ),
             )?;
             Ok(panic_view(host, on))
         }
@@ -1038,11 +1048,13 @@ fn mutate(
                 client,
                 &channel,
                 &host,
-                &format!("masquerade-{state}"),
-                &zone,
-                FW_ZONE_IFACE,
-                method,
-                args,
+                AuditedFirewallCall::new(
+                    format!("masquerade-{state}"),
+                    zone.as_str(),
+                    FW_ZONE_IFACE,
+                    method,
+                    args,
+                ),
             )?;
             Ok(masquerade_view(
                 host,
@@ -1054,28 +1066,50 @@ fn mutate(
     }
 }
 
+/// A firewalld method call plus the audit metadata that describes it.
+struct AuditedFirewallCall {
+    operation: String,
+    target: String,
+    iface: &'static str,
+    method: &'static str,
+    args: Value,
+}
+
+impl AuditedFirewallCall {
+    fn new(
+        operation: impl Into<String>,
+        target: impl Into<String>,
+        iface: &'static str,
+        method: &'static str,
+        args: Value,
+    ) -> Self {
+        Self {
+            operation: operation.into(),
+            target: target.into(),
+            iface,
+            method,
+            args,
+        }
+    }
+}
+
 /// Audit the attempt, run the runtime-only firewalld call, audit the result.
-#[allow(clippy::too_many_arguments)]
 fn run_audited(
     client: &mut BridgeClient,
     channel: &str,
     host: &str,
-    operation: &str,
-    target: &str,
-    iface: &str,
-    method: &str,
-    args: Value,
+    call: AuditedFirewallCall,
 ) -> Result<()> {
     let sink = crate::audit::sink_from_env();
     let ctx = crate::audit::AuditContext::new(
         &crate::audit::actor(),
         host,
-        operation,
-        target,
+        &call.operation,
+        &call.target,
         &crate::audit::correlation_id(),
     );
     sink.write(&ctx.record(crate::audit::Outcome::Attempt));
-    let exec = fw_call(client, channel, iface, method, args);
+    let exec = fw_call(client, channel, call.iface, call.method, call.args);
     match &exec {
         Ok(_) => sink.write(&ctx.record(crate::audit::Outcome::Ok)),
         Err(e) => sink.write(&ctx.record(crate::audit::Outcome::Error(e.to_string()))),
@@ -1421,6 +1455,23 @@ mod tests {
                 timeout: Some(60),
             })
         ));
+    }
+
+    #[test]
+    fn audited_firewall_call_captures_method_and_audit_metadata() {
+        let call = AuditedFirewallCall::new(
+            "add-service",
+            "public:http",
+            FW_ZONE_IFACE,
+            "addService",
+            json!(["public", "http", 0]),
+        );
+
+        assert_eq!(call.operation, "add-service");
+        assert_eq!(call.target, "public:http");
+        assert_eq!(call.iface, FW_ZONE_IFACE);
+        assert_eq!(call.method, "addService");
+        assert_eq!(call.args, json!(["public", "http", 0]));
     }
 
     #[test]
