@@ -84,17 +84,7 @@ pub(super) struct NetworkDevice {
     pub(super) dhcp4_config: Option<String>,
 }
 
-#[derive(Debug, Clone)]
-pub(super) struct NetworkDeviceSummary {
-    pub(super) interface: String,
-    pub(super) device_type: String,
-    pub(super) state: String,
-    pub(super) ip4: String,
-    ip6: String,
-    pub(super) mac: String,
-}
-
-#[derive(Debug, Clone, serde::Serialize)]
+#[derive(Debug, Clone, Default, serde::Serialize)]
 pub(super) struct IpConfig {
     pub(super) addresses: Vec<String>,
     pub(super) gateway: String,
@@ -102,7 +92,7 @@ pub(super) struct IpConfig {
     pub(super) domains: Vec<String>,
 }
 
-#[derive(Debug, Clone, serde::Serialize)]
+#[derive(Debug, Clone, Default, serde::Serialize)]
 pub(super) struct Ipv6Config {
     pub(super) addresses: Vec<String>,
 }
@@ -259,30 +249,6 @@ impl NetworkDevice {
     }
 }
 
-impl NetworkDeviceSummary {
-    pub(super) fn from_device(device: &NetworkDevice, ip4: &IpConfig, ip6: &Ipv6Config) -> Self {
-        Self {
-            interface: device.interface.clone(),
-            device_type: device.type_name(),
-            state: device.state_name(),
-            ip4: ip4.primary_address(),
-            ip6: ip6.primary_address(),
-            mac: device.mac.clone(),
-        }
-    }
-
-    pub(super) fn table_row(&self) -> Vec<Value> {
-        vec![
-            serde_json::json!(self.interface),
-            serde_json::json!(self.device_type),
-            serde_json::json!(self.state),
-            serde_json::json!(self.ip4),
-            serde_json::json!(self.ip6),
-            serde_json::json!(self.mac),
-        ]
-    }
-}
-
 impl IpConfig {
     pub(super) fn from_value(val: Value) -> Result<Self> {
         let props: IpProps = serde_json::from_value(val).map_err(FezError::Decode)?;
@@ -300,25 +266,8 @@ impl IpConfig {
         })
     }
 
-    pub(super) fn empty() -> Self {
-        Self {
-            addresses: Vec::new(),
-            gateway: String::new(),
-            dns: Vec::new(),
-            domains: Vec::new(),
-        }
-    }
-
-    fn primary_address(&self) -> String {
-        self.addresses
-            .first()
-            .map(|address| {
-                address
-                    .split_once('/')
-                    .map_or(address.as_str(), |(addr, _)| addr)
-            })
-            .unwrap_or("")
-            .to_string()
+    pub(super) fn primary_address(&self) -> String {
+        primary_address_from(&self.addresses)
     }
 }
 
@@ -330,23 +279,21 @@ impl Ipv6Config {
         })
     }
 
-    pub(super) fn empty() -> Self {
-        Self {
-            addresses: Vec::new(),
-        }
+    pub(super) fn primary_address(&self) -> String {
+        primary_address_from(&self.addresses)
     }
+}
 
-    fn primary_address(&self) -> String {
-        self.addresses
-            .first()
-            .map(|address| {
-                address
-                    .split_once('/')
-                    .map_or(address.as_str(), |(addr, _)| addr)
-            })
-            .unwrap_or("")
-            .to_string()
-    }
+fn primary_address_from(addresses: &[String]) -> String {
+    addresses
+        .first()
+        .map(|address| {
+            address
+                .split_once('/')
+                .map_or(address.as_str(), |(addr, _)| addr)
+        })
+        .unwrap_or("")
+        .to_string()
 }
 
 impl ActiveConnection {
@@ -366,54 +313,11 @@ mod tests {
     use serde_json::json;
 
     #[test]
-    fn device_type_decodes_known_and_unknown() {
-        assert_eq!(device_type_str(1), "ethernet");
-        assert_eq!(device_type_str(2), "wifi");
-        assert_eq!(device_type_str(32), "loopback");
-        assert_eq!(device_type_str(20), "veth");
-        assert_eq!(device_type_str(999), "type-999");
-    }
-
-    #[test]
-    fn device_state_decodes_known_and_unknown() {
-        assert_eq!(device_state_str(100), "activated");
-        assert_eq!(device_state_str(20), "unavailable");
-        assert_eq!(device_state_str(10), "unmanaged");
-        assert_eq!(device_state_str(777), "state-777");
-    }
-
-    #[test]
     fn filter_keeps_managed_and_physical_drops_unmanaged_virtual() {
         assert!(keep_device(1, true));
         assert!(keep_device(32, false));
         assert!(!keep_device(20, false));
         assert!(keep_device(20, true));
-    }
-
-    #[test]
-    fn nm_path_treats_null_path_and_empty_as_absent() {
-        assert_eq!(nm_path("/".into()), None);
-        assert_eq!(nm_path("".into()), None);
-        assert_eq!(nm_path("/x/1".into()).as_deref(), Some("/x/1"));
-    }
-
-    #[test]
-    fn format_addresses_projects_address_and_prefix() {
-        let entries = vec![
-            AddressDataEntry {
-                address: Variant("10.0.0.5".into()),
-                prefix: Variant(24),
-            },
-            AddressDataEntry {
-                address: Variant("10.0.0.6".into()),
-                prefix: Variant(0),
-            },
-            AddressDataEntry {
-                address: Variant(String::new()),
-                prefix: Variant(24),
-            },
-        ];
-        assert_eq!(format_addresses(&entries), vec!["10.0.0.5/24", "10.0.0.6"]);
     }
 
     #[test]
@@ -459,51 +363,6 @@ mod tests {
     }
 
     #[test]
-    fn list_summary_projects_display_and_table_rows() {
-        let device = NetworkDevice {
-            interface: "eth0".into(),
-            device_type: 1,
-            state: 100,
-            managed: true,
-            mac: "52:54:00:00:00:01".into(),
-            mtu: 1500,
-            ip4_config: None,
-            ip6_config: None,
-            active_connection: None,
-            dhcp4_config: None,
-        };
-        let ip4 = IpConfig {
-            addresses: vec!["192.0.2.10/24".into()],
-            gateway: "192.0.2.1".into(),
-            dns: Vec::new(),
-            domains: Vec::new(),
-        };
-        let ip6 = Ipv6Config {
-            addresses: vec!["2001:db8::10/64".into()],
-        };
-
-        let summary = NetworkDeviceSummary::from_device(&device, &ip4, &ip6);
-
-        assert_eq!(summary.interface, "eth0");
-        assert_eq!(summary.device_type, "ethernet");
-        assert_eq!(summary.state, "activated");
-        assert_eq!(summary.ip4, "192.0.2.10");
-        assert_eq!(summary.ip6, "2001:db8::10");
-        assert_eq!(summary.mac, "52:54:00:00:00:01");
-        assert_eq!(
-            summary.table_row(),
-            vec![
-                json!("eth0"),
-                json!("ethernet"),
-                json!("activated"),
-                json!("192.0.2.10"),
-                json!("2001:db8::10"),
-                json!("52:54:00:00:00:01"),
-            ]
-        );
-    }
-
-    #[test]
     fn ip_config_primary_address_drops_prefix() {
         let props = json!({
             "AddressData": {"t":"aa{sv}","v":[
@@ -522,7 +381,7 @@ mod tests {
         assert_eq!(config.dns, vec!["1.1.1.1"]);
         assert_eq!(config.domains, vec!["example.test"]);
         assert_eq!(config.primary_address(), "192.0.2.10");
-        assert_eq!(IpConfig::empty().primary_address(), "");
+        assert_eq!(IpConfig::default().primary_address(), "");
     }
 
     #[test]

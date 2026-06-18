@@ -1,7 +1,4 @@
-use super::model::{
-    ActiveConnection, IpConfig, Ipv6Config, NetworkDevice, NetworkDeviceDetail,
-    NetworkDeviceSummary,
-};
+use super::model::{ActiveConnection, IpConfig, Ipv6Config, NetworkDevice, NetworkDeviceDetail};
 use super::{
     ACTIVE_IFACE, DEVICE_IFACE, DHCP4_IFACE, IP4_IFACE, IP6_IFACE, NM_MGR_IFACE, NM_MGR_PATH,
     PROPS_IFACE,
@@ -30,7 +27,7 @@ fn load_ip4_config(
 ) -> Result<IpConfig> {
     match path {
         Some(path) => IpConfig::from_value(get_all(client, channel, path, IP4_IFACE)?),
-        None => Ok(IpConfig::empty()),
+        None => Ok(IpConfig::default()),
     }
 }
 
@@ -41,7 +38,7 @@ fn load_ip6_config(
 ) -> Result<Ipv6Config> {
     match path {
         Some(path) => Ipv6Config::from_value(get_all(client, channel, path, IP6_IFACE)?),
-        None => Ok(Ipv6Config::empty()),
+        None => Ok(Ipv6Config::default()),
     }
 }
 
@@ -107,7 +104,7 @@ pub(super) fn list(ctx: &mut CapabilityContext<'_>, all: bool) -> Result<View> {
         }
         let ip4 = load_ip4_config(ctx.client, ctx.channel, device.ip4_config.as_deref())?;
         let ip6 = load_ip6_config(ctx.client, ctx.channel, device.ip6_config.as_deref())?;
-        devices.push(NetworkDeviceSummary::from_device(&device, &ip4, &ip6));
+        devices.push((device, ip4, ip6));
     }
 
     let mut human = format!(
@@ -117,14 +114,27 @@ pub(super) fn list(ctx: &mut CapabilityContext<'_>, all: bool) -> Result<View> {
     for d in &devices {
         human.push_str(&format!(
             "{:<14} {:<10} {:<13} {:<20} {}\n",
-            d.interface, d.device_type, d.state, d.ip4, d.mac,
+            d.0.interface,
+            d.0.type_name(),
+            d.0.state_name(),
+            d.1.primary_address(),
+            d.0.mac,
         ));
     }
 
     let columns = ["interface", "type", "state", "ip4", "ip6", "mac"];
     let rows: Vec<Value> = devices
         .iter()
-        .map(|d| Value::Array(d.table_row()))
+        .map(|(device, ip4, ip6)| {
+            json!([
+                device.interface,
+                device.type_name(),
+                device.state_name(),
+                ip4.primary_address(),
+                ip6.primary_address(),
+                device.mac,
+            ])
+        })
         .collect();
     Ok(View::new(
         "NetworkDeviceList",
