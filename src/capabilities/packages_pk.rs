@@ -671,12 +671,14 @@ fn plan_view(
     plan: &PkPlan,
     dry_run: bool,
 ) -> PkView {
+    use crate::capabilities::packages::{plan_human, plan_kind};
     let verb = mutation.verb();
-    let kind = if dry_run {
-        "PackagePlan"
-    } else {
-        "PackageMutation"
-    };
+    let counts = (
+        plan.install.len(),
+        plan.remove.len(),
+        plan.upgrade.len(),
+        plan.downgrade.len(),
+    );
     let data = json!({
         "operation": verb,
         "specs": specs,
@@ -688,39 +690,16 @@ fn plan_view(
         "downgrade": plan.downgrade,
         "install_size_total": Value::Null,
         "counts": {
-            "install": plan.install.len(),
-            "remove": plan.remove.len(),
-            "upgrade": plan.upgrade.len(),
-            "downgrade": plan.downgrade.len(),
+            "install": counts.0,
+            "remove": counts.1,
+            "upgrade": counts.2,
+            "downgrade": counts.3,
         },
     });
-    let human = if dry_run {
-        format!(
-            "DRY-RUN: {} {} on {} would install {}, remove {}, upgrade {}, downgrade {} package(s)\n",
-            verb,
-            specs.join(" "),
-            host,
-            plan.install.len(),
-            plan.remove.len(),
-            plan.upgrade.len(),
-            plan.downgrade.len(),
-        )
-    } else {
-        format!(
-            "{} {} on {}: installed {}, removed {}, upgraded {}, downgraded {} package(s)\n",
-            verb,
-            specs.join(" "),
-            host,
-            plan.install.len(),
-            plan.remove.len(),
-            plan.upgrade.len(),
-            plan.downgrade.len(),
-        )
-    };
     PkView {
-        kind,
+        kind: plan_kind(dry_run),
         data,
-        human,
+        human: plan_human(verb, specs, host, counts, dry_run),
         hints: pk_hints(),
     }
 }

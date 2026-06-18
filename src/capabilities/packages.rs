@@ -810,6 +810,43 @@ fn mutation_inner(
 }
 
 /// Build the [`View`] for a resolved plan (dry-run preview or executed mutation).
+/// Envelope `kind` for a package plan: a dry run previews, a real run mutates.
+///
+/// Shared by both backends ([`plan_view`] and
+/// [`crate::capabilities::packages_pk`]) so the discriminant cannot drift.
+pub(crate) fn plan_kind(dry_run: bool) -> &'static str {
+    if dry_run {
+        "PackagePlan"
+    } else {
+        "PackageMutation"
+    }
+}
+
+/// The one-line human summary shared by both backends' plan views.
+///
+/// `counts` is `(install, remove, upgrade, downgrade)`. A dry run reads as a
+/// preview ("would install ..."); a real run reads as applied ("installed
+/// ...").
+pub(crate) fn plan_human(
+    verb: &str,
+    specs: &[String],
+    host: &str,
+    counts: (usize, usize, usize, usize),
+    dry_run: bool,
+) -> String {
+    let (install, remove, upgrade, downgrade) = counts;
+    let specs = specs.join(" ");
+    if dry_run {
+        format!(
+            "DRY-RUN: {verb} {specs} on {host} would install {install}, remove {remove}, upgrade {upgrade}, downgrade {downgrade} package(s)\n"
+        )
+    } else {
+        format!(
+            "{verb} {specs} on {host}: installed {install}, removed {remove}, upgraded {upgrade}, downgraded {downgrade} package(s)\n"
+        )
+    }
+}
+
 fn plan_view(
     m: Mutation,
     host: &str,
@@ -817,11 +854,6 @@ fn plan_view(
     plan: &ResolvedPlan,
     dry_run: bool,
 ) -> View {
-    let kind = if dry_run {
-        "PackagePlan"
-    } else {
-        "PackageMutation"
-    };
     let mut data = plan.data();
     if let Value::Object(map) = &mut data {
         map.insert("operation".into(), json!(m.verb()));
@@ -829,30 +861,14 @@ fn plan_view(
         map.insert("dry_run".into(), json!(dry_run));
         map.insert("backend".into(), json!("dnf5daemon"));
     }
-    let human = if dry_run {
-        format!(
-            "DRY-RUN: {} {} on {} would install {}, remove {}, upgrade {}, downgrade {} package(s)\n",
-            m.verb(),
-            specs.join(" "),
-            host,
-            plan.install.len(),
-            plan.remove.len(),
-            plan.upgrade.len(),
-            plan.downgrade.len(),
-        )
-    } else {
-        format!(
-            "{} {} on {}: installed {}, removed {}, upgraded {}, downgraded {} package(s)\n",
-            m.verb(),
-            specs.join(" "),
-            host,
-            plan.install.len(),
-            plan.remove.len(),
-            plan.upgrade.len(),
-            plan.downgrade.len(),
-        )
-    };
-    View::new(kind, host.to_string(), data, human)
+    let counts = (
+        plan.install.len(),
+        plan.remove.len(),
+        plan.upgrade.len(),
+        plan.downgrade.len(),
+    );
+    let human = plan_human(m.verb(), specs, host, counts, dry_run);
+    View::new(plan_kind(dry_run), host.to_string(), data, human)
 }
 
 #[cfg(test)]
