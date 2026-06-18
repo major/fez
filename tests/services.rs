@@ -85,7 +85,7 @@ fn stream_collects_journal_lines() {
         .unwrap();
     let lines: Vec<&[u8]> = blob
         .split(|&b| b == b'\n')
-        .filter(|l| !l.is_empty())
+        .filter(|l| serde_json::from_slice::<serde_json::Value>(l).is_ok())
         .collect();
     assert_eq!(lines.len(), 2);
 }
@@ -212,6 +212,24 @@ fn services_status_accepts_bare_unit_name() {
 }
 
 #[test]
+fn services_status_unknown_unit_exits_not_found() {
+    fez_fake()
+        .args(["services", "status", "missing.service", "--json"])
+        .assert()
+        .code(4)
+        .stdout(contains("\"code\":\"not-found\""));
+}
+
+#[test]
+fn services_status_generic_dbus_error_passes_through() {
+    fez_fake()
+        .args(["services", "status", "broken.service", "--json"])
+        .assert()
+        .code(7)
+        .stdout(contains("\"code\":\"dbus-error\""));
+}
+
+#[test]
 fn services_logs_json_entries() {
     fez_fake()
         .args(["services", "logs", "sshd.service", "--json"])
@@ -229,6 +247,26 @@ fn services_logs_human() {
         .success()
         .stdout(contains("sshd"))
         .stdout(contains("listening"));
+}
+
+#[test]
+fn services_logs_accepts_filters() {
+    fez_fake()
+        .args([
+            "services",
+            "logs",
+            "sshd.service",
+            "--since",
+            "today",
+            "--priority",
+            "info",
+            "--lines",
+            "1",
+            "--json",
+        ])
+        .assert()
+        .success()
+        .stdout(contains("\"kind\":\"LogEntries\""));
 }
 
 #[test]
@@ -355,6 +393,18 @@ fn services_restart_has_no_reverse_hint() {
 }
 
 #[test]
+fn services_reload_has_no_reverse_hint() {
+    fez_fake()
+        .env("FEZ_AUDIT", "off")
+        .args(["services", "reload", "chronyd.service", "--json"])
+        .assert()
+        .success()
+        .stdout(contains("\"kind\":\"ServiceMutation\""))
+        .stdout(contains("\"operation\":\"reload\""))
+        .stdout(contains("hints").not());
+}
+
+#[test]
 fn mutation_writes_attempt_and_result_audit_records() {
     let audit = AuditLog::new("audit-it");
     fez_fake()
@@ -406,6 +456,20 @@ fn services_disable_human_output() {
         .assert()
         .success()
         .stdout(contains("disabled chronyd.service"));
+}
+
+#[test]
+fn services_disable_now_stops_unit_and_keeps_reverse_hint() {
+    fez_fake()
+        .env("FEZ_AUDIT", "off")
+        .args(["services", "disable", "chronyd.service", "--now", "--json"])
+        .assert()
+        .success()
+        .stdout(contains("\"kind\":\"ServiceEnablement\""))
+        .stdout(contains("\"operation\":\"disable\""))
+        .stdout(contains(
+            "\"reverse\":\"fez services enable chronyd.service --now\"",
+        ));
 }
 
 // --- Privilege escalation: mid-operation denial ---------------------------
