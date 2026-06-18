@@ -11,7 +11,7 @@ pub mod audit;
 /// Concrete capability implementations (the commands fez runs).
 pub mod capabilities;
 /// Machine-readable descriptors of the capability surface.
-pub mod capability;
+pub mod schema;
 /// Command-line argument definitions.
 pub mod cli;
 mod dispatch;

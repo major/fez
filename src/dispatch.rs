@@ -1,4 +1,4 @@
-use crate::capability;
+use crate::schema;
 use crate::cli::{Cli, TopCommand};
 use crate::envelope::Envelope;
 use serde_json::json;
@@ -33,7 +33,7 @@ pub fn run(cli: Cli) -> i32 {
 }
 
 fn run_capabilities(cli: &Cli, host: &str) -> i32 {
-    let ids: Vec<&str> = capability::registry().into_iter().map(|d| d.id).collect();
+    let ids: Vec<&str> = schema::registry().into_iter().map(|d| d.id).collect();
     if cli.json {
         println!(
             "{}",
@@ -46,7 +46,7 @@ fn run_capabilities(cli: &Cli, host: &str) -> i32 {
 }
 
 fn run_describe(cli: &Cli, host: &str, id: &str) -> i32 {
-    match capability::find(id) {
+    match schema::find(id) {
         Some(d) => {
             if cli.json {
                 let data = serde_json::to_value(&d).unwrap_or_else(

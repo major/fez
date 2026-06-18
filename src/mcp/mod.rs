@@ -4,7 +4,7 @@
 //! strict JSON schemas up front.
 pub mod jsonrpc;
 
-use crate::capability;
+use crate::schema;
 use crate::mcp::jsonrpc::{Request, Response};
 use serde_json::{json, Value};
 use std::io::{BufRead, Write};
@@ -168,12 +168,12 @@ fn tool_list(context: &ServerContext) -> Value {
         }),
     ];
     if context.expanded_tools() {
-        tools.extend(capability::registry().into_iter().map(expanded_tool));
+        tools.extend(schema::registry().into_iter().map(expanded_tool));
     }
     Value::Array(tools)
 }
 
-fn expanded_tool(d: capability::Descriptor) -> Value {
+fn expanded_tool(d: schema::Descriptor) -> Value {
     json!({
         "name": expanded_tool_name(d.id),
         "description": expanded_tool_description(&d),
@@ -185,7 +185,7 @@ fn expanded_tool_name(id: &str) -> String {
     id.replace('.', "_")
 }
 
-fn expanded_tool_description(d: &capability::Descriptor) -> String {
+fn expanded_tool_description(d: &schema::Descriptor) -> String {
     let mut description = format!("{} {}", d.summary, d.long);
     if d.privileged
         || d.flags
@@ -199,7 +199,7 @@ fn expanded_tool_description(d: &capability::Descriptor) -> String {
     description
 }
 
-fn expanded_tool_schema(d: &capability::Descriptor) -> Value {
+fn expanded_tool_schema(d: &schema::Descriptor) -> Value {
     let mut properties = serde_json::Map::new();
     let mut required: Vec<Value> = Vec::new();
     for input in &d.inputs {
@@ -225,7 +225,7 @@ fn expanded_tool_schema(d: &capability::Descriptor) -> Value {
     schema
 }
 
-fn input_schema(d: &capability::Descriptor, input: &capability::Input) -> Value {
+fn input_schema(d: &schema::Descriptor, input: &schema::Input) -> Value {
     if is_variadic_input(d, input) {
         return json!({
             "oneOf": [
@@ -244,11 +244,11 @@ fn input_schema(d: &capability::Descriptor, input: &capability::Input) -> Value 
     schema
 }
 
-fn is_variadic_input(d: &capability::Descriptor, input: &capability::Input) -> bool {
+fn is_variadic_input(d: &schema::Descriptor, input: &schema::Input) -> bool {
     input.name == "specs" && d.id.starts_with("packages.")
 }
 
-fn flag_schema(flag: &capability::FlagSchema) -> Value {
+fn flag_schema(flag: &schema::FlagSchema) -> Value {
     let mut schema = if flag.repeatable {
         json!({
             "type": "array",
@@ -294,7 +294,7 @@ fn tools_call(params: &Value, context: &ServerContext) -> Result<Value, (i64, St
                 .get("capability")
                 .and_then(Value::as_str)
                 .ok_or((-32602, "missing 'capability'".to_string()))?;
-            match capability::find(id) {
+            match schema::find(id) {
                 Some(d) => {
                     let text = serde_json::to_string_pretty(&d)
                         .unwrap_or_else(|e| format!("descriptor serialization error: {e}"));
@@ -318,8 +318,8 @@ fn tools_call(params: &Value, context: &ServerContext) -> Result<Value, (i64, St
     }
 }
 
-fn capability_for_tool(name: &str) -> Option<capability::Descriptor> {
-    capability::registry()
+fn capability_for_tool(name: &str) -> Option<schema::Descriptor> {
+    schema::registry()
         .into_iter()
         .find(|d| expanded_tool_name(d.id) == name)
 }
@@ -329,7 +329,7 @@ fn text_result(text: &str, is_error: bool) -> Value {
 }
 
 fn list_capabilities_text() -> String {
-    capability::registry()
+    schema::registry()
         .into_iter()
         .map(|d| d.id)
         .collect::<Vec<_>>()
@@ -343,7 +343,7 @@ fn invoke(id: &str, args: &Value, context: &ServerContext) -> Result<Value, (i64
     // A well-formed `invoke` call naming an unknown capability is a domain-level
     // failure, not a malformed request: report it as a tool error (isError),
     // consistent with `describe_capability`, rather than a JSON-RPC error.
-    let descriptor = match capability::find(id) {
+    let descriptor = match schema::find(id) {
         Some(d) => d,
         None => return Ok(text_result(&format!("unknown capability: {id}"), true)),
     };
@@ -362,7 +362,7 @@ fn invoke(id: &str, args: &Value, context: &ServerContext) -> Result<Value, (i64
 }
 
 fn invoke_expanded(
-    descriptor: &capability::Descriptor,
+    descriptor: &schema::Descriptor,
     args: &Value,
     context: &ServerContext,
 ) -> Result<Value, (i64, String)> {
@@ -405,12 +405,12 @@ fn invoke_expanded(
 /// non-string element. `host`/`dry_run`/`force` map to globals; `--json` is
 /// always appended so the result is a fez/v1 envelope.
 #[cfg(test)]
-fn build_argv(d: &capability::Descriptor, args: &Value) -> Vec<String> {
+fn build_argv(d: &schema::Descriptor, args: &Value) -> Vec<String> {
     build_argv_with_context(d, args, &ServerContext::default_localhost())
 }
 
 pub(crate) fn build_argv_with_context(
-    d: &capability::Descriptor,
+    d: &schema::Descriptor,
     args: &Value,
     context: &ServerContext,
 ) -> Vec<String> {
@@ -576,7 +576,7 @@ mod tests {
 
     #[test]
     fn input_schema_includes_default_and_choices() {
-        let descriptor = capability::Descriptor {
+        let descriptor = schema::Descriptor {
             id: "test.input",
             summary: "test",
             long: "test",
@@ -586,7 +586,7 @@ mod tests {
             flags: vec![],
             examples: vec!["fez test".into()],
         };
-        let input = capability::Input {
+        let input = schema::Input {
             name: "mode",
             ty: "string",
             required: false,
@@ -601,7 +601,7 @@ mod tests {
 
     #[test]
     fn flag_schema_includes_choices() {
-        let flag = capability::FlagSchema {
+        let flag = schema::FlagSchema {
             name: "--mode",
             ty: "string",
             description: "Mode to use.",
@@ -626,12 +626,12 @@ mod tests {
     use serde_json::json as j;
 
     fn argv_for(id: &str, args: serde_json::Value) -> Vec<String> {
-        let d = capability::find(id).unwrap();
+        let d = schema::find(id).unwrap();
         build_argv(&d, &args)
     }
 
     fn argv_for_with_host(id: &str, default_host: &str, args: serde_json::Value) -> Vec<String> {
-        let d = capability::find(id).unwrap();
+        let d = schema::find(id).unwrap();
         let context = ServerContext::new(default_host.to_string(), false);
         build_argv_with_context(&d, &args, &context)
     }

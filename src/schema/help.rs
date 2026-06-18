@@ -1,7 +1,7 @@
 //! Maps capability descriptors onto the derived clap command tree so that
 //! `--help` renders the same long descriptions and examples that `describe`
 //! emits. The registry is the single source of truth.
-use crate::capability;
+use crate::schema;
 use clap::Command;
 
 /// Map a clap subcommand path (e.g. `["services", "start"]`) to a dotted
@@ -9,7 +9,7 @@ use clap::Command;
 /// descriptor (e.g. `capabilities`, `describe`, `services` itself).
 pub fn path_to_id(path: &[&str]) -> Option<String> {
     let id = path.join(".");
-    capability::find(&id).map(|_| id)
+    schema::find(&id).map(|_| id)
 }
 
 /// Render a descriptor's examples as an `after_help` block.
@@ -43,7 +43,7 @@ fn inject_at(mut cmd: Command, path: &mut Vec<String>) -> Command {
     if !path.is_empty() {
         let parts: Vec<&str> = path.iter().map(String::as_str).collect();
         if let Some(id) = path_to_id(&parts) {
-            let d = capability::find(&id).expect("id resolved");
+            let d = schema::find(&id).expect("id resolved");
             cmd = cmd
                 .long_about(d.long)
                 .after_help(examples_block(&d.examples));
