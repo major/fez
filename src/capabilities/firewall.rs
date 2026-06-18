@@ -10,7 +10,6 @@ use crate::capabilities::{render_with_hints, View};
 use crate::cli::{Cli, FirewallAction};
 use crate::error::{is_service_unknown, FezError, Result};
 use crate::protocol::client::BridgeClient;
-use crate::transport;
 use serde_json::{json, Value};
 
 const FW_NAME: &str = "org.fedoraproject.FirewallD1";
@@ -161,8 +160,7 @@ fn classify(action: &FirewallAction) -> Plan<'_> {
 
 /// Connect to the bridge and dispatch the requested action.
 fn run(cli: &Cli, action: &FirewallAction) -> Result<View> {
-    let transport = transport::from_host(cli.host.as_deref());
-    let mut client = BridgeClient::connect(transport.as_ref())?;
+    let mut client = crate::capabilities::connect(cli)?;
     let host = client.host().to_string();
     match classify(action) {
         Plan::Read(ReadAction::Status) => {

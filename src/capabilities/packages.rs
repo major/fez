@@ -7,7 +7,7 @@
 //! closed best-effort on every return path so the daemon never leaks sessions.
 use crate::capabilities::{render, View};
 use crate::cli::{Cli, PackagesAction};
-use crate::error::{is_service_unknown, FezError, Result};
+use crate::error::{FezError, Result};
 use crate::protocol::client::BridgeClient;
 use serde_json::{json, Value};
 
@@ -223,13 +223,7 @@ fn open_session(client: &mut BridgeClient, privileged: bool) -> Result<(String, 
             ("load_available_repos", "b", json!(true)),
         ])]),
     );
-    let out = match out {
-        Ok(v) => v,
-        Err(FezError::Dbus { name, .. }) if is_service_unknown(&name) => {
-            return Err(dependency_missing())
-        }
-        Err(e) => return Err(e),
-    };
+    let out = crate::capabilities::map_service_unknown(out, dependency_missing)?;
     let session = out.get(0).and_then(Value::as_str).unwrap_or("").to_string();
     Ok((channel, session))
 }
@@ -333,8 +327,7 @@ const PKG_COLUMNS: &[&str] = &["name", "evr", "arch", "repo_id", "install_size",
 /// PackageKit backend (RHEL 10). Only when PackageKit is *also* absent does the
 /// call return a dependency-missing error naming both daemons.
 fn run_read(cli: &Cli, action: ReadAction<'_>) -> Result<View> {
-    let transport = crate::transport::from_host(cli.host.as_deref());
-    let mut client = BridgeClient::connect(transport.as_ref())?;
+    let mut client = crate::capabilities::connect(cli)?;
     let host = client.host().to_string();
     let (channel, session) = match open_session(&mut client, false) {
         Ok(pair) => pair,
@@ -392,11 +385,8 @@ fn read_via_packagekit(
             pk::repolist(client, move |enabled| filter.accepts(enabled))
         }
     };
-    match result {
-        Ok(view) => Ok(from_pk(view, host)),
-        Err(FezError::Dbus { name, .. }) if is_service_unknown(&name) => Err(both_missing()),
-        Err(e) => Err(e),
-    }
+    let view = crate::capabilities::map_service_unknown(result, both_missing)?;
+    Ok(from_pk(view, host))
 }
 
 /// Call `Rpm.list` on the session with the given scope/patterns and return the
@@ -756,8 +746,7 @@ fn parse_plan(items: &Value) -> ResolvedPlan {
 /// apply removal guardrails, audit, execute, and always close the session.
 fn run_mutation(cli: &Cli, m: Mutation, specs: &[String]) -> Result<View> {
     let host = cli.resolved_host();
-    let transport = crate::transport::from_host(cli.host.as_deref());
-    let mut client = BridgeClient::connect(transport.as_ref())?;
+    let mut client = crate::capabilities::connect(cli)?;
     let (channel, session) = match open_session(&mut client, true) {
         Ok(pair) => pair,
         Err(FezError::DependencyMissing { .. }) => {
@@ -782,11 +771,10 @@ fn mutate_via_packagekit(
     dry_run: bool,
     force: bool,
 ) -> Result<View> {
-    match crate::capabilities::packages_pk::mutate(client, m.verb(), specs, host, dry_run, force) {
-        Ok(view) => Ok(from_pk(view, host.to_string())),
-        Err(FezError::Dbus { name, .. }) if is_service_unknown(&name) => Err(both_missing()),
-        Err(e) => Err(e),
-    }
+    let result =
+        crate::capabilities::packages_pk::mutate(client, m.verb(), specs, host, dry_run, force);
+    let view = crate::capabilities::map_service_unknown(result, both_missing)?;
+    Ok(from_pk(view, host.to_string()))
 }
 
 #[allow(clippy::too_many_arguments)]
