@@ -50,7 +50,7 @@ pub enum FezError {
         unit: String,
     },
     /// A required target dependency (e.g. dnf5daemon) is absent or not activatable.
-    #[error("missing dependency {component} on target: {remediation}")]
+    #[error("missing dependency {component} on target")]
     DependencyMissing {
         /// Human-facing name of the missing component (e.g. `dnf5daemon`).
         component: String,
@@ -549,7 +549,7 @@ mod tests {
                 remediation: "install it".into(),
             }
             .to_string(),
-            "missing dependency dnf5daemon on target: install it"
+            "missing dependency dnf5daemon on target"
         );
         assert_eq!(
             FezError::DangerousTransaction {
