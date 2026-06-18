@@ -57,26 +57,25 @@ fn reject_unwrapped_options(args: &[Value], id: &Value) -> Option<Value> {
 /// Split out from the systemd match so the caller can validate the `a{sv}`
 /// options argument (via [`reject_unwrapped_options`]) before dispatching.
 fn dnf_reply(method: &str, iface: &str, id: &Value) -> Value {
+    const SERVICE_UNKNOWN: &str = "org.freedesktop.DBus.Error.ServiceUnknown";
+    const UNKNOWN_METHOD: &str = "org.freedesktop.DBus.Error.UnknownMethod";
     match method {
         // SessionManager.open_session -> (session_object_path).
         // FEZ_FAKE_NO_DNF5 simulates the daemon being absent: the bus name
         // fails to activate, yielding ServiceUnknown.
         "open_session" => {
             if std::env::var_os("FEZ_FAKE_NO_DNF5").is_some() {
-                json!({"error":[
-                    "org.freedesktop.DBus.Error.ServiceUnknown",
-                    ["The name org.rpm.dnf.v0 was not provided by any .service files"]
-                ],"id": id})
+                err_reply(id, SERVICE_UNKNOWN, "The name org.rpm.dnf.v0 was not provided by any .service files".into())
             } else {
-                json!({"reply":[[SESSION_PATH]],"id": id})
+                ok_reply(id, json!([SESSION_PATH]))
             }
         }
         // rpm.Repo.list(options) -> (repositories). Shares the method name
         // `list` with Rpm.list; disambiguated by iface.
-        "list" if iface.ends_with(".rpm.Repo") => json!({"reply":[[[
+        "list" if iface.ends_with(".rpm.Repo") => ok_reply(id, json!([[
             dnf_repo("fedora", "Fedora", true),
             dnf_repo("updates-testing", "Fedora - Testing", false),
-        ]]],"id": id}),
+        ]])),
         // rpm.Rpm.list(options) -> (packages).
         //
         // The daemon's Rpm.list has no server-side repo filter (only `install`
@@ -90,34 +89,24 @@ fn dnf_reply(method: &str, iface: &str, id: &Value) -> Value {
                 .and_then(|s| s.parse::<usize>().ok())
             {
                 Some(count) => (0..count)
-                    .map(|i| {
-                        dnf_package(
-                            &format!("pkg{i:04}"),
-                            "1.0-1.fc40",
-                            "x86_64",
-                            "fedora",
-                            1024,
-                        )
-                    })
+                    .map(|i| dnf_package(&format!("pkg{i:04}"), "1.0-1.fc40", "x86_64", "fedora", 1024))
                     .collect(),
                 None => vec![
-                    dnf_package("bash", "5.2.26-1.fc40", "x86_64", "fedora", 7340032),
-                    dnf_package("htop", "3.3.0-1.fc40", "x86_64", "fedora", 245760),
-                    dnf_package("nginx", "1.24.0-7.fc40", "x86_64", "fedora", 1572864),
-                    dnf_package("vim-enhanced", "9.1.0-1.fc40", "x86_64", "updates", 3145728),
+                    dnf_package("bash", "5.2.26-1.fc40", "x86_64", "fedora", 7_340_032),
+                    dnf_package("htop", "3.3.0-1.fc40", "x86_64", "fedora", 245_760),
+                    dnf_package("nginx", "1.24.0-7.fc40", "x86_64", "fedora", 1_572_864),
+                    dnf_package("vim-enhanced", "9.1.0-1.fc40", "x86_64", "updates", 3_145_728),
                 ],
             };
-            json!({"reply":[[packages]],"id": id})
+            ok_reply(id, json!([packages]))
         }
         // Staging calls: install/remove/upgrade return nothing.
-        "install" | "remove" | "upgrade" => json!({"reply":[[]],"id": id}),
+        "install" | "remove" | "upgrade" => ok_reply(id, json!([])),
         // Goal.resolve(options) -> (transaction_items, result). result 0 == no problems.
-        "resolve" => json!({"reply":[[fake_resolve_items(), 0]],"id": id}),
+        "resolve" => ok_reply(id, json!([fake_resolve_items(), 0])),
         // Goal.do_transaction(options) -> ().
-        "do_transaction" => json!({"reply":[[]],"id": id}),
-        other => json!({"error":[
-            "org.freedesktop.DBus.Error.UnknownMethod",
-            [format!("no fake for {other}")]],"id": id}),
+        "do_transaction" => ok_reply(id, json!([])),
+        other => err_reply(id, UNKNOWN_METHOD, format!("no fake for {other}")),
     }
 }
 
@@ -172,6 +161,22 @@ fn fake_resolve_items() -> Value {
     }
 }
 
+/// D-Bus null/empty object-path sentinel used when a device has no config object.
+const ROOT_PATH: &str = "/";
+
+/// Build a D-Bus method-reply frame: `{"reply":[out_args],"id":id}`.
+///
+/// `out_args` is the out-argument array; pass `json!([value])` for a single
+/// return value and `json!([])` for void methods.
+fn ok_reply(id: &Value, out_args: Value) -> Value {
+    json!({"reply": [out_args], "id": id})
+}
+
+/// Build a D-Bus error-reply frame: `{"error":[name,[msg]],"id":id}`.
+fn err_reply(id: &Value, name: &str, msg: String) -> Value {
+    json!({"error": [name, [msg]], "id": id})
+}
+
 /// NetworkManager root manager object path.
 const NM_MGR_PATH: &str = "/org/freedesktop/NetworkManager";
 
@@ -199,12 +204,12 @@ fn nm_reply(path: &str, method: &str, id: &Value) -> Value {
     // but fez only calls GetDevices on the manager for these two actions.
     if path == NM_MGR_PATH {
         return match method {
-            "GetDevices" => json!({"reply":[[[
+            "GetDevices" => ok_reply(id, json!([[
                 format!("{NM_MGR_PATH}/Devices/1"),
                 format!("{NM_MGR_PATH}/Devices/2"),
                 format!("{NM_MGR_PATH}/Devices/3"),
                 format!("{NM_MGR_PATH}/Devices/9"),
-            ]]],"id":id}),
+            ]])),
             other => nm_unknown(other, id),
         };
     }
@@ -218,7 +223,7 @@ fn nm_reply(path: &str, method: &str, id: &Value) -> Value {
     // IP4Config objects: GetAll -> AddressData/Gateway/NameserverData/Domains.
     if path.starts_with(&format!("{NM_MGR_PATH}/IP4Config/")) {
         return match method {
-            "GetAll" => json!({"reply":[[{
+            "GetAll" => ok_reply(id, json!([{
                 "AddressData": {"t":"aa{sv}","v":[
                     {"address":{"t":"s","v":"192.168.10.20"},"prefix":{"t":"u","v":24}}
                 ]},
@@ -228,42 +233,42 @@ fn nm_reply(path: &str, method: &str, id: &Value) -> Value {
                     {"address":{"t":"s","v":"1.1.1.1"}}
                 ]},
                 "Domains": {"t":"as","v":["lan"]},
-            }]],"id":id}),
+            }])),
             other => nm_unknown(other, id),
         };
     }
     // IP6Config objects: GetAll -> AddressData/Gateway.
     if path.starts_with(&format!("{NM_MGR_PATH}/IP6Config/")) {
         return match method {
-            "GetAll" => json!({"reply":[[{
+            "GetAll" => ok_reply(id, json!([{
                 "AddressData": {"t":"aa{sv}","v":[
                     {"address":{"t":"s","v":"fd00::20"},"prefix":{"t":"u","v":64}}
                 ]},
                 "Gateway": {"t":"s","v":"fd00::1"},
-            }]],"id":id}),
+            }])),
             other => nm_unknown(other, id),
         };
     }
     // Active connection objects: GetAll -> Id/Type/Default.
     if path.starts_with(&format!("{NM_MGR_PATH}/ActiveConnection/")) {
         return match method {
-            "GetAll" => json!({"reply":[[{
+            "GetAll" => ok_reply(id, json!([{
                 "Id": {"t":"s","v":"enp1s0"},
                 "Type": {"t":"s","v":"802-3-ethernet"},
                 "Default": {"t":"b","v":true},
-            }]],"id":id}),
+            }])),
             other => nm_unknown(other, id),
         };
     }
     // DHCP4 config objects: GetAll -> Options (a{sv}).
     if path.starts_with(&format!("{NM_MGR_PATH}/DHCP4Config/")) {
         return match method {
-            "GetAll" => json!({"reply":[[{
+            "GetAll" => ok_reply(id, json!([{
                 "Options": {"t":"a{sv}","v":{
                     "routers": {"t":"s","v":"192.168.10.1"},
                     "ip_address": {"t":"s","v":"192.168.10.20"},
                 }},
-            }]],"id":id}),
+            }])),
             other => nm_unknown(other, id),
         };
     }
@@ -290,33 +295,33 @@ fn nm_device_props(n: &str, id: &Value) -> Value {
             1u32,
             20u32,
             true,
-            "/".to_string(),
-            "/".to_string(),
-            "/".to_string(),
-            "/".to_string(),
+            ROOT_PATH.to_string(),
+            ROOT_PATH.to_string(),
+            ROOT_PATH.to_string(),
+            ROOT_PATH.to_string(),
         ),
         "3" => (
             "lo",
             32u32,
             10u32,
             false,
-            "/".to_string(),
-            "/".to_string(),
-            "/".to_string(),
-            "/".to_string(),
+            ROOT_PATH.to_string(),
+            ROOT_PATH.to_string(),
+            ROOT_PATH.to_string(),
+            ROOT_PATH.to_string(),
         ),
         _ => (
             "veth0",
             20u32,
             10u32,
             false,
-            "/".to_string(),
-            "/".to_string(),
-            "/".to_string(),
-            "/".to_string(),
+            ROOT_PATH.to_string(),
+            ROOT_PATH.to_string(),
+            ROOT_PATH.to_string(),
+            ROOT_PATH.to_string(),
         ),
     };
-    json!({"reply":[[{
+    ok_reply(id, json!([{
         "Interface": {"t":"s","v":iface},
         "DeviceType": {"t":"u","v":dtype},
         "State": {"t":"u","v":state},
@@ -327,14 +332,12 @@ fn nm_device_props(n: &str, id: &Value) -> Value {
         "Ip6Config": {"t":"o","v":ip6},
         "ActiveConnection": {"t":"o","v":active},
         "Dhcp4Config": {"t":"o","v":dhcp4},
-    }]],"id":id})
+    }]))
 }
 
 /// Unknown-method D-Bus error for a NM call the fake does not model.
 fn nm_unknown(method: &str, id: &Value) -> Value {
-    json!({"error":[
-        "org.freedesktop.DBus.Error.UnknownMethod",
-        [format!("no NM fake for {method}")]],"id": id})
+    err_reply(id, "org.freedesktop.DBus.Error.UnknownMethod", format!("no NM fake for {method}"))
 }
 
 /// firewalld root object path.
@@ -380,10 +383,7 @@ fn fw_reply(
     id: &Value,
 ) -> Value {
     if std::env::var_os("FEZ_FAKE_NO_FIREWALLD").is_some() {
-        return json!({"error":[
-            "org.freedesktop.DBus.Error.ServiceUnknown",
-            ["The name org.fedoraproject.FirewallD1 was not provided by any .service files"]
-        ],"id": id});
+        return err_reply(id, "org.freedesktop.DBus.Error.ServiceUnknown", "The name org.fedoraproject.FirewallD1 was not provided by any .service files".into());
     }
     if path == FW_CONFIG_PATH && std::env::var_os("FEZ_FAKE_CONFIG_UNKNOWN_METHOD").is_some() {
         return fw_unknown(method, id);
@@ -401,13 +401,11 @@ fn fw_reply(
             return fw_access_denied(id);
         }
         return match (iface, method) {
-            (FW_CONFIG_ZONE_IFACE, "getServices") => {
-                json!({"reply":[[["ssh", "dhcpv6-client"]]],"id": id})
-            }
-            (FW_CONFIG_ZONE_IFACE, "getPorts") => json!({"reply":[[[]]],"id": id}),
+            (FW_CONFIG_ZONE_IFACE, "getServices") => ok_reply(id, json!([["ssh", "dhcpv6-client"]])),
+            (FW_CONFIG_ZONE_IFACE, "getPorts") => ok_reply(id, json!([[]])),
             // Permanent `public` masquerade is off; runtime is on, so masquerade
             // drift is non-empty out of the box alongside the 9090/tcp port.
-            (FW_CONFIG_ZONE_IFACE, "getMasquerade") => json!({"reply":[[false]],"id": id}),
+            (FW_CONFIG_ZONE_IFACE, "getMasquerade") => ok_reply(id, json!([false])),
             (_, other) => fw_unknown(other, id),
         };
     }
@@ -417,9 +415,7 @@ fn fw_reply(
         }
         return match (iface, method) {
             // getZoneByName(name) -> config zone object path.
-            (FW_CONFIG_IFACE, "getZoneByName") => {
-                json!({"reply":[[format!("{FW_CONFIG_PATH}/zone/0")]],"id": id})
-            }
+            (FW_CONFIG_IFACE, "getZoneByName") => ok_reply(id, json!([format!("{FW_CONFIG_PATH}/zone/0")])),
             (_, other) => fw_unknown(other, id),
         };
     }
@@ -431,38 +427,27 @@ fn fw_reply(
     // UnknownMethod, exactly as real firewalld responds.
     let zone = args.first().and_then(Value::as_str).unwrap_or("");
     match (iface, method) {
-        (FW_IFACE, "getDefaultZone") => json!({"reply":[["public"]],"id": id}),
-        (FW_IFACE, "listServices") => json!({"reply":[[[
-            "ssh", "http", "https", "cockpit", "dhcpv6-client"
-        ]]],"id": id}),
-        (FW_IFACE, "queryPanicMode") => {
-            let on = std::env::var_os("FEZ_FAKE_PANIC").is_some();
-            json!({"reply":[[on]],"id": id})
-        }
-        (FW_ZONE_IFACE, "getZones") => {
-            json!({"reply":[[["public", "internal", "drop"]]],"id": id})
-        }
+        (FW_IFACE, "getDefaultZone") => ok_reply(id, json!(["public"])),
+        (FW_IFACE, "listServices") => ok_reply(id, json!([["ssh", "http", "https", "cockpit", "dhcpv6-client"]])),
+        (FW_IFACE, "queryPanicMode") => ok_reply(id, json!([std::env::var_os("FEZ_FAKE_PANIC").is_some()])),
+        (FW_ZONE_IFACE, "getZones") => ok_reply(id, json!([["public", "internal", "drop"]])),
         // Runtime per-zone reads. `public` carries the drift port 9090/tcp,
         // unless FEZ_FAKE_PORT_REMOVED models the post-removal state where the
         // port is gone from the runtime zone (a follow-up read after
         // `remove-port 9090/tcp`).
-        (FW_ZONE_IFACE, "getServices") => json!({"reply":[[["ssh", "dhcpv6-client"]]],"id": id}),
+        (FW_ZONE_IFACE, "getServices") => ok_reply(id, json!([["ssh", "dhcpv6-client"]])),
         (FW_ZONE_IFACE, "getPorts") => {
             let removed = std::env::var_os("FEZ_FAKE_PORT_REMOVED").is_some();
             if zone == "public" && !removed {
-                json!({"reply":[[[["9090", "tcp"]]]],"id": id})
+                ok_reply(id, json!([[["9090", "tcp"]]]))
             } else {
-                json!({"reply":[[[]]],"id": id})
+                ok_reply(id, json!([[]]))
             }
         }
         (FW_ZONE_IFACE, "getInterfaces") => {
-            if zone == "public" {
-                json!({"reply":[[["enp1s0"]]],"id": id})
-            } else {
-                json!({"reply":[[[]]],"id": id})
-            }
+            if zone == "public" { ok_reply(id, json!([["enp1s0"]])) } else { ok_reply(id, json!([[]])) }
         }
-        (FW_ZONE_IFACE, "getSources") => json!({"reply":[[[]]],"id": id}),
+        (FW_ZONE_IFACE, "getSources") => ok_reply(id, json!([[]])),
         // Runtime per-zone masquerade. `public` is seeded on (permanent is off),
         // so masquerade drift is non-empty out of the box. FEZ_FAKE_NO_MASQUERADE
         // models an older firewalld that lacks the getMasquerade method: the call
@@ -471,22 +456,16 @@ fn fw_reply(
             if std::env::var_os("FEZ_FAKE_NO_MASQUERADE").is_some() {
                 return fw_unknown("getMasquerade", id);
             }
-            if zone == "public" {
-                json!({"reply":[[true]],"id": id})
-            } else {
-                json!({"reply":[[false]],"id": id})
-            }
+            if zone == "public" { ok_reply(id, json!([true])) } else { ok_reply(id, json!([false])) }
         }
         // Mutations return the affected zone name (or void for reload/confirm).
         (
             FW_ZONE_IFACE,
             "addService" | "removeService" | "addPort" | "removePort" | "addMasquerade"
             | "removeMasquerade",
-        ) => {
-            json!({"reply":[[zone]],"id": id})
-        }
+        ) => ok_reply(id, json!([zone])),
         (FW_IFACE, "setDefaultZone" | "reload" | "runtimeToPermanent")
-        | (FW_IFACE, "enablePanicMode" | "disablePanicMode") => json!({"reply":[[]],"id": id}),
+        | (FW_IFACE, "enablePanicMode" | "disablePanicMode") => ok_reply(id, json!([])),
         (_, other) => fw_unknown(other, id),
     }
 }
@@ -494,9 +473,7 @@ fn fw_reply(
 /// Unknown-method D-Bus error for a firewalld call the fake does not model
 /// (also the response when a method is called on the wrong interface).
 fn fw_unknown(method: &str, id: &Value) -> Value {
-    json!({"error":[
-        "org.freedesktop.DBus.Error.UnknownMethod",
-        [format!("no firewalld fake for {method}")]],"id": id})
+    err_reply(id, "org.freedesktop.DBus.Error.UnknownMethod", format!("no firewalld fake for {method}"))
 }
 
 /// Polkit-denied error for a permanent `config.*` read on an unprivileged
@@ -504,17 +481,13 @@ fn fw_unknown(method: &str, id: &Value) -> Value {
 /// error; cockpit surfaces an unauthorized call by closing the channel
 /// `access-denied`, which the client maps to [`FezError::AccessDenied`].
 fn fw_access_denied(id: &Value) -> Value {
-    json!({"error":[
-        "org.freedesktop.DBus.Error.AccessDenied",
-        ["permanent config read requires authorization (PK_ACTION_CONFIG)"]],"id": id})
+    err_reply(id, "org.freedesktop.DBus.Error.AccessDenied", "permanent config read requires authorization (PK_ACTION_CONFIG)".into())
 }
 
 /// Real-host firewalld error when the permanent config.info polkit action is
 /// rejected even though the call arrived over a cockpit privileged channel.
 fn fw_config_info_denied(id: &Value) -> Value {
-    json!({"error":[
-        "org.fedoraproject.FirewallD1.NotAuthorizedException",
-        ["Not Authorized(polkit): org.fedoraproject.FirewallD1.config.info"]],"id": id})
+    err_reply(id, "org.fedoraproject.FirewallD1.NotAuthorizedException", "Not Authorized(polkit): org.fedoraproject.FirewallD1.config.info".into())
 }
 
 /// The host's escalation mechanisms as modeled by `FEZ_FAKE_BRIDGES`.
@@ -576,7 +549,7 @@ const PK_TX_IFACE: &str = "org.freedesktop.PackageKit.Transaction";
 
 /// Emit a PackageKit `{"signal":[path, iface, member, args]}` data frame, the
 /// way cockpit `dbus-json3` delivers a D-Bus signal on the channel.
-fn send_signal(out: &mut impl Write, channel: &str, member: &str, args: Value) {
+fn send_signal(out: &mut impl Write, channel: &str, member: &str, args: &Value) {
     send_data(
         out,
         channel,
@@ -609,7 +582,7 @@ fn pk_emit(out: &mut impl Write, channel: &str, method: &str) {
     match method {
         "GetPackages" => {
             for (info, pid, summ) in installed {
-                send_signal(out, channel, "Package", json!([info, pid, summ]));
+                send_signal(out, channel, "Package", &json!([info, pid, summ]));
             }
         }
         "GetUpdates" => {
@@ -617,62 +590,29 @@ fn pk_emit(out: &mut impl Write, channel: &str, method: &str) {
                 out,
                 channel,
                 "Package",
-                json!([
-                    11,
-                    "htop;3.4.2-1.fc44;x86_64;updates",
-                    "Interactive process viewer"
-                ]),
+                &json!([11, "htop;3.4.2-1.fc44;x86_64;updates", "Interactive process viewer"]),
             );
         }
         "SearchNames" => {
-            send_signal(
-                out,
-                channel,
-                "Package",
-                json!([2, nginx, "High performance web server"]),
-            );
+            send_signal(out, channel, "Package", &json!([2, nginx, "High performance web server"]));
         }
         "GetRepoList" => {
-            send_signal(
-                out,
-                channel,
-                "RepoDetail",
-                json!(["fedora", "Fedora 44", true]),
-            );
-            send_signal(
-                out,
-                channel,
-                "RepoDetail",
-                json!(["updates", "Fedora 44 updates", true]),
-            );
-            send_signal(out, channel, "RepoDetail", json!(["crb", "CRB", false]));
+            send_signal(out, channel, "RepoDetail", &json!(["fedora", "Fedora 44", true]));
+            send_signal(out, channel, "RepoDetail", &json!(["updates", "Fedora 44 updates", true]));
+            send_signal(out, channel, "RepoDetail", &json!(["crb", "CRB", false]));
         }
         "Resolve" => {
             // Resolve a spec to a full package_id for info / mutation.
-            send_signal(
-                out,
-                channel,
-                "Package",
-                json!([2, nginx, "High performance web server"]),
-            );
+            send_signal(out, channel, "Package", &json!([2, nginx, "High performance web server"]));
         }
         "InstallPackages" | "UpdatePackages" => {
             // SIMULATE or real: report the install plan (target + a dep).
+            send_signal(out, channel, "Package", &json!([12, nginx, "High performance web server"]));
             send_signal(
                 out,
                 channel,
                 "Package",
-                json!([12, nginx, "High performance web server"]),
-            );
-            send_signal(
-                out,
-                channel,
-                "Package",
-                json!([
-                    12,
-                    "nginx-core;1.27.0-1.fc44;x86_64;fedora",
-                    "nginx core files"
-                ]),
+                &json!([12, "nginx-core;1.27.0-1.fc44;x86_64;fedora", "nginx core files"]),
             );
         }
         "RemovePackages" => {
@@ -680,22 +620,14 @@ fn pk_emit(out: &mut impl Write, channel: &str, method: &str) {
                 out,
                 channel,
                 "Package",
-                json!([
-                    13,
-                    "htop;3.4.1-3.fc44;x86_64;installed",
-                    "Interactive process viewer"
-                ]),
+                &json!([13, "htop;3.4.1-3.fc44;x86_64;installed", "Interactive process viewer"]),
             );
             if std::env::var("FEZ_FAKE_PK_PLAN").as_deref() == Ok("protected") {
                 send_signal(
                     out,
                     channel,
                     "Package",
-                    json!([
-                        13,
-                        "systemd;255-1.fc44;x86_64;installed",
-                        "System and Service Manager"
-                    ]),
+                    &json!([13, "systemd;255-1.fc44;x86_64;installed", "System and Service Manager"]),
                 );
             }
         }
@@ -703,16 +635,11 @@ fn pk_emit(out: &mut impl Write, channel: &str, method: &str) {
     }
     // Optional error injection before Finished (exit 4 = failed).
     if std::env::var("FEZ_FAKE_PK_ERROR").as_deref() == Ok("notauth") {
-        send_signal(
-            out,
-            channel,
-            "ErrorCode",
-            json!([6, "not authorized to perform operation"]),
-        );
-        send_signal(out, channel, "Finished", json!([4, 10]));
+        send_signal(out, channel, "ErrorCode", &json!([6, "not authorized to perform operation"]));
+        send_signal(out, channel, "Finished", &json!([4, 10]));
         return;
     }
-    send_signal(out, channel, "Finished", json!([1, 20])); // exit 1 = success
+    send_signal(out, channel, "Finished", &json!([1, 20])); // exit 1 = success
 }
 
 fn main() -> io::Result<()> {
@@ -884,12 +811,9 @@ fn main() -> io::Result<()> {
                     // backends missing" path is testable; otherwise hand back the
                     // canned transaction object path as a normal reply.
                     if std::env::var_os("FEZ_FAKE_NO_PACKAGEKIT").is_some() {
-                        json!({"error":[
-                            "org.freedesktop.DBus.Error.ServiceUnknown",
-                            ["The name org.freedesktop.PackageKit was not provided by any .service files"]
-                        ],"id": id})
+                        err_reply(&id, "org.freedesktop.DBus.Error.ServiceUnknown", "The name org.freedesktop.PackageKit was not provided by any .service files".into())
                     } else {
-                        json!({"reply":[[PK_TX_PATH]],"id":id})
+                        ok_reply(&id, json!([PK_TX_PATH]))
                     }
                 } else if path == PK_TX_PATH {
                     // PackageKit transaction methods report via signals, not a
@@ -914,7 +838,7 @@ fn main() -> io::Result<()> {
                         // in production (same discipline as `GetAll` below).
                         "Get" => {
                             let names: Vec<Value> = bridges.iter().map(|(n, _)| json!(n)).collect();
-                            json!({"reply":[[{"t":"as","v":names}]],"id":id})
+                            ok_reply(&id, json!([{"t":"as","v":names}]))
                         }
                         // cockpit.Superuser.Start(name): bring up the named
                         // mechanism. `ok` succeeds (record escalated); `err`
@@ -925,64 +849,58 @@ fn main() -> io::Result<()> {
                             match bridges.iter().find(|(n, _)| n == name) {
                                 Some((_, true)) => {
                                     escalated = true;
-                                    json!({"reply":[[]],"id":id})
+                                    ok_reply(&id, json!([]))
                                 }
-                                _ => json!({"error":[
-                                    "cockpit.Superuser.Error",
-                                    [format!("mechanism {name:?} cannot start")]],"id":id}),
+                                _ => err_reply(&id, "cockpit.Superuser.Error", format!("mechanism {name:?} cannot start")),
                             }
                         }
                         // reply[0][0] = units array
-                        "ListUnits" => json!({"reply":[[[
-                        ["sshd.service","OpenSSH server daemon","loaded","active","running","",
-                         "/org/freedesktop/systemd1/unit/sshd_2eservice",0,"","/"],
-                        ["chronyd.service","NTP client/server","loaded","inactive","dead","",
-                         "/org/freedesktop/systemd1/unit/chronyd_2eservice",0,"","/"]
-                    ]]],"id":id}),
+                        "ListUnits" => ok_reply(&id, json!([[
+                            ["sshd.service","OpenSSH server daemon","loaded","active","running","",
+                             "/org/freedesktop/systemd1/unit/sshd_2eservice",0,"",ROOT_PATH],
+                            ["chronyd.service","NTP client/server","loaded","inactive","dead","",
+                             "/org/freedesktop/systemd1/unit/chronyd_2eservice",0,"",ROOT_PATH],
+                        ]])),
                         // reply[0][0] = object path
-                        "GetUnit" | "LoadUnit" => {
-                            json!({"reply":[["/org/freedesktop/systemd1/unit/sshd_2eservice"]],"id":id})
-                        }
+                        "GetUnit" | "LoadUnit" => ok_reply(&id, json!(["/org/freedesktop/systemd1/unit/sshd_2eservice"])),
                         // reply[0][0] = a{sv} dict. Real cockpit-bridge wraps each
                         // value as a D-Bus variant: {"t":"s","v":"..."}. Mirror that
                         // so the status path is exercised exactly as in production.
-                        "GetAll" => json!({"reply":[[{
-                        "Id":{"t":"s","v":"sshd.service"},
-                        "Description":{"t":"s","v":"OpenSSH server daemon"},
-                        "LoadState":{"t":"s","v":"loaded"},
-                        "ActiveState":{"t":"s","v":"active"},
-                        "SubState":{"t":"s","v":"running"},
-                        "UnitFileState":{"t":"s","v":"enabled"}
-                    }]],"id":id}),
+                        "GetAll" => ok_reply(&id, json!([{
+                            "Id":{"t":"s","v":"sshd.service"},
+                            "Description":{"t":"s","v":"OpenSSH server daemon"},
+                            "LoadState":{"t":"s","v":"loaded"},
+                            "ActiveState":{"t":"s","v":"active"},
+                            "SubState":{"t":"s","v":"running"},
+                            "UnitFileState":{"t":"s","v":"enabled"}
+                        }])),
                         // Lifecycle methods return a job object path: reply[0][0].
                         "StartUnit" | "StopUnit" | "RestartUnit" | "ReloadUnit" => {
-                            json!({"reply":[["/org/freedesktop/systemd1/job/42"]],"id":id})
+                            ok_reply(&id, json!(["/org/freedesktop/systemd1/job/42"]))
                         }
                         // Manager.Reload returns void; fez calls it after
                         // enable/disable to refresh cached unit-file state.
-                        "Reload" => json!({"reply":[[]],"id":id}),
+                        "Reload" => ok_reply(&id, json!([])),
                         // EnableUnitFiles returns two out args: carries_install_info (bool)
                         // and a changes array. out_args = reply[0] = [true, [changes]].
-                        "EnableUnitFiles" => json!({"reply":[[
-                        true,
-                        [["symlink",
-                          "/etc/systemd/system/multi-user.target.wants/chronyd.service",
-                          "/usr/lib/systemd/system/chronyd.service"]]
-                    ]],"id":id}),
+                        "EnableUnitFiles" => ok_reply(&id, json!([
+                            true,
+                            [["symlink",
+                              "/etc/systemd/system/multi-user.target.wants/chronyd.service",
+                              "/usr/lib/systemd/system/chronyd.service"]],
+                        ])),
                         // DisableUnitFiles returns one out arg: a changes array.
                         // out_args = reply[0] = [[changes]].
-                        "DisableUnitFiles" => json!({"reply":[[
-                        [["unlink",
-                          "/etc/systemd/system/multi-user.target.wants/chronyd.service",
-                          ""]]
-                    ]],"id":id}),
+                        "DisableUnitFiles" => ok_reply(&id, json!([
+                            [["unlink",
+                              "/etc/systemd/system/multi-user.target.wants/chronyd.service",
+                              ""]],
+                        ])),
                         // dnf5daemon SessionManager.close_session(path) -> (bool).
                         // Takes a bare object path, not an a{sv} dict, so it is not
                         // a dnf_options_method and lands here.
-                        "close_session" => json!({"reply":[[true]],"id":id}),
-                        other => json!({"error":[
-                        "org.freedesktop.DBus.Error.UnknownMethod",
-                        [format!("no fake for {other}")]],"id":id}),
+                        "close_session" => ok_reply(&id, json!([true])),
+                        other => err_reply(&id, "org.freedesktop.DBus.Error.UnknownMethod", format!("no fake for {other}")),
                     }
                 };
                 send_data(&mut stdout, &frame.channel, &reply);
