@@ -326,10 +326,7 @@ mod tests {
 pub mod services;
 
 /// RPM package management capabilities (via dnf5daemon).
-pub mod packages;
-
-/// PackageKit fallback package backend (used when dnf5daemon is absent).
-pub mod packages_pk;
+pub mod package;
 
 /// NetworkManager inspection capabilities.
 pub mod network;

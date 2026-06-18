@@ -1,12 +1,7 @@
-//! RPM package management over dnf5daemon (`org.rpm.dnf.v0`).
-//!
-//! Mirrors the structure of [`crate::capabilities::services`]: a single
-//! [`classify`] splits the flat clap enum into reads and mutations, reads run
-//! unprivileged and render a [`View`], mutations resolve the transaction first,
-//! apply removal guardrails, audit, then execute. Every dnf5daemon session is
-//! closed best-effort on every return path so the daemon never leaks sessions.
-use crate::capabilities::{render, CapabilityContext, View};
-use crate::cli::{Cli, PackagesAction};
+//! dnf5daemon backend (`org.rpm.dnf.v0`).
+use super::{plan_human, plan_kind, ListFilters, Mutation, ReadAction, RepoFilter};
+use crate::capabilities::{CapabilityContext, View};
+use crate::cli::Cli;
 use crate::error::{FezError, Result};
 use crate::protocol::client::BridgeClient;
 use crate::protocol::variant::{Variant, VariantU64};
@@ -21,156 +16,6 @@ const GOAL_IFACE: &str = "org.rpm.dnf.v0.Goal";
 
 /// Package attributes requested from dnf5daemon's `Rpm.list`.
 const PKG_ATTRS: &[&str] = &["name", "evr", "arch", "repo_id", "install_size", "summary"];
-
-/// A staging mutation that goes through resolve-first/guardrail/execute.
-#[derive(Clone, Copy)]
-enum Mutation {
-    Install,
-    Remove,
-    Upgrade,
-}
-
-impl Mutation {
-    fn verb(self) -> &'static str {
-        match self {
-            Mutation::Install => "install",
-            Mutation::Remove => "remove",
-            Mutation::Upgrade => "upgrade",
-        }
-    }
-    /// The dnf5daemon `Rpm` D-Bus method name to stage this mutation.
-    ///
-    /// Intentionally distinct from [`Mutation::verb`] (the user-facing display
-    /// verb); the two happen to coincide today but answer different questions.
-    fn method(self) -> &'static str {
-        match self {
-            Mutation::Install => "install",
-            Mutation::Remove => "remove",
-            Mutation::Upgrade => "upgrade",
-        }
-    }
-}
-
-/// A read subcommand and its arguments, borrowed from the parsed action.
-///
-/// Splitting reads out of [`PackagesAction`] keeps [`run_read`] total: every
-/// variant here maps to a handler, so adding one is a compile error rather than
-/// a runtime panic.
-enum ReadAction<'a> {
-    List(ListFilters<'a>),
-    Info { spec: &'a str },
-    Search { pattern: &'a str },
-    CheckUpdate,
-    Repolist { filter: RepoFilter },
-}
-
-/// Client-side filters and pagination for `packages list`.
-#[derive(Clone, Copy)]
-struct ListFilters<'a> {
-    available: bool,
-    repos: &'a [String],
-    name: Option<&'a str>,
-    limit: Option<usize>,
-    offset: usize,
-}
-
-/// Which repositories `repolist` should report.
-#[derive(Clone, Copy)]
-enum RepoFilter {
-    Enabled,
-    Disabled,
-    All,
-}
-
-impl RepoFilter {
-    /// The dnf5daemon `enable_disable` option value.
-    fn enable_disable(self) -> &'static str {
-        match self {
-            RepoFilter::Enabled => "enabled",
-            RepoFilter::Disabled => "disabled",
-            RepoFilter::All => "all",
-        }
-    }
-    /// Whether a repo with `enabled` state should appear under this filter.
-    fn accepts(self, enabled: bool) -> bool {
-        match self {
-            RepoFilter::Enabled => enabled,
-            RepoFilter::Disabled => !enabled,
-            RepoFilter::All => true,
-        }
-    }
-}
-
-/// The read/mutate split of a parsed [`PackagesAction`].
-enum Plan<'a> {
-    Read(ReadAction<'a>),
-    Mutate {
-        mutation: Mutation,
-        specs: Vec<String>,
-    },
-}
-
-/// Map the flat clap enum onto the read/mutate [`Plan`] split.
-///
-/// This is the only exhaustive match over [`PackagesAction`]; everything
-/// downstream consumes one arm of this and is therefore total, so a new variant
-/// breaks the build here instead of hitting an `unreachable!` at runtime.
-fn classify(action: &PackagesAction) -> Plan<'_> {
-    match action {
-        PackagesAction::List {
-            installed: _installed,
-            available,
-            repo,
-            name,
-            limit,
-            offset,
-        } => Plan::Read(ReadAction::List(ListFilters {
-            available: *available,
-            repos: repo,
-            name: name.as_deref(),
-            limit: *limit,
-            offset: *offset,
-        })),
-        PackagesAction::Info { spec } => Plan::Read(ReadAction::Info { spec }),
-        PackagesAction::Search { pattern } => Plan::Read(ReadAction::Search { pattern }),
-        PackagesAction::CheckUpdate => Plan::Read(ReadAction::CheckUpdate),
-        PackagesAction::Repolist {
-            enabled: _enabled,
-            disabled,
-            all,
-        } => {
-            let filter = if *all {
-                RepoFilter::All
-            } else if *disabled {
-                RepoFilter::Disabled
-            } else {
-                RepoFilter::Enabled
-            };
-            Plan::Read(ReadAction::Repolist { filter })
-        }
-        PackagesAction::Install { specs } => Plan::Mutate {
-            mutation: Mutation::Install,
-            specs: specs.clone(),
-        },
-        PackagesAction::Remove { specs } => Plan::Mutate {
-            mutation: Mutation::Remove,
-            specs: specs.clone(),
-        },
-        PackagesAction::Upgrade { specs } => Plan::Mutate {
-            mutation: Mutation::Upgrade,
-            specs: specs.clone(),
-        },
-    }
-}
-
-/// Run the requested `packages` subcommand and return the process exit code.
-pub fn dispatch(cli: &Cli, action: &PackagesAction) -> i32 {
-    let view = match classify(action) {
-        Plan::Read(read) => run_read(cli, read),
-        Plan::Mutate { mutation, specs } => run_mutation(cli, mutation, &specs),
-    };
-    render(cli, view)
-}
 
 /// The [`FezError::DependencyMissing`] returned when dnf5daemon is absent.
 fn dependency_missing() -> FezError {
@@ -225,8 +70,19 @@ fn open_session(client: &mut BridgeClient, privileged: bool) -> Result<(String, 
         ])]),
     );
     let out = crate::capabilities::map_service_unknown(out, dependency_missing)?;
-    let session = out.get(0).and_then(Value::as_str).unwrap_or("").to_string();
+    let session = session_path(&out)?;
     Ok((channel, session))
+}
+
+fn session_path(out: &Value) -> Result<String> {
+    out.get(0)
+        .and_then(Value::as_str)
+        .filter(|path| !path.is_empty())
+        .map(ToString::to_string)
+        .ok_or_else(|| FezError::Dbus {
+            name: "org.rpm.dnf.v0.MalformedResponse".into(),
+            message: "open_session response did not include a session object path".into(),
+        })
 }
 
 /// Close a dnf5daemon session, ignoring any error (best-effort cleanup).
@@ -326,25 +182,16 @@ impl PackageRecord {
 const PKG_COLUMNS: &[&str] = &["name", "evr", "arch", "repo_id", "install_size", "summary"];
 
 /// Connect, open an unprivileged session, dispatch the read, and always close.
-///
-/// When dnf5daemon is absent (the `open_session` ServiceUnknown path, surfaced
-/// as [`FezError::DependencyMissing`]), the read transparently falls back to the
-/// PackageKit backend (RHEL 10). Only when PackageKit is *also* absent does the
-/// call return a dependency-missing error naming both daemons.
-fn run_read(cli: &Cli, action: ReadAction<'_>) -> Result<View> {
-    let mut client = crate::capabilities::connect(cli)?;
-    let host = client.host().to_string();
-    let (channel, session) = match open_session(&mut client, false) {
-        Ok(pair) => pair,
-        Err(FezError::DependencyMissing { .. }) => {
-            return read_via_packagekit(&mut client, host, action);
-        }
-        Err(e) => return Err(e),
-    };
+pub(super) fn run_read(
+    client: &mut BridgeClient,
+    host: &str,
+    action: ReadAction<'_>,
+) -> Result<View> {
+    let (channel, session) = open_session(client, false)?;
     let mut ctx = CapabilityContext {
-        client: &mut client,
+        client,
         channel: &channel,
-        host: &host,
+        host,
     };
     let result = match action {
         ReadAction::List(filters) => list(&mut ctx, &session, filters),
@@ -355,48 +202,6 @@ fn run_read(cli: &Cli, action: ReadAction<'_>) -> Result<View> {
     };
     close_session(ctx.client, ctx.channel, &session);
     result
-}
-
-/// Convert a PackageKit backend result into a dnf-backend [`View`].
-fn from_pk(pk: crate::capabilities::packages_pk::PkView, host: String) -> View {
-    View::new(pk.kind, host, pk.data, pk.human).with_hints_opt(pk.hints)
-}
-
-/// Dependency-missing error when BOTH dnf5daemon and PackageKit are absent.
-fn both_missing() -> FezError {
-    FezError::DependencyMissing {
-        component: "dnf5daemon or PackageKit".into(),
-        dbus_name: "org.rpm.dnf.v0 / org.freedesktop.PackageKit".into(),
-        remediation: "Install a package backend: dnf5daemon-server (Fedora) providing org.rpm.dnf.v0, or PackageKit providing org.freedesktop.PackageKit, then retry.".into(),
-    }
-}
-
-/// Run a read over the PackageKit backend, mapping PackageKit's own absence to a
-/// dependency-missing error naming both daemons.
-fn read_via_packagekit(
-    client: &mut BridgeClient,
-    host: String,
-    action: ReadAction<'_>,
-) -> Result<View> {
-    use crate::capabilities::packages_pk as pk;
-    let result = match action {
-        ReadAction::List(filters) => pk::list(
-            client,
-            filters.available,
-            filters.repos,
-            filters.name,
-            filters.limit,
-            filters.offset,
-        ),
-        ReadAction::Info { spec } => pk::info(client, spec),
-        ReadAction::Search { pattern } => pk::search(client, pattern),
-        ReadAction::CheckUpdate => pk::check_update(client),
-        ReadAction::Repolist { filter } => {
-            pk::repolist(client, move |enabled| filter.accepts(enabled))
-        }
-    };
-    let view = crate::capabilities::map_service_unknown(result, both_missing)?;
-    Ok(from_pk(view, host))
 }
 
 /// Call `Rpm.list` on the session with the given scope/patterns and return the
@@ -727,42 +532,24 @@ fn parse_plan(items: &Value) -> ResolvedPlan {
 
 /// Resolve-first mutation: stage, resolve, optionally short-circuit on dry-run,
 /// apply removal guardrails, audit, execute, and always close the session.
-fn run_mutation(cli: &Cli, m: Mutation, specs: &[String]) -> Result<View> {
-    let host = cli.resolved_host();
-    let mut client = crate::capabilities::connect(cli)?;
-    let (channel, session) = match open_session(&mut client, true) {
-        Ok(pair) => pair,
-        Err(FezError::DependencyMissing { .. }) => {
-            return mutate_via_packagekit(&mut client, m, specs, &host, cli.dry_run, cli.force);
-        }
-        Err(e) => return Err(e),
-    };
-    // Do the work in an inner closure so the session is closed on every path,
-    // success or failure, before the result propagates.
-    let mut ctx = CapabilityContext {
-        client: &mut client,
-        channel: &channel,
-        host: &host,
-    };
-    let result = mutation_inner(cli, &mut ctx, &session, m, specs);
-    close_session(ctx.client, ctx.channel, &session);
-    result
-}
-
-/// Run a mutation over the PackageKit backend, mapping PackageKit's own absence
-/// to a dependency-missing error naming both daemons.
-fn mutate_via_packagekit(
+pub(super) fn run_mutation(
+    cli: &Cli,
     client: &mut BridgeClient,
     m: Mutation,
     specs: &[String],
     host: &str,
-    dry_run: bool,
-    force: bool,
 ) -> Result<View> {
-    let result =
-        crate::capabilities::packages_pk::mutate(client, m.verb(), specs, host, dry_run, force);
-    let view = crate::capabilities::map_service_unknown(result, both_missing)?;
-    Ok(from_pk(view, host.to_string()))
+    let (channel, session) = open_session(client, true)?;
+    // Do the work in an inner closure so the session is closed on every path,
+    // success or failure, before the result propagates.
+    let mut ctx = CapabilityContext {
+        client,
+        channel: &channel,
+        host,
+    };
+    let result = mutation_inner(cli, &mut ctx, &session, m, specs);
+    close_session(ctx.client, ctx.channel, &session);
+    result
 }
 
 fn mutation_inner(
@@ -806,44 +593,6 @@ fn mutation_inner(
         )?;
         Ok(plan_view(m, ctx.host, specs, &plan, false))
     })
-}
-
-/// Build the [`View`] for a resolved plan (dry-run preview or executed mutation).
-/// Envelope `kind` for a package plan: a dry run previews, a real run mutates.
-///
-/// Shared by both backends ([`plan_view`] and
-/// [`crate::capabilities::packages_pk`]) so the discriminant cannot drift.
-pub(crate) fn plan_kind(dry_run: bool) -> &'static str {
-    if dry_run {
-        "PackagePlan"
-    } else {
-        "PackageMutation"
-    }
-}
-
-/// The one-line human summary shared by both backends' plan views.
-///
-/// `counts` is `(install, remove, upgrade, downgrade)`. A dry run reads as a
-/// preview ("would install ..."); a real run reads as applied ("installed
-/// ...").
-pub(crate) fn plan_human(
-    verb: &str,
-    specs: &[String],
-    host: &str,
-    counts: (usize, usize, usize, usize),
-    dry_run: bool,
-) -> String {
-    let (install, remove, upgrade, downgrade) = counts;
-    let specs = specs.join(" ");
-    if dry_run {
-        format!(
-            "DRY-RUN: {verb} {specs} on {host} would install {install}, remove {remove}, upgrade {upgrade}, downgrade {downgrade} package(s)\n"
-        )
-    } else {
-        format!(
-            "{verb} {specs} on {host}: installed {install}, removed {remove}, upgraded {upgrade}, downgraded {downgrade} package(s)\n"
-        )
-    }
 }
 
 fn plan_view(
@@ -907,6 +656,22 @@ mod tests {
                 "patterns": {"t": "as", "v": ["htop"]},
             })
         );
+    }
+
+    #[test]
+    fn session_path_rejects_missing_or_empty_response() {
+        assert_eq!(
+            session_path(&json!(["/org/rpm/dnf/v0/session/1"])).unwrap(),
+            "/org/rpm/dnf/v0/session/1"
+        );
+        assert!(matches!(
+            session_path(&json!([])),
+            Err(FezError::Dbus { .. })
+        ));
+        assert!(matches!(
+            session_path(&json!([""])),
+            Err(FezError::Dbus { .. })
+        ));
     }
 
     #[test]
