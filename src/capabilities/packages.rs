@@ -9,6 +9,7 @@ use crate::capabilities::{render, CapabilityContext, View};
 use crate::cli::{Cli, PackagesAction};
 use crate::error::{FezError, Result};
 use crate::protocol::client::BridgeClient;
+use crate::protocol::variant::{Variant, VariantU64};
 use serde_json::{json, Value};
 
 const DNF_NAME: &str = "org.rpm.dnf.v0";
@@ -239,31 +240,34 @@ fn close_session(client: &mut BridgeClient, channel: &str, session: &str) {
     );
 }
 
-/// Pull a variant-wrapped (`{"t":..,"v":..}`) or flat string field as a `String`.
-fn sv(v: &Value, key: &str) -> String {
-    v.get(key)
-        .and_then(|f| f.get("v").unwrap_or(f).as_str())
-        .unwrap_or("")
-        .to_string()
+/// Deserialization intermediate for dnf5daemon's variant-wrapped package
+/// objects. Fields use [`Variant`] / [`VariantU64`] so the `{"t","v"}`
+/// envelope unwrapping is handled by serde, not per-field helper functions.
+#[derive(Debug, Default, serde::Deserialize)]
+struct PackageProps {
+    #[serde(default)]
+    name: Variant<String>,
+    #[serde(default)]
+    evr: Variant<String>,
+    #[serde(default)]
+    arch: Variant<String>,
+    #[serde(default)]
+    repo_id: Variant<String>,
+    #[serde(default)]
+    install_size: VariantU64,
+    #[serde(default)]
+    summary: Variant<String>,
 }
 
-/// Pull a variant-wrapped (`{"t":"t","v":..}`) numeric field as a `u64`,
-/// tolerating either a JSON number or a numeric string payload.
-fn sv_u64(v: &Value, key: &str) -> u64 {
-    let field = v.get(key).map(|f| f.get("v").unwrap_or(f));
-    match field {
-        Some(f) if f.is_u64() => f.as_u64().unwrap_or(0),
-        Some(f) if f.is_i64() => u64::try_from(f.as_i64().unwrap_or(0)).unwrap_or(0),
-        Some(f) => f.as_str().and_then(|s| s.parse().ok()).unwrap_or(0),
-        None => 0,
-    }
-}
-
-/// Pull a variant-wrapped (`{"t":"b","v":..}`) or flat boolean field.
-fn sv_bool(v: &Value, key: &str) -> bool {
-    v.get(key)
-        .and_then(|f| f.get("v").unwrap_or(f).as_bool())
-        .unwrap_or(false)
+/// Deserialization intermediate for dnf5daemon repo records.
+#[derive(Debug, Default, serde::Deserialize)]
+struct RepoProps {
+    #[serde(default)]
+    id: Variant<String>,
+    #[serde(default)]
+    name: Variant<String>,
+    #[serde(default)]
+    enabled: Variant<bool>,
 }
 
 /// A package record parsed from dnf5daemon's variant-wrapped package object.
@@ -279,13 +283,14 @@ struct PackageRecord {
 
 impl PackageRecord {
     fn from_value(v: &Value) -> Self {
+        let props: PackageProps = serde_json::from_value(v.clone()).unwrap_or_default();
         Self {
-            name: sv(v, "name"),
-            evr: sv(v, "evr"),
-            arch: sv(v, "arch"),
-            repo_id: sv(v, "repo_id"),
-            install_size: sv_u64(v, "install_size"),
-            summary: sv(v, "summary"),
+            name: props.name.0,
+            evr: props.evr.0,
+            arch: props.arch.0,
+            repo_id: props.repo_id.0,
+            install_size: props.install_size.0,
+            summary: props.summary.0,
         }
     }
 
@@ -533,10 +538,11 @@ struct RepoRecord {
 
 impl RepoRecord {
     fn from_value(v: &Value) -> Self {
+        let props: RepoProps = serde_json::from_value(v.clone()).unwrap_or_default();
         Self {
-            id: sv(v, "id"),
-            name: sv(v, "name"),
-            enabled: sv_bool(v, "enabled"),
+            id: props.id.0,
+            name: props.name.0,
+            enabled: props.enabled.0,
         }
     }
 
@@ -624,9 +630,10 @@ struct TransactionPackage {
 
 impl TransactionPackage {
     fn from_value(v: &Value) -> Option<Self> {
-        let name = sv(v, "name");
-        let evr = sv(v, "evr");
-        let arch = sv(v, "arch");
+        let props: PackageProps = serde_json::from_value(v.clone()).ok()?;
+        let name = props.name.0;
+        let evr = props.evr.0;
+        let arch = props.arch.0;
         if name.is_empty() || evr.is_empty() || arch.is_empty() {
             return None;
         }
@@ -634,7 +641,7 @@ impl TransactionPackage {
             name,
             evr,
             arch,
-            install_size: sv_u64(v, "install_size"),
+            install_size: props.install_size.0,
         })
     }
 
