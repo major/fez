@@ -4,8 +4,8 @@
 //! strict JSON schemas up front.
 pub mod jsonrpc;
 
-use crate::schema;
 use crate::mcp::jsonrpc::{Request, Response};
+use crate::schema;
 use serde_json::{json, Value};
 use std::io::{BufRead, Write};
 

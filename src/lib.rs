@@ -10,8 +10,6 @@
 pub mod audit;
 /// Concrete capability implementations (the commands fez runs).
 pub mod capabilities;
-/// Machine-readable descriptors of the capability surface.
-pub mod schema;
 /// Command-line argument definitions.
 pub mod cli;
 mod dispatch;
@@ -27,6 +25,8 @@ pub mod mcp;
 pub mod protocol;
 /// Guardrails around destructive operations (protected units, confirmations).
 pub mod safety;
+/// Machine-readable descriptors of the capability surface.
+pub mod schema;
 /// Local and SSH transports for reaching the bridge.
 pub mod transport;
 

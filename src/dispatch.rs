@@ -1,6 +1,6 @@
-use crate::schema;
 use crate::cli::{Cli, TopCommand};
 use crate::envelope::Envelope;
+use crate::schema;
 use serde_json::json;
 use std::io::Write;
 
