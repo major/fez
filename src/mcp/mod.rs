@@ -175,7 +175,7 @@ fn tool_list(context: &ServerContext) -> Value {
 
 fn expanded_tool(d: capability::Descriptor) -> Value {
     json!({
-        "name": expanded_tool_name(&d.id),
+        "name": expanded_tool_name(d.id),
         "description": expanded_tool_description(&d),
         "inputSchema": expanded_tool_schema(&d),
     })
@@ -190,7 +190,7 @@ fn expanded_tool_description(d: &capability::Descriptor) -> String {
     if d.privileged
         || d.flags
             .iter()
-            .any(|flag| flag == "--dry-run" || flag == "--force")
+            .any(|flag| *flag == "--dry-run" || *flag == "--force")
     {
         description.push_str(
             " Supports dry_run to preview mutations and force to override command-specific safety guardrails when advertised in the input schema.",
@@ -203,7 +203,7 @@ fn expanded_tool_schema(d: &capability::Descriptor) -> Value {
     let mut properties = serde_json::Map::new();
     let mut required: Vec<Value> = Vec::new();
     for input in &d.inputs {
-        properties.insert(input.name.clone(), input_schema(d, input));
+        properties.insert(input.name.into(), input_schema(d, input));
         if input.required {
             required.push(json!(input.name));
         }
@@ -212,7 +212,7 @@ fn expanded_tool_schema(d: &capability::Descriptor) -> Value {
         if flag.name == "--json" {
             continue;
         }
-        properties.insert(flag_arg_name(&flag.name), flag_schema(&flag));
+        properties.insert(flag_arg_name(flag.name), flag_schema(&flag));
     }
     let mut schema = json!({
         "type": "object",
@@ -321,7 +321,7 @@ fn tools_call(params: &Value, context: &ServerContext) -> Result<Value, (i64, St
 fn capability_for_tool(name: &str) -> Option<capability::Descriptor> {
     capability::registry()
         .into_iter()
-        .find(|d| expanded_tool_name(&d.id) == name)
+        .find(|d| expanded_tool_name(d.id) == name)
 }
 
 fn text_result(text: &str, is_error: bool) -> Value {
@@ -368,12 +368,12 @@ fn invoke_expanded(
 ) -> Result<Value, (i64, String)> {
     let mut inputs = serde_json::Map::new();
     for input in &descriptor.inputs {
-        if let Some(value) = args.get(&input.name) {
-            inputs.insert(input.name.clone(), value.clone());
+        if let Some(value) = args.get(input.name) {
+            inputs.insert(input.name.into(), value.clone());
         }
     }
     for flag in &descriptor.flags {
-        match flag.as_str() {
+        match *flag {
             "--host" | "--json" | "--dry-run" | "--force" => continue,
             _ => {
                 let arg_name = flag_arg_name(flag);
@@ -393,7 +393,7 @@ fn invoke_expanded(
     if let Some(value) = args.get("force") {
         wrapped["force"] = value.clone();
     }
-    invoke(&descriptor.id, &wrapped, context)
+    invoke(descriptor.id, &wrapped, context)
 }
 
 /// Translate an invoke request into `fez` argv. The capability id becomes the
@@ -423,7 +423,7 @@ pub(crate) fn build_argv_with_context(
         if d.flags.iter().any(|f| f == &flag) {
             continue; // handled in the flag pass
         }
-        match inputs.get(&input.name) {
+        match inputs.get(input.name) {
             Some(Value::String(s)) => argv.push(s.clone()),
             Some(Value::Array(items)) => {
                 for item in items {
@@ -577,21 +577,21 @@ mod tests {
     #[test]
     fn input_schema_includes_default_and_choices() {
         let descriptor = capability::Descriptor {
-            id: "test.input".into(),
-            summary: "test".into(),
-            long: "test".into(),
+            id: "test.input",
+            summary: "test",
+            long: "test",
             privileged: false,
-            output_kind: "Test".into(),
+            output_kind: "Test",
             inputs: vec![],
             flags: vec![],
             examples: vec!["fez test".into()],
         };
         let input = capability::Input {
-            name: "mode".into(),
-            ty: "string".into(),
+            name: "mode",
+            ty: "string",
             required: false,
-            default: Some("safe".into()),
-            choices: Some(vec!["safe".into(), "fast".into()]),
+            default: Some("safe"),
+            choices: Some(vec!["safe", "fast"]),
         };
         assert_eq!(
             input_schema(&descriptor, &input),
@@ -602,12 +602,12 @@ mod tests {
     #[test]
     fn flag_schema_includes_choices() {
         let flag = capability::FlagSchema {
-            name: "--mode".into(),
-            ty: "string".into(),
-            description: "Mode to use.".into(),
+            name: "--mode",
+            ty: "string",
+            description: "Mode to use.",
             repeatable: false,
             default: None,
-            choices: Some(vec!["safe".into(), "fast".into()]),
+            choices: Some(vec!["safe", "fast"]),
             conflicts_with: vec![],
         };
         assert_eq!(

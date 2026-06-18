@@ -6,32 +6,30 @@ use super::{input, Descriptor};
 pub(super) fn descriptors() -> Vec<Descriptor> {
     vec![
         Descriptor {
-            id: "network.list".into(),
-            summary: "List network devices".into(),
+            id: "network.list",
+            summary: "List network devices",
             long: "List NetworkManager devices with their type, state, primary IPv4/IPv6 \
         address, and MAC. By default unmanaged virtual interfaces (container veth, etc.) are \
-        hidden; use --all to show every device. Read-only."
-                .into(),
+        hidden; use --all to show every device. Read-only.",
             privileged: false,
-            output_kind: "NetworkDeviceList".into(),
+            output_kind: "NetworkDeviceList",
             inputs: vec![],
-            flags: vec!["--host".into(), "--json".into(), "--all".into()],
+            flags: vec!["--host", "--json", "--all"],
             examples: vec![
                 "fez network list --json".into(),
                 "fez network list --all".into(),
             ],
         },
         Descriptor {
-            id: "network.show".into(),
-            summary: "Show one device's network detail".into(),
+            id: "network.show",
+            summary: "Show one device's network detail",
             long: "Show the full network detail for one device: addresses (IPv4 and IPv6), \
         gateway, DNS servers, search domains, routes, MAC, MTU, the active connection profile, \
-        and DHCP lease. Read-only."
-                .into(),
+        and DHCP lease. Read-only.",
             privileged: false,
-            output_kind: "NetworkDeviceDetail".into(),
+            output_kind: "NetworkDeviceDetail",
             inputs: vec![input("device", true)],
-            flags: vec!["--host".into(), "--json".into()],
+            flags: vec!["--host", "--json"],
             examples: vec!["fez network show enp1s0 --json".into()],
         },
     ]
@@ -44,7 +42,7 @@ mod tests {
     #[test]
     fn network_descriptor_contract_stays_stable() {
         let descriptors = descriptors();
-        let ids: Vec<&str> = descriptors.iter().map(|d| d.id.as_str()).collect();
+        let ids: Vec<&str> = descriptors.iter().map(|d| d.id).collect();
         assert_eq!(ids, ["network.list", "network.show"]);
 
         let list = &descriptors[0];

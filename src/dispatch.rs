@@ -8,7 +8,7 @@ pub fn run(cli: Cli) -> i32 {
     let host = cli.resolved_host();
     match &cli.command {
         TopCommand::Capabilities => {
-            let ids: Vec<String> = capability::registry().into_iter().map(|d| d.id).collect();
+            let ids: Vec<&str> = capability::registry().into_iter().map(|d| d.id).collect();
             if cli.json {
                 println!(
                     "{}",

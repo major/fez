@@ -6,26 +6,25 @@ use super::{input, Descriptor};
 pub(super) fn descriptors() -> Vec<Descriptor> {
     vec![
         Descriptor {
-            id: "packages.list".into(),
-            summary: "List packages".into(),
+            id: "packages.list",
+            summary: "List packages",
             long: "List installed (default) or available packages. Use --available to list \
         available packages. Use --name to keep packages whose name contains the given substring, \
         and --repo to restrict packages by exact repo id (repeatable union). Use --limit and \
         --offset to page large results; JSON output echoes filters plus total, returned, limit, \
-        offset, and next_offset metadata. Read-only."
-                .into(),
+        offset, and next_offset metadata. Read-only.",
             privileged: false,
-            output_kind: "PackageList".into(),
+            output_kind: "PackageList",
             inputs: vec![],
             flags: vec![
-                "--host".into(),
-                "--json".into(),
-                "--installed".into(),
-                "--available".into(),
-                "--repo".into(),
-                "--name".into(),
-                "--limit".into(),
-                "--offset".into(),
+                "--host",
+                "--json",
+                "--installed",
+                "--available",
+                "--repo",
+                "--name",
+                "--limit",
+                "--offset",
             ],
             examples: vec![
                 "fez packages list --json".into(),
@@ -34,117 +33,91 @@ pub(super) fn descriptors() -> Vec<Descriptor> {
             ],
         },
         Descriptor {
-            id: "packages.info".into(),
-            summary: "Show one package's attributes".into(),
+            id: "packages.info",
+            summary: "Show one package's attributes",
             long: "Show the full attributes of a single package (version, arch, repo, size, \
-        summary). Read-only."
-                .into(),
+        summary). Read-only.",
             privileged: false,
-            output_kind: "PackageInfo".into(),
+            output_kind: "PackageInfo",
             inputs: vec![input("spec", true)],
-            flags: vec!["--host".into(), "--json".into()],
+            flags: vec!["--host", "--json"],
             examples: vec!["fez packages info bash --json".into()],
         },
         Descriptor {
-            id: "packages.search".into(),
-            summary: "Search packages".into(),
-            long: "Search available packages by name, summary, or provides. Read-only.".into(),
+            id: "packages.search",
+            summary: "Search packages",
+            long: "Search available packages by name, summary, or provides. Read-only.",
             privileged: false,
-            output_kind: "PackageSearch".into(),
+            output_kind: "PackageSearch",
             inputs: vec![input("pattern", true)],
-            flags: vec!["--host".into(), "--json".into()],
+            flags: vec!["--host", "--json"],
             examples: vec!["fez packages search nginx --json".into()],
         },
         Descriptor {
-            id: "packages.check-update".into(),
-            summary: "List available upgrades".into(),
-            long: "List packages with available upgrades. Read-only.".into(),
+            id: "packages.check-update",
+            summary: "List available upgrades",
+            long: "List packages with available upgrades. Read-only.",
             privileged: false,
-            output_kind: "PackageUpdates".into(),
+            output_kind: "PackageUpdates",
             inputs: vec![],
-            flags: vec!["--host".into(), "--json".into()],
+            flags: vec!["--host", "--json"],
             examples: vec!["fez packages check-update --json".into()],
         },
         Descriptor {
-            id: "packages.repolist".into(),
-            summary: "List repositories".into(),
+            id: "packages.repolist",
+            summary: "List repositories",
             long: "List repositories and their enabled state. Use --enabled (default), \
-        --disabled, or --all. Read-only."
-                .into(),
+        --disabled, or --all. Read-only.",
             privileged: false,
-            output_kind: "RepoList".into(),
+            output_kind: "RepoList",
             inputs: vec![],
-            flags: vec![
-                "--host".into(),
-                "--json".into(),
-                "--enabled".into(),
-                "--disabled".into(),
-                "--all".into(),
-            ],
+            flags: vec!["--host", "--json", "--enabled", "--disabled", "--all"],
             examples: vec!["fez packages repolist --all --json".into()],
         },
         Descriptor {
-            id: "packages.install".into(),
-            summary: "Install packages".into(),
+            id: "packages.install",
+            summary: "Install packages",
             long: "Install one or more packages. Resolves the transaction first and surfaces \
         the plan; --dry-run stops after the plan. Privileged. Uses dnf5daemon, falling \
         back to PackageKit when dnf5daemon is absent (sizes are unavailable on the \
         PackageKit backend; the envelope marks backend and carries a hint). Exits 9 only \
         if both backends are missing, 10 if the resolved transaction is refused by \
-        removal guardrails (use --force to override)."
-                .into(),
+        removal guardrails (use --force to override).",
             privileged: true,
-            output_kind: "PackageMutation".into(),
+            output_kind: "PackageMutation",
             inputs: vec![input("specs", true)],
-            flags: vec![
-                "--host".into(),
-                "--json".into(),
-                "--dry-run".into(),
-                "--force".into(),
-            ],
+            flags: vec!["--host", "--json", "--dry-run", "--force"],
             examples: vec![
                 "fez packages install htop --json".into(),
                 "fez packages install nginx --dry-run".into(),
             ],
         },
         Descriptor {
-            id: "packages.remove".into(),
-            summary: "Remove packages".into(),
+            id: "packages.remove",
+            summary: "Remove packages",
             long: "Remove one or more packages. Resolves first and applies removal guardrails: \
         a protected package or a cascade larger than the limit is refused unless --force \
-        is supplied (exit 10). --dry-run surfaces the plan without removing. Privileged."
-                .into(),
+        is supplied (exit 10). --dry-run surfaces the plan without removing. Privileged.",
             privileged: true,
-            output_kind: "PackageMutation".into(),
+            output_kind: "PackageMutation",
             inputs: vec![input("specs", true)],
-            flags: vec![
-                "--host".into(),
-                "--json".into(),
-                "--dry-run".into(),
-                "--force".into(),
-            ],
+            flags: vec!["--host", "--json", "--dry-run", "--force"],
             examples: vec![
                 "fez packages remove htop --json".into(),
                 "fez packages remove oldpkg --dry-run".into(),
             ],
         },
         Descriptor {
-            id: "packages.upgrade".into(),
-            summary: "Upgrade packages".into(),
+            id: "packages.upgrade",
+            summary: "Upgrade packages",
             long: "Upgrade named packages, or all packages when no spec is given. Resolves \
         first and surfaces the plan; --dry-run stops after the plan. Privileged. Refusals \
         from removal guardrails (replaced/obsoleted packages) exit 10 unless --force is \
-        supplied."
-                .into(),
+        supplied.",
             privileged: true,
-            output_kind: "PackageMutation".into(),
+            output_kind: "PackageMutation",
             inputs: vec![input("specs", false)],
-            flags: vec![
-                "--host".into(),
-                "--json".into(),
-                "--dry-run".into(),
-                "--force".into(),
-            ],
+            flags: vec!["--host", "--json", "--dry-run", "--force"],
             examples: vec![
                 "fez packages upgrade --json".into(),
                 "fez packages upgrade nginx --force".into(),

@@ -418,19 +418,19 @@ fn confirm_hint() -> Value {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-struct RuntimeChangeData {
-    operation: String,
-    zone: String,
-    change: String,
+struct RuntimeChangeData<'a> {
+    operation: &'a str,
+    zone: &'a str,
+    change: &'a str,
     timeout: Option<u32>,
 }
 
-impl RuntimeChangeData {
-    fn new(operation: &str, zone: &str, change: &str, timeout: Option<u32>) -> Self {
+impl<'a> RuntimeChangeData<'a> {
+    fn new(operation: &'a str, zone: &'a str, change: &'a str, timeout: Option<u32>) -> Self {
         Self {
-            operation: operation.to_string(),
-            zone: zone.to_string(),
-            change: change.to_string(),
+            operation,
+            zone,
+            change,
             timeout,
         }
     }
@@ -486,19 +486,15 @@ impl PanicChangeData {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-struct MasqueradeChangeData {
-    zone: String,
+struct MasqueradeChangeData<'a> {
+    zone: &'a str,
     on: bool,
     timeout: Option<u32>,
 }
 
-impl MasqueradeChangeData {
-    fn new(zone: &str, on: bool, timeout: Option<u32>) -> Self {
-        Self {
-            zone: zone.to_string(),
-            on,
-            timeout,
-        }
+impl<'a> MasqueradeChangeData<'a> {
+    fn new(zone: &'a str, on: bool, timeout: Option<u32>) -> Self {
+        Self { zone, on, timeout }
     }
 
     fn change(&self) -> &'static str {
