@@ -48,7 +48,7 @@ const INFO_DOWNGRADING: u64 = 20;
 /// PackageKit error enum: `PK_ERROR_ENUM_NOT_AUTHORIZED`.
 const PK_ERROR_NOT_AUTHORIZED: u64 = 6;
 
-/// A render-ready PackageKit result, assembled into a `packages::View` by the
+/// A render-ready PackageKit result, assembled into a `package::View` by the
 /// caller (which supplies the host).
 pub struct PkView {
     /// Envelope `kind` (e.g. `PackageList`, `PackagePlan`, `PackageMutation`).

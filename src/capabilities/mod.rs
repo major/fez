@@ -326,7 +326,7 @@ mod tests {
 pub mod services;
 
 /// RPM package management capabilities (via dnf5daemon).
-pub mod packages;
+pub mod package;
 
 /// NetworkManager inspection capabilities.
 pub mod network;
