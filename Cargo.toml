@@ -33,4 +33,4 @@ path = "src/main.rs"
 
 [[bin]]
 name = "fez-fake-bridge"
-path = "src/bin/fake_bridge.rs"
+path = "src/bin/fake_bridge/main.rs"
