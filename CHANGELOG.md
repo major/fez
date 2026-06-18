@@ -7,6 +7,55 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0](https://github.com/major/fez/compare/v0.4.0...v0.5.0) - 2026-06-18
+
+### Fixed
+
+- *(packages)* reject malformed dnf5 sessions
+- *(error)* stop repeating remediation in DependencyMissing message
+- drain bridge stderr
+
+### Other
+
+- *(services)* document split entry points
+- *(services)* cover split branches
+- *(services)* trim split plumbing
+- *(services)* keep public module path
+- *(services)* split capability module
+- *(network)* simplify split module internals
+- *(network)* split network capability module
+- Merge pull request #109 from major/rename-capability-schema
+- apply rustfmt ordering
+- rename capability schema registry to schema
+- ignore .worktrees directory
+- *(packages)* split backend modules
+- *(protocol)* replace manual variant helpers with Variant<T> derive structs
+- fix coverage gaps and update codecov ignore path
+- apply cargo fmt and fix clippy type_complexity warning
+- *(capability)* extract output schemas into schemas submodule
+- *(fake_bridge)* split into per-service modules
+- *(firewall)* split god module into reads, mutations, and zone submodules
+- *(error)* centralize error hints in FezError::hints()
+- *(fake_bridge)* extract reply helpers and eliminate boilerplate
+- *(capability)* move schema/flag metadata into data tables
+- *(firewall)* split 241-line mutate into per-mutation helpers
+- *(packages)* share plan kind and human summary across backends
+- *(capabilities)* dedupe bridge bootstrap and service-unknown mapping
+- report top 3 Rust code smells by affected lines
+- *(firewall)* group audited mutation calls
+- *(services)* cover follow log streaming
+- *(services)* type unit/journal output via shared Variant<T>
+- *(firewall)* type mutation output models
+- *(firewall)* cover status output model states
+- *(firewall)* type read output models
+- *(packages)* type packagekit mutation planning
+- *(packages)* type transaction plan parsing
+- *(packages)* type read output models
+- *(services)* type enablement call metadata
+- *(firewall)* cover action classification
+- *(firewall)* split read and mutation dispatch
+- type service unit protocol parsing
+
 ## [0.4.0](https://github.com/major/fez/compare/v0.3.0...v0.4.0) - 2026-06-11
 
 ### Added
