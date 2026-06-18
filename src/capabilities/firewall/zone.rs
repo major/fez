@@ -310,6 +310,15 @@ mod tests {
     }
 
     #[test]
+    fn drift_reports_permanent_only_port() {
+        let s = vec!["ssh".to_string()];
+        let runtime_ports: Vec<String> = vec![];
+        let permanent_ports = vec!["443/tcp".to_string()];
+        let drift = compute_drift(&s, &s, &runtime_ports, &permanent_ports, false, false);
+        assert_eq!(drift, vec!["-port 443/tcp".to_string()]);
+    }
+
+    #[test]
     fn drift_empty_when_runtime_matches_permanent() {
         let s = vec!["ssh".to_string()];
         let p: Vec<String> = vec![];
@@ -346,6 +355,45 @@ mod tests {
         let s = vec!["ssh".to_string()];
         let p: Vec<String> = vec![];
         assert!(compute_drift(&s, &s, &p, &p, true, true).is_empty());
+    }
+
+    #[test]
+    fn is_config_info_denied_matches_not_authorized() {
+        let e = FezError::Dbus {
+            name: "org.fedoraproject.FirewallD1.NotAuthorizedException".into(),
+            message: "polkit denied".into(),
+        };
+        assert!(is_config_info_denied(&e));
+    }
+
+    #[test]
+    fn is_config_info_denied_matches_access_denied() {
+        let e = FezError::Dbus {
+            name: "org.freedesktop.DBus.Error.AccessDenied".into(),
+            message: "not allowed".into(),
+        };
+        assert!(is_config_info_denied(&e));
+    }
+
+    #[test]
+    fn is_config_info_denied_matches_config_info_message() {
+        let e = FezError::Dbus {
+            name: "org.freedesktop.PolicyKit.NotAuthorized".into(),
+            message: "org.fedoraproject.FirewallD1.config.info denied".into(),
+        };
+        assert!(is_config_info_denied(&e));
+    }
+
+    #[test]
+    fn is_config_info_denied_rejects_unrelated_errors() {
+        let e = FezError::Dbus {
+            name: "org.freedesktop.DBus.Error.UnknownMethod".into(),
+            message: "no such method".into(),
+        };
+        assert!(!is_config_info_denied(&e));
+        assert!(!is_config_info_denied(&FezError::Problem(
+            "access-denied".into()
+        )));
     }
 
     #[test]

@@ -382,22 +382,34 @@ mod tests {
     }
 
     #[test]
-    fn render_text_optional_input_shows_default() {
-        // Find any descriptor with an optional input carrying a default, and
-        // confirm the rendered line annotates it. If none exists this is a
-        // no-op (the format is still covered by the required-input case).
-        for d in registry() {
-            for i in &d.inputs {
-                if let Some(default) = &i.default {
-                    let text = d.render_text();
-                    assert!(
-                        text.contains(&format!("(default: {default})")),
-                        "{}: optional input {} default not rendered",
-                        d.id,
-                        i.name
-                    );
-                }
-            }
-        }
+    fn render_text_optional_input_shows_default_and_choices() {
+        // Synthesize a descriptor with an optional input that carries both a
+        // default and a choices list so the branches in render_text are
+        // exercised.
+        let d = Descriptor {
+            id: "test.synthetic".into(),
+            summary: "synthetic".into(),
+            long: String::new(),
+            privileged: false,
+            output_kind: "ServiceList".into(),
+            inputs: vec![Input {
+                name: "scope".into(),
+                ty: "string".into(),
+                required: false,
+                default: Some("installed".into()),
+                choices: Some(vec!["installed".into(), "available".into()]),
+            }],
+            flags: vec![],
+            examples: vec!["fez test.synthetic".into()],
+        };
+        let text = d.render_text();
+        assert!(
+            text.contains("(default: installed)"),
+            "default not rendered: {text}"
+        );
+        assert!(
+            text.contains("choices: installed, available"),
+            "choices not rendered: {text}"
+        );
     }
 }
