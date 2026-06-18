@@ -166,6 +166,11 @@ pub(super) fn status(ctx: &mut CapabilityContext<'_>) -> Result<View> {
         Err(e) => return Err(e),
     };
     let status = FirewallStatusData::from_runtime(default_zone, panic, runtime.masquerade, drift);
+    Ok(build_status_view(&status, ctx.host))
+}
+
+/// Assemble the human-readable text, hints, and `View` from collected status data.
+fn build_status_view(status: &FirewallStatusData, host: &str) -> View {
     let data = status.data();
     let mut human = status.human_prefix();
     let hints = if !status.pending_changes_available {
@@ -187,7 +192,7 @@ pub(super) fn status(ctx: &mut CapabilityContext<'_>) -> Result<View> {
             "pending": status.pending_changes,
         }))
     };
-    Ok(View::new("FirewallStatus", ctx.host, data, human).with_hints_opt(hints))
+    View::new("FirewallStatus", host, data, human).with_hints_opt(hints)
 }
 
 /// `firewall list`: every zone with a per-zone summary.
@@ -214,21 +219,7 @@ pub(super) fn list(ctx: &mut CapabilityContext<'_>) -> Result<View> {
         "ZONE", "DEFAULT", "SERVICES", "PORTS", "INTERFACES"
     );
     for zone in &zones {
-        let runtime = runtime_zone(ctx.client, ctx.channel, zone)?;
-        let interfaces = arg_str_vec(&fw_call(
-            ctx.client,
-            ctx.channel,
-            FW_ZONE_IFACE,
-            "getInterfaces",
-            json!([zone]),
-        )?);
-        let summary = FirewallZoneSummary {
-            zone: zone.clone(),
-            is_default: *zone == default_zone,
-            services: runtime.services,
-            ports: runtime.ports,
-            interfaces,
-        };
+        let summary = build_zone_summary(ctx, zone, &default_zone)?;
         human.push_str(&summary.human_row());
         rows.push(summary.row());
     }
@@ -238,6 +229,29 @@ pub(super) fn list(ctx: &mut CapabilityContext<'_>) -> Result<View> {
         crate::envelope::table_data(&columns, rows),
         human,
     ))
+}
+
+/// Query runtime state and interfaces for one zone and return its summary.
+fn build_zone_summary(
+    ctx: &mut CapabilityContext<'_>,
+    zone: &str,
+    default_zone: &str,
+) -> Result<FirewallZoneSummary> {
+    let runtime = runtime_zone(ctx.client, ctx.channel, zone)?;
+    let interfaces = arg_str_vec(&fw_call(
+        ctx.client,
+        ctx.channel,
+        FW_ZONE_IFACE,
+        "getInterfaces",
+        json!([zone]),
+    )?);
+    Ok(FirewallZoneSummary {
+        zone: zone.to_string(),
+        is_default: zone == default_zone,
+        services: runtime.services,
+        ports: runtime.ports,
+        interfaces,
+    })
 }
 
 /// `firewall show <zone>`: one zone's full detail.

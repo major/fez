@@ -524,30 +524,34 @@ fn list(client: &mut BridgeClient, host: String, state: Option<&str>) -> Result<
     let out = client.dbus_call(&channel, MGR_PATH, MGR_IFACE, "ListUnits", json!([]))?;
     let units = parse_list_units(&out)?;
 
-    let mut filtered = Vec::new();
-    for unit in units {
-        if let Some(want) = state {
-            if unit.active_state != want {
-                continue;
-            }
-        }
-        filtered.push(unit);
-    }
+    let filtered: Vec<ServiceUnit> = if let Some(want) = state {
+        units
+            .into_iter()
+            .filter(|u| u.active_state == want)
+            .collect()
+    } else {
+        units
+    };
 
+    Ok(build_service_list(&filtered, host))
+}
+
+/// Render a filtered unit list into the columnar `ServiceList` view.
+///
+/// Columnar projection via the shared envelope helper: field names are stated
+/// once in `columns`, and each unit becomes a positional row aligned to that
+/// order. This keeps the `--json` payload compact for LLM consumers.
+fn build_service_list(filtered: &[ServiceUnit], host: String) -> View {
     let mut human = format!(
         "{:<28} {:<10} {:<10} {}\n",
         "UNIT", "ACTIVE", "SUB", "DESCRIPTION"
     );
-    for unit in &filtered {
+    for unit in filtered {
         human.push_str(&format!(
             "{:<28} {:<10} {:<10} {}\n",
             unit.name, unit.active_state, unit.sub_state, unit.description
         ));
     }
-    // Columnar projection via the shared envelope helper: field names are
-    // stated once in `columns`, and each unit becomes a positional row aligned
-    // to that order. This keeps the `--json` payload compact for LLM consumers.
-    // `units` above stays the source of truth for the human renderer.
     let columns = [
         "name",
         "description",
@@ -567,12 +571,12 @@ fn list(client: &mut BridgeClient, host: String, state: Option<&str>) -> Result<
             ])
         })
         .collect();
-    Ok(View::new(
+    View::new(
         "ServiceList",
         host,
         crate::envelope::table_data(&columns, rows),
         human,
-    ))
+    )
 }
 
 fn status(client: &mut BridgeClient, host: String, unit: &str) -> Result<View> {
