@@ -70,8 +70,19 @@ fn open_session(client: &mut BridgeClient, privileged: bool) -> Result<(String, 
         ])]),
     );
     let out = crate::capabilities::map_service_unknown(out, dependency_missing)?;
-    let session = out.get(0).and_then(Value::as_str).unwrap_or("").to_string();
+    let session = session_path(&out)?;
     Ok((channel, session))
+}
+
+fn session_path(out: &Value) -> Result<String> {
+    out.get(0)
+        .and_then(Value::as_str)
+        .filter(|path| !path.is_empty())
+        .map(ToString::to_string)
+        .ok_or_else(|| FezError::Dbus {
+            name: "org.rpm.dnf.v0.MalformedResponse".into(),
+            message: "open_session response did not include a session object path".into(),
+        })
 }
 
 /// Close a dnf5daemon session, ignoring any error (best-effort cleanup).
@@ -645,6 +656,22 @@ mod tests {
                 "patterns": {"t": "as", "v": ["htop"]},
             })
         );
+    }
+
+    #[test]
+    fn session_path_rejects_missing_or_empty_response() {
+        assert_eq!(
+            session_path(&json!(["/org/rpm/dnf/v0/session/1"])).unwrap(),
+            "/org/rpm/dnf/v0/session/1"
+        );
+        assert!(matches!(
+            session_path(&json!([])),
+            Err(FezError::Dbus { .. })
+        ));
+        assert!(matches!(
+            session_path(&json!([""])),
+            Err(FezError::Dbus { .. })
+        ));
     }
 
     #[test]

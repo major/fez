@@ -164,10 +164,11 @@ pub fn dispatch(cli: &Cli, action: &PackagesAction) -> i32 {
 fn run_read(cli: &Cli, action: ReadAction<'_>) -> Result<View> {
     let mut client = crate::capabilities::connect(cli)?;
     let host = client.host().to_string();
-    match dnf5::run_read(&mut client, &host, action) {
-        Ok(view) => Ok(view),
-        Err(FezError::DependencyMissing { .. }) => read_via_packagekit(&mut client, host, action),
-        Err(err) => Err(err),
+    let result = dnf5::run_read(&mut client, &host, action);
+    if matches!(result, Err(FezError::DependencyMissing { .. })) {
+        read_via_packagekit(&mut client, host, action)
+    } else {
+        result
     }
 }
 
@@ -272,5 +273,61 @@ pub(crate) fn plan_human(
         format!(
             "{verb} {specs} on {host}: installed {install}, removed {remove}, upgraded {upgrade}, downgraded {downgrade} package(s)\n"
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn repo_filter_maps_to_backend_and_predicate() {
+        assert_eq!(RepoFilter::Enabled.enable_disable(), "enabled");
+        assert_eq!(RepoFilter::Disabled.enable_disable(), "disabled");
+        assert_eq!(RepoFilter::All.enable_disable(), "all");
+        assert!(RepoFilter::Enabled.accepts(true));
+        assert!(!RepoFilter::Enabled.accepts(false));
+        assert!(!RepoFilter::Disabled.accepts(true));
+        assert!(RepoFilter::Disabled.accepts(false));
+        assert!(RepoFilter::All.accepts(true));
+        assert!(RepoFilter::All.accepts(false));
+    }
+
+    #[test]
+    fn classify_repolist_prefers_all_then_disabled_then_enabled() {
+        let all = PackagesAction::Repolist {
+            enabled: true,
+            disabled: true,
+            all: true,
+        };
+        let disabled = PackagesAction::Repolist {
+            enabled: false,
+            disabled: true,
+            all: false,
+        };
+        let enabled = PackagesAction::Repolist {
+            enabled: true,
+            disabled: false,
+            all: false,
+        };
+
+        assert!(matches!(
+            classify(&all),
+            Plan::Read(ReadAction::Repolist {
+                filter: RepoFilter::All
+            })
+        ));
+        assert!(matches!(
+            classify(&disabled),
+            Plan::Read(ReadAction::Repolist {
+                filter: RepoFilter::Disabled
+            })
+        ));
+        assert!(matches!(
+            classify(&enabled),
+            Plan::Read(ReadAction::Repolist {
+                filter: RepoFilter::Enabled
+            })
+        ));
     }
 }
