@@ -56,9 +56,41 @@ where
     }
 }
 
+/// A `u64` that cockpit may deliver as a JSON number, a string-encoded number,
+/// or inside a `{"t","v"}` variant envelope containing either form.
+///
+/// dnf5daemon in particular sends some numeric fields as strings (`"12345"`
+/// rather than `12345`); this type absorbs both representations transparently.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct VariantU64(pub u64);
+
+impl<'de> Deserialize<'de> for VariantU64 {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let value = Value::deserialize(deserializer)?;
+        let inner = match value {
+            Value::Object(mut map) if map.contains_key("t") && map.contains_key("v") => {
+                map.remove("v").unwrap_or(Value::Null)
+            }
+            other => other,
+        };
+        let n = match &inner {
+            Value::Number(n) => n
+                .as_u64()
+                .or_else(|| n.as_i64().and_then(|i| u64::try_from(i).ok()))
+                .unwrap_or(0),
+            Value::String(s) => s.parse().unwrap_or(0),
+            _ => 0,
+        };
+        Ok(VariantU64(n))
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::Variant;
+    use super::{Variant, VariantU64};
     use serde::Deserialize;
     use serde_json::json;
 
@@ -100,6 +132,55 @@ mod tests {
         }
         let v: Variant<Inner> = serde_json::from_value(json!({"v": 9})).unwrap();
         assert_eq!(v.0, Inner { v: 9 });
+    }
+
+    #[test]
+    fn variant_u64_from_number() {
+        let v: VariantU64 = serde_json::from_value(json!(42)).unwrap();
+        assert_eq!(v.0, 42);
+    }
+
+    #[test]
+    fn variant_u64_from_string() {
+        let v: VariantU64 = serde_json::from_value(json!("12345")).unwrap();
+        assert_eq!(v.0, 12345);
+    }
+
+    #[test]
+    fn variant_u64_from_wrapped_number() {
+        let v: VariantU64 = serde_json::from_value(json!({"t": "t", "v": 99})).unwrap();
+        assert_eq!(v.0, 99);
+    }
+
+    #[test]
+    fn variant_u64_from_wrapped_string() {
+        let v: VariantU64 = serde_json::from_value(json!({"t": "t", "v": "456"})).unwrap();
+        assert_eq!(v.0, 456);
+    }
+
+    #[test]
+    fn variant_u64_defaults_on_bad_input() {
+        let v: VariantU64 = serde_json::from_value(json!(null)).unwrap();
+        assert_eq!(v.0, 0);
+        let v: VariantU64 = serde_json::from_value(json!("not_a_number")).unwrap();
+        assert_eq!(v.0, 0);
+    }
+
+    #[test]
+    fn variant_u64_handles_negative_i64() {
+        let v: VariantU64 = serde_json::from_value(json!(-5)).unwrap();
+        assert_eq!(v.0, 0);
+    }
+
+    #[test]
+    fn variant_u64_defaults_when_absent_in_struct() {
+        #[derive(Debug, Deserialize, Default)]
+        struct Props {
+            #[serde(default)]
+            size: VariantU64,
+        }
+        let p: Props = serde_json::from_value(json!({})).unwrap();
+        assert_eq!(p.size.0, 0);
     }
 
     #[test]

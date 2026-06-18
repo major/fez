@@ -10,6 +10,7 @@ use crate::capabilities::{render, CapabilityContext, View};
 use crate::cli::{Cli, NetworkAction};
 use crate::error::{FezError, Result};
 use crate::protocol::client::BridgeClient;
+use crate::protocol::variant::Variant;
 use serde_json::{json, Value};
 
 const NM_NAME: &str = "org.freedesktop.NetworkManager";
@@ -182,64 +183,113 @@ fn keep_device(device_type: u64, managed: bool) -> bool {
     managed || PHYSICAL_TYPES.contains(&device_type)
 }
 
-/// Unwrap a cockpit variant value (`{"t":<sig>,"v":<value>}`), falling back to
-/// the value itself when it is already flat.
-fn unwrap_variant(v: &Value) -> &Value {
-    v.get("v").unwrap_or(v)
+/// D-Bus device properties from `org.freedesktop.NetworkManager.Device`.
+#[derive(Debug, Default, serde::Deserialize)]
+struct DeviceProps {
+    #[serde(rename = "Interface", default)]
+    interface: Variant<String>,
+    #[serde(rename = "DeviceType", default)]
+    device_type: Variant<u64>,
+    #[serde(rename = "State", default)]
+    state: Variant<u64>,
+    #[serde(rename = "Managed", default)]
+    managed: Variant<bool>,
+    #[serde(rename = "HwAddress", default)]
+    hw_address: Variant<String>,
+    #[serde(rename = "Mtu", default)]
+    mtu: Variant<u64>,
+    #[serde(rename = "Ip4Config", default)]
+    ip4_config: Variant<String>,
+    #[serde(rename = "Ip6Config", default)]
+    ip6_config: Variant<String>,
+    #[serde(rename = "ActiveConnection", default)]
+    active_connection: Variant<String>,
+    #[serde(rename = "Dhcp4Config", default)]
+    dhcp4_config: Variant<String>,
 }
 
-/// Read a string property from an unwrapped `a{sv}` map.
-fn prop_str(props: &Value, key: &str) -> String {
-    props
-        .get(key)
-        .map(unwrap_variant)
-        .and_then(Value::as_str)
-        .unwrap_or("")
-        .to_string()
-}
-
-/// Read a `u64` property from an unwrapped `a{sv}` map.
-fn prop_u64(props: &Value, key: &str) -> u64 {
-    props
-        .get(key)
-        .map(unwrap_variant)
-        .and_then(Value::as_u64)
-        .unwrap_or(0)
-}
-
-/// Read a `bool` property from an unwrapped `a{sv}` map.
-fn prop_bool(props: &Value, key: &str) -> bool {
-    props
-        .get(key)
-        .map(unwrap_variant)
-        .and_then(Value::as_bool)
-        .unwrap_or(false)
-}
-
-/// Read an object-path property, treating the NM null path `"/"` as absent.
-fn prop_path(props: &Value, key: &str) -> Option<String> {
-    let p = prop_str(props, key);
-    if p.is_empty() || p == "/" {
+/// Treat the NM null object path `"/"` and empty string as absent.
+fn nm_path(s: String) -> Option<String> {
+    if s.is_empty() || s == "/" {
         None
     } else {
-        Some(p)
+        Some(s)
     }
 }
 
+/// An entry from NM's `AddressData` (`aa{sv}`).
+#[derive(Debug, Default, serde::Deserialize)]
+struct AddressDataEntry {
+    #[serde(default)]
+    address: Variant<String>,
+    #[serde(default)]
+    prefix: Variant<u64>,
+}
+
+/// An entry from NM's `NameserverData` (`aa{sv}`).
+#[derive(Debug, Default, serde::Deserialize)]
+struct NameserverDataEntry {
+    #[serde(default)]
+    address: Variant<String>,
+}
+
+/// IPv4/IPv6 config properties from `org.freedesktop.NetworkManager.IP4Config`
+/// (or `IP6Config`; same property names, different interface).
+#[derive(Debug, Default, serde::Deserialize)]
+struct IpProps {
+    #[serde(rename = "AddressData", default)]
+    address_data: Variant<Vec<AddressDataEntry>>,
+    #[serde(rename = "Gateway", default)]
+    gateway: Variant<String>,
+    #[serde(rename = "NameserverData", default)]
+    nameserver_data: Variant<Vec<NameserverDataEntry>>,
+    #[serde(rename = "Domains", default)]
+    domains: Variant<Vec<String>>,
+}
+
+/// Active connection properties from
+/// `org.freedesktop.NetworkManager.Connection.Active`.
+#[derive(Debug, Default, serde::Deserialize)]
+struct ActiveConnectionProps {
+    #[serde(rename = "Id", default)]
+    id: Variant<String>,
+    #[serde(rename = "Type", default)]
+    connection_type: Variant<String>,
+    #[serde(rename = "Default", default)]
+    default: Variant<bool>,
+}
+
+/// Format address entries as `"address/prefix"` strings, dropping entries
+/// without an address.
+fn format_addresses(entries: &[AddressDataEntry]) -> Vec<String> {
+    entries
+        .iter()
+        .filter(|e| !e.address.0.is_empty())
+        .map(|e| {
+            if e.prefix.0 > 0 {
+                format!("{}/{}", e.address.0, e.prefix.0)
+            } else {
+                e.address.0.clone()
+            }
+        })
+        .collect()
+}
+
 impl NetworkDevice {
-    fn from_props(props: &Value) -> Self {
-        Self {
-            interface: prop_str(props, "Interface"),
-            device_type: prop_u64(props, "DeviceType"),
-            state: prop_u64(props, "State"),
-            managed: prop_bool(props, "Managed"),
-            mac: prop_str(props, "HwAddress"),
-            mtu: prop_u64(props, "Mtu"),
-            ip4_config: prop_path(props, "Ip4Config"),
-            ip6_config: prop_path(props, "Ip6Config"),
-            active_connection: prop_path(props, "ActiveConnection"),
-            dhcp4_config: prop_path(props, "Dhcp4Config"),
-        }
+    fn from_value(val: Value) -> Result<Self> {
+        let props: DeviceProps = serde_json::from_value(val).map_err(FezError::Decode)?;
+        Ok(Self {
+            interface: props.interface.0,
+            device_type: props.device_type.0,
+            state: props.state.0,
+            managed: props.managed.0,
+            mac: props.hw_address.0,
+            mtu: props.mtu.0,
+            ip4_config: nm_path(props.ip4_config.0),
+            ip6_config: nm_path(props.ip6_config.0),
+            active_connection: nm_path(props.active_connection.0),
+            dhcp4_config: nm_path(props.dhcp4_config.0),
+        })
     }
 
     fn should_list(&self, all: bool) -> bool {
@@ -280,13 +330,20 @@ impl NetworkDeviceSummary {
 }
 
 impl IpConfig {
-    fn from_props(props: &Value) -> Self {
-        Self {
-            addresses: addresses(props),
-            gateway: prop_str(props, "Gateway"),
-            dns: nameservers(props),
-            domains: domains_list(props),
-        }
+    fn from_value(val: Value) -> Result<Self> {
+        let props: IpProps = serde_json::from_value(val).map_err(FezError::Decode)?;
+        Ok(Self {
+            addresses: format_addresses(&props.address_data.0),
+            gateway: props.gateway.0,
+            dns: props
+                .nameserver_data
+                .0
+                .iter()
+                .filter(|e| !e.address.0.is_empty())
+                .map(|e| e.address.0.clone())
+                .collect(),
+            domains: props.domains.0,
+        })
     }
 
     fn empty() -> Self {
@@ -312,10 +369,11 @@ impl IpConfig {
 }
 
 impl Ipv6Config {
-    fn from_props(props: &Value) -> Self {
-        Self {
-            addresses: addresses(props),
-        }
+    fn from_value(val: Value) -> Result<Self> {
+        let props: IpProps = serde_json::from_value(val).map_err(FezError::Decode)?;
+        Ok(Self {
+            addresses: format_addresses(&props.address_data.0),
+        })
     }
 
     fn empty() -> Self {
@@ -338,12 +396,13 @@ impl Ipv6Config {
 }
 
 impl ActiveConnection {
-    fn from_props(props: &Value) -> Self {
-        Self {
-            id: prop_str(props, "Id"),
-            connection_type: prop_str(props, "Type"),
-            default: prop_bool(props, "Default"),
-        }
+    fn from_value(val: Value) -> Result<Self> {
+        let props: ActiveConnectionProps = serde_json::from_value(val).map_err(FezError::Decode)?;
+        Ok(Self {
+            id: props.id.0,
+            connection_type: props.connection_type.0,
+            default: props.default.0,
+        })
     }
 }
 
@@ -365,9 +424,7 @@ fn load_ip4_config(
     path: Option<&str>,
 ) -> Result<IpConfig> {
     match path {
-        Some(path) => Ok(IpConfig::from_props(&get_all(
-            client, channel, path, IP4_IFACE,
-        )?)),
+        Some(path) => IpConfig::from_value(get_all(client, channel, path, IP4_IFACE)?),
         None => Ok(IpConfig::empty()),
     }
 }
@@ -378,9 +435,7 @@ fn load_ip6_config(
     path: Option<&str>,
 ) -> Result<Ipv6Config> {
     match path {
-        Some(path) => Ok(Ipv6Config::from_props(&get_all(
-            client, channel, path, IP6_IFACE,
-        )?)),
+        Some(path) => Ipv6Config::from_value(get_all(client, channel, path, IP6_IFACE)?),
         None => Ok(Ipv6Config::empty()),
     }
 }
@@ -391,12 +446,10 @@ fn load_active_connection(
     path: Option<&str>,
 ) -> Result<Option<ActiveConnection>> {
     match path {
-        Some(path) => Ok(Some(ActiveConnection::from_props(&get_all(
-            client,
-            channel,
-            path,
-            ACTIVE_IFACE,
-        )?))),
+        Some(path) => {
+            let val = get_all(client, channel, path, ACTIVE_IFACE)?;
+            Ok(Some(ActiveConnection::from_value(val)?))
+        }
         None => Ok(None),
     }
 }
@@ -408,37 +461,15 @@ fn load_dhcp4_options(
 ) -> Result<Option<Value>> {
     match path {
         Some(path) => {
-            let props = get_all(client, channel, path, DHCP4_IFACE)?;
-            Ok(props
+            let val = get_all(client, channel, path, DHCP4_IFACE)?;
+            // ponytail: manual unwrap here — dynamic keys can't be a derive struct
+            Ok(val
                 .get("Options")
-                .map(unwrap_variant)
+                .map(|v| v.get("v").unwrap_or(v))
                 .and_then(flatten_options))
         }
         None => Ok(None),
     }
-}
-
-/// Project an NM `AddressData` (`aa{sv}`) entry to `"address/prefix"`.
-fn address_entry(entry: &Value) -> Option<String> {
-    let addr = entry.get("address").map(unwrap_variant)?.as_str()?;
-    let prefix = entry
-        .get("prefix")
-        .map(unwrap_variant)
-        .and_then(Value::as_u64);
-    Some(match prefix {
-        Some(p) => format!("{addr}/{p}"),
-        None => addr.to_string(),
-    })
-}
-
-/// Collect every `"address/prefix"` from an IP config's `AddressData`.
-fn addresses(ip_props: &Value) -> Vec<String> {
-    ip_props
-        .get("AddressData")
-        .map(unwrap_variant)
-        .and_then(Value::as_array)
-        .map(|arr| arr.iter().filter_map(address_entry).collect())
-        .unwrap_or_default()
 }
 
 /// Call `GetDevices` on the manager and return the device object paths.
@@ -465,7 +496,7 @@ fn list(ctx: &mut CapabilityContext<'_>, all: bool) -> Result<View> {
     let mut devices = Vec::new();
     for path in &paths {
         let device =
-            NetworkDevice::from_props(&get_all(ctx.client, ctx.channel, path, DEVICE_IFACE)?);
+            NetworkDevice::from_value(get_all(ctx.client, ctx.channel, path, DEVICE_IFACE)?)?;
         if !device.should_list(all) {
             continue;
         }
@@ -506,7 +537,7 @@ fn show(ctx: &mut CapabilityContext<'_>, device: &str) -> Result<View> {
     let mut found: Option<NetworkDevice> = None;
     for path in &paths {
         let candidate =
-            NetworkDevice::from_props(&get_all(ctx.client, ctx.channel, path, DEVICE_IFACE)?);
+            NetworkDevice::from_value(get_all(ctx.client, ctx.channel, path, DEVICE_IFACE)?)?;
         if candidate.interface == device {
             found = Some(candidate);
             break;
@@ -541,46 +572,15 @@ fn show(ctx: &mut CapabilityContext<'_>, device: &str) -> Result<View> {
 
 /// Flatten an `a{sv}` options map by unwrapping each variant value, so the
 /// envelope carries plain scalars instead of the `{"t","v"}` wire shape.
+///
+/// ponytail: inline variant unwrap — dynamic DHCP keys can't use a derive struct
 fn flatten_options(opts: &Value) -> Option<Value> {
     let obj = opts.as_object()?;
     let flat: serde_json::Map<String, Value> = obj
         .iter()
-        .map(|(k, v)| (k.clone(), unwrap_variant(v).clone()))
+        .map(|(k, v)| (k.clone(), v.get("v").unwrap_or(v).clone()))
         .collect();
     Some(Value::Object(flat))
-}
-
-/// Collect DNS server addresses from an IP config's `NameserverData`.
-fn nameservers(ip_props: &Value) -> Vec<String> {
-    ip_props
-        .get("NameserverData")
-        .map(unwrap_variant)
-        .and_then(Value::as_array)
-        .map(|arr| {
-            arr.iter()
-                .filter_map(|e| {
-                    e.get("address")
-                        .map(unwrap_variant)
-                        .and_then(Value::as_str)
-                        .map(str::to_string)
-                })
-                .collect()
-        })
-        .unwrap_or_default()
-}
-
-/// Collect search domains from an IP config's `Domains` (`as`).
-fn domains_list(ip_props: &Value) -> Vec<String> {
-    ip_props
-        .get("Domains")
-        .map(unwrap_variant)
-        .and_then(Value::as_array)
-        .map(|arr| {
-            arr.iter()
-                .filter_map(|v| v.as_str().map(str::to_string))
-                .collect()
-        })
-        .unwrap_or_default()
 }
 
 /// Render the human form of a `network show` detail object.
@@ -639,20 +639,29 @@ mod tests {
     }
 
     #[test]
-    fn unwrap_variant_handles_wrapped_and_flat() {
-        assert_eq!(unwrap_variant(&json!({"t":"s","v":"x"})), &json!("x"));
-        assert_eq!(unwrap_variant(&json!("x")), &json!("x"));
+    fn nm_path_treats_null_path_and_empty_as_absent() {
+        assert_eq!(nm_path("/".into()), None);
+        assert_eq!(nm_path("".into()), None);
+        assert_eq!(nm_path("/x/1".into()).as_deref(), Some("/x/1"));
     }
 
     #[test]
-    fn address_entry_projects_address_and_prefix() {
-        let e = json!({"address":{"t":"s","v":"10.0.0.5"},"prefix":{"t":"u","v":24}});
-        assert_eq!(address_entry(&e).as_deref(), Some("10.0.0.5/24"));
-        // Missing prefix falls back to the bare address.
-        let e = json!({"address":{"t":"s","v":"10.0.0.5"}});
-        assert_eq!(address_entry(&e).as_deref(), Some("10.0.0.5"));
-        // No address yields None.
-        assert_eq!(address_entry(&json!({})), None);
+    fn format_addresses_projects_address_and_prefix() {
+        let entries = vec![
+            AddressDataEntry {
+                address: Variant("10.0.0.5".into()),
+                prefix: Variant(24),
+            },
+            AddressDataEntry {
+                address: Variant("10.0.0.6".into()),
+                prefix: Variant(0), // absent prefix defaults to 0 → bare address
+            },
+            AddressDataEntry {
+                address: Variant(String::new()),
+                prefix: Variant(24), // empty address → filtered out
+            },
+        ];
+        assert_eq!(format_addresses(&entries), vec!["10.0.0.5/24", "10.0.0.6"]);
     }
 
     #[test]
@@ -669,15 +678,7 @@ mod tests {
     }
 
     #[test]
-    fn prop_path_treats_null_path_as_absent() {
-        let props = json!({"Ip4Config":{"t":"o","v":"/"},"Ok":{"t":"o","v":"/x/1"}});
-        assert_eq!(prop_path(&props, "Ip4Config"), None);
-        assert_eq!(prop_path(&props, "Ok").as_deref(), Some("/x/1"));
-        assert_eq!(prop_path(&props, "Missing"), None);
-    }
-
-    #[test]
-    fn network_device_from_props_unwraps_known_fields() {
+    fn network_device_from_value_unwraps_known_fields() {
         let props = json!({
             "Interface": {"t":"s","v":"eth0"},
             "DeviceType": {"t":"u","v":1},
@@ -691,7 +692,7 @@ mod tests {
             "Dhcp4Config": {"t":"o","v":"/org/freedesktop/NetworkManager/DHCP4Config/1"},
         });
 
-        let device = NetworkDevice::from_props(&props);
+        let device = NetworkDevice::from_value(props).unwrap();
 
         assert_eq!(device.interface, "eth0");
         assert_eq!(device.device_type, 1);
@@ -808,7 +809,7 @@ mod tests {
             "Domains": {"t":"as","v":["example.test"]}
         });
 
-        let config = IpConfig::from_props(&props);
+        let config = IpConfig::from_value(props).unwrap();
 
         assert_eq!(config.addresses, vec!["192.0.2.10/24", "192.0.2.11/24"]);
         assert_eq!(config.gateway, "192.0.2.1");
@@ -819,14 +820,14 @@ mod tests {
     }
 
     #[test]
-    fn active_connection_from_props_unwraps_known_fields() {
+    fn active_connection_from_value_unwraps_known_fields() {
         let props = json!({
             "Id": {"t":"s","v":"Wired connection 1"},
             "Type": {"t":"s","v":"802-3-ethernet"},
             "Default": {"t":"b","v":true},
         });
 
-        let connection = ActiveConnection::from_props(&props);
+        let connection = ActiveConnection::from_value(props).unwrap();
 
         assert_eq!(connection.id, "Wired connection 1");
         assert_eq!(connection.connection_type, "802-3-ethernet");
