@@ -405,7 +405,7 @@ fn hidden_global_flag_still_parses_on_readonly() {
 #[test]
 fn help_flags_match_descriptor_flags() {
     let cmd = fez::cli::command();
-    for d in fez::capability::registry() {
+    for d in fez::schema::registry() {
         let parts: Vec<&str> = d.id.split('.').collect();
         // Walk to the leaf subcommand.
         let mut node = &cmd;
@@ -491,7 +491,7 @@ fn man_emits_roff() {
 fn every_capability_id_has_a_clap_path() {
     // Each dotted id maps to a real subcommand path under the enriched command.
     let cmd = fez::cli::command();
-    for d in fez::capability::registry() {
+    for d in fez::schema::registry() {
         let parts: Vec<&str> = d.id.split('.').collect();
         let mut node = &cmd;
         let mut found = true;
@@ -513,7 +513,7 @@ fn describe_example_matches_help_after_help() {
     // describe and --help both read the registry, so the first example must
     // appear in the rendered after_help for that command.
     let cmd = fez::cli::command();
-    let d = fez::capability::find("services.start").unwrap();
+    let d = fez::schema::find("services.start").unwrap();
     let services = cmd
         .get_subcommands()
         .find(|c| c.get_name() == "services")
@@ -607,7 +607,7 @@ fn tokenize_example(s: &str) -> Vec<String> {
 #[test]
 fn every_descriptor_example_parses() {
     let cmd = fez::cli::command();
-    for d in fez::capability::registry() {
+    for d in fez::schema::registry() {
         for example in &d.examples {
             let argv = tokenize_example(example);
             assert_eq!(

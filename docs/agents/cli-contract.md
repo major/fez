@@ -1,6 +1,6 @@
 # CLI Contract Notes For Agents
 
-Read this before changing `src/cli.rs`, `src/capability/`, `src/error.rs`, help text, examples, completions, man output, or CLI tests.
+Read this before changing `src/cli.rs`, `src/schema/`, `src/error.rs`, help text, examples, completions, man output, or CLI tests.
 
 ## Clap Entry Points
 
@@ -41,7 +41,7 @@ E2E and integration tests assert on exit codes. Update tests when touching mappi
 
 ## Capability Registry
 
-The capability registry in `src/capability/mod.rs` is canonical. `src/capability/help.rs::inject()` walks the derived clap tree and attaches each descriptor's `long` and `examples` as `long_about` and `after_help`.
+The capability registry in `src/schema/mod.rs` is canonical. `src/schema/help.rs::inject()` walks the derived clap tree and attaches each descriptor's `long` and `examples` as `long_about` and `after_help`.
 
 When adding or changing a command, flag, or argument, update both:
 

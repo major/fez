@@ -50,7 +50,7 @@ pub fn raw_command() -> clap::Command {
 
 /// The fully enriched clap command (registry long-about and examples injected).
 pub fn command() -> clap::Command {
-    crate::capability::help::inject(raw_command())
+    crate::schema::help::inject(raw_command())
 }
 
 /// Whether the raw argv requested machine-readable output (`--json`).
