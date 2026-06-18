@@ -71,9 +71,19 @@ pub(super) fn systemd_reply(
                 ],
             ]]),
         ),
-        "GetUnit" | "LoadUnit" => {
-            ok_reply(id, json!(["/org/freedesktop/systemd1/unit/sshd_2eservice"]))
-        }
+        "GetUnit" | "LoadUnit" => match args.first().and_then(Value::as_str) {
+            Some("missing.service") => err_reply(
+                id,
+                "org.freedesktop.systemd1.NoSuchUnit",
+                "Unit missing.service not loaded.".to_string(),
+            ),
+            Some("broken.service") => err_reply(
+                id,
+                "org.freedesktop.DBus.Error.Failed",
+                "generic GetUnit failure".to_string(),
+            ),
+            _ => ok_reply(id, json!(["/org/freedesktop/systemd1/unit/sshd_2eservice"])),
+        },
         "GetAll" => ok_reply(
             id,
             json!([{

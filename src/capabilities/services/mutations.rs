@@ -80,9 +80,7 @@ pub(super) fn run(cli: &Cli, m: Mutation, unit: &str) -> Result<View> {
 
     // Layer 6: TTY-gated confirmation (humans only; agents are non-TTY).
     let is_tty = std::io::stdin().is_terminal() && std::io::stdout().is_terminal();
-    if crate::safety::should_prompt(m.is_destructive(), is_tty, cli.force) {
-        confirm(&m, &host, unit)?;
-    }
+    maybe_confirm(&m, &host, unit, is_tty, cli.force)?;
 
     // Layer 4: structured audit — attempt, execute, then result.
     crate::audit::run_audited(&host, m.verb(), unit, || execute(cli, &m, &host, unit))
@@ -123,6 +121,17 @@ fn confirm(m: &Mutation, host: &str, unit: &str) -> Result<()> {
     std::io::stdin()
         .read_line(&mut line)
         .map_err(FezError::Io)?;
+    confirm_answer(&line)
+}
+
+fn maybe_confirm(m: &Mutation, host: &str, unit: &str, is_tty: bool, force: bool) -> Result<()> {
+    if crate::safety::should_prompt(m.is_destructive(), is_tty, force) {
+        confirm(m, host, unit)?;
+    }
+    Ok(())
+}
+
+fn confirm_answer(line: &str) -> Result<()> {
     match line.trim().to_ascii_lowercase().as_str() {
         "y" | "yes" => Ok(()),
         _ => Err(FezError::Aborted),
@@ -209,13 +218,9 @@ fn execute_enablement(
     ctx.client
         .dbus_call(ctx.channel, MGR_PATH, MGR_IFACE, "Reload", json!([]))?;
     if now {
-        ctx.client.dbus_call(
-            ctx.channel,
-            MGR_PATH,
-            MGR_IFACE,
-            followup_method,
-            json!([unit, "replace"]),
-        )?;
+        let args = json!([unit, "replace"]);
+        ctx.client
+            .dbus_call(ctx.channel, MGR_PATH, MGR_IFACE, followup_method, args)?;
     }
     Ok(mutation_view(
         m,
@@ -223,4 +228,49 @@ fn execute_enablement(
         unit,
         json!({"operation": m.verb(), "unit": unit, "host": ctx.host, "now": now, "changes": changes}),
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{confirm, confirm_answer, maybe_confirm, Mutation};
+    use crate::error::FezError;
+
+    #[test]
+    fn confirm_answer_accepts_y_and_yes() {
+        assert!(confirm_answer("y\n").is_ok());
+        assert!(confirm_answer("YES\n").is_ok());
+    }
+
+    #[test]
+    fn confirm_answer_rejects_default() {
+        assert!(matches!(confirm_answer("\n"), Err(FezError::Aborted)));
+    }
+
+    #[test]
+    fn confirm_aborts_on_test_stdin_eof() {
+        assert!(matches!(
+            confirm(&Mutation::Stop, "localhost", "chronyd.service"),
+            Err(FezError::Aborted)
+        ));
+    }
+
+    #[test]
+    fn maybe_confirm_skips_non_tty() {
+        assert!(maybe_confirm(
+            &Mutation::Stop,
+            "localhost",
+            "chronyd.service",
+            false,
+            false
+        )
+        .is_ok());
+    }
+
+    #[test]
+    fn maybe_confirm_prompts_for_destructive_tty() {
+        assert!(matches!(
+            maybe_confirm(&Mutation::Stop, "localhost", "chronyd.service", true, false),
+            Err(FezError::Aborted)
+        ));
+    }
 }

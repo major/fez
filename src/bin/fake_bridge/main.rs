@@ -168,6 +168,7 @@ fn handle_open(
             .unwrap(),
         );
         blob.push(b'\n');
+        blob.extend_from_slice(b"not-json\n");
         write_frame(stdout, &Frame::new(&channel, blob))?;
         send_control(stdout, &json!({"command":"done","channel":channel}));
         send_control(stdout, &json!({"command":"close","channel":channel}));
