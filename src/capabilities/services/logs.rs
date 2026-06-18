@@ -23,6 +23,11 @@ struct JournalLine {
     pid: Variant<String>,
 }
 
+/// Reads or follows journal entries for a systemd unit.
+///
+/// # Errors
+///
+/// Returns an error if the bridge client cannot run or stream `journalctl`.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn run(
     client: &mut BridgeClient,
@@ -53,6 +58,7 @@ pub(super) fn run(
         // stream live; print each parsed line as it arrives.
         client.stream_each(&argv, |chunk| {
             for line in chunk.split(|&b| b == b'\n').filter(|l| !l.is_empty()) {
+                // journalctl can mix diagnostics with JSON; malformed lines are skipped.
                 if let Ok(entry) = serde_json::from_slice::<JournalLine>(line) {
                     if as_json {
                         println!(

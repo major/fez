@@ -65,6 +65,13 @@ impl Mutation {
     }
 }
 
+/// Runs a service mutation and returns its rendered view.
+///
+/// # Errors
+///
+/// Returns an error if protected-unit policy blocks the operation, interactive
+/// confirmation is declined, auditing fails, or the privileged systemd call
+/// fails.
 pub(super) fn run(cli: &Cli, m: Mutation, unit: &str) -> Result<View> {
     let unit = super::mangle_unit(unit);
     let unit = unit.as_ref();

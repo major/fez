@@ -38,6 +38,12 @@ struct UnitProps {
     unit_file_state: Variant<String>,
 }
 
+/// Runs a read-only service action and returns its rendered view.
+///
+/// # Errors
+///
+/// Returns an error if bridge connection, D-Bus calls, protocol decoding, or
+/// unit lookup fails.
 pub(super) fn run(cli: &Cli, action: ReadAction<'_>) -> Result<View> {
     let mut client = crate::capabilities::connect(cli)?;
     let host = client.host().to_string();
