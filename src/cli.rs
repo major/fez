@@ -199,13 +199,6 @@ pub enum TopCommand {
         #[command(subcommand)]
         action: FirewallAction,
     },
-    /// Run as an MCP server (JSON-RPC 2.0 over stdio): a frugal gateway exposing
-    /// list_capabilities, describe_capability, and invoke meta-tools.
-    Mcp {
-        /// Also expose one strict JSON-schema tool per fez capability.
-        #[arg(long)]
-        expanded_tools: bool,
-    },
 }
 
 /// Actions under the `services` subcommand.

@@ -28,7 +28,7 @@ fez gives LLM-driven agents a uniform, structured, discoverable way to operate a
 Fedora/RHEL host (and, over SSH, a fleet) by driving cockpit-bridge over its
 framed JSON protocol and reusing Cockpit's privilege escalation. It exposes
 systemd services and journal logs with a versioned JSON envelope (fez/v1) and an
-on-demand capability discovery model, plus an MCP gateway for MCP-aware agents.}
+on-demand capability discovery model.}
 
 %description %{_description}
 

@@ -24,14 +24,6 @@ Mutating capabilities wrap privileged actions in `audit::run_audited(host, opera
 
 `run_audited_with(&dyn AuditSink, ...)` is the sink-injected core. `run_audited` is the `sink_from_env` wrapper; unit tests drive the injected form.
 
-## MCP
-
-`fez mcp` runs a JSON-RPC 2.0 MCP server over stdio. Default mode stays frugal and advertises only `list_capabilities`, `describe_capability`, and `invoke`.
-
-`fez mcp --expanded-tools` additionally advertises one strict JSON-schema tool per capability while keeping the three meta-tools available. Expanded tool names map capability IDs by replacing dots with underscores, such as `services.status` to `services_status`. Expanded tools use descriptor inputs and flag metadata for required fields, enum values, and dry-run/force descriptions, then dispatch through the same invoke/re-exec path.
-
-A server launched with global `--host <host>` uses that resolved host as the default target for `invoke` calls that omit `arguments.host`; a per-call `arguments.host` still overrides it. The default target is exposed in `initialize.serverInfo.defaultTargetHost` and the `invoke` tool description from `tools/list`.
-
 ## Shared Capability Rules
 
 - `fez` owns no persistent state. Recompute live state or delegate persistence to the managed subsystem.
