@@ -18,7 +18,7 @@ Use the Makefile, not raw cargo, for gated work. `make` defaults to `check`.
 | `make machete` | `cargo machete`; install with `cargo install cargo-machete --locked`. |
 | `make msrv` | `cargo +1.92 check --all-targets`; requires `rustup toolchain install 1.92`. |
 
-Single integration test pattern: `cargo test --test services name_of_test`. Current integration files include `tests/cli.rs`, `tests/mcp.rs`, `tests/packages.rs`, `tests/packages_pk.rs`, `tests/services.rs`, `tests/network.rs`, and `tests/firewall.rs`.
+Single integration test pattern: `cargo test --test services name_of_test`. Current integration files include `tests/cli.rs`, `tests/packages.rs`, `tests/packages_pk.rs`, `tests/services.rs`, `tests/network.rs`, and `tests/firewall.rs`.
 
 ## CI Gates
 

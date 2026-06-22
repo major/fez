@@ -46,7 +46,6 @@ For command details, CI caveats, release flow, and packaging, read `docs/agents/
 - `error.rs` - stable error codes, exit codes, and structured error details.
 - `safety.rs` - protected-operation guardrails.
 - `audit.rs` - JSON-lines audit log sink.
-- `mcp/` - MCP server over stdio.
 
 ## Non-Negotiable Contracts
 

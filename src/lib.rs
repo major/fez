@@ -19,8 +19,6 @@ pub mod envelope;
 pub mod error;
 /// The agent bootstrap contract printed by `fez guide`.
 pub mod guide;
-/// Model Context Protocol server support.
-pub mod mcp;
 /// Wire protocol between fez and the bridge.
 pub mod protocol;
 /// Guardrails around destructive operations (protected units, confirmations).
