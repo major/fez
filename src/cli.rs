@@ -206,8 +206,8 @@ pub enum TopCommand {
 pub enum ServicesAction {
     /// List units.
     List {
-        /// Filter by active state (e.g. `active`, `failed`).
-        #[arg(long)]
+        /// Filter by systemd active state.
+        #[arg(long, value_parser = clap::builder::PossibleValuesParser::new(crate::schema::SERVICE_STATES))]
         state: Option<String>,
     },
     /// Show one unit's status.

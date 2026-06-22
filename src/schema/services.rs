@@ -1,6 +1,6 @@
 //! Capability descriptors for `services` commands.
 
-use super::{enablement, input, mutation, Descriptor};
+use super::{enablement, input, input_choices, mutation, Descriptor, SERVICE_STATES};
 
 /// Return descriptors for all `services.*` capabilities.
 pub(super) fn descriptors() -> Vec<Descriptor> {
@@ -9,10 +9,10 @@ pub(super) fn descriptors() -> Vec<Descriptor> {
             id: "services.list",
             summary: "List systemd units",
             long: "List systemd units on the target host. Use --state to filter by \
-        active state (e.g. active, failed, inactive). Read-only; never mutates.",
+        active state. Read-only; never mutates.",
             privileged: false,
             output_kind: "ServiceList",
-            inputs: vec![input("state", false)],
+            inputs: vec![input_choices("state", false, SERVICE_STATES)],
             flags: vec!["--host", "--json", "--state"],
             examples: vec![
                 "fez services list --state failed --json".into(),
