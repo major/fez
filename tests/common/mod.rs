@@ -27,7 +27,7 @@ pub const PKG_COLUMNS: &str =
 /// A bare `fez` command with no bridge wired up.
 ///
 /// For tests that exercise CLI surface only (help, version, `describe`,
-/// `guide`, completions) and never open a bridge channel, so leaving
+/// `guide`) and never open a bridge channel, so leaving
 /// `FEZ_BRIDGE` unset is fine.
 #[must_use]
 pub fn fez_plain() -> AssertCommand {

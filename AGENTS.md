@@ -16,7 +16,7 @@
 Read the narrow doc before changing that area:
 
 - `docs/agents/release.md` - local commands, CI gates, MSRV, supply-chain checks, release, and packaging.
-- `docs/agents/cli-contract.md` - clap entry points, envelopes, exit codes, capability descriptors, help/describe/guide/man/completions, and safety globals.
+- `docs/agents/cli-contract.md` - clap entry points, envelopes, exit codes, capability descriptors, help/describe/guide/man, and safety globals.
 - `docs/agents/capabilities.md` - bridge protocol architecture plus services, packages, PackageKit fallback, network, firewall, audit, rendering, and privilege escalation behavior.
 - `docs/agents/testing.md` - integration scaffolding, fake bridge behavior, test-only env vars, compact JSON assertions, and E2E matrix notes.
 
@@ -41,7 +41,7 @@ For command details, CI caveats, release flow, and packaging, read `docs/agents/
 - `capabilities/` - command implementations plus shared rendering.
 - `capability/` - canonical machine-readable command descriptors.
 - `dispatch.rs` - parsed CLI routing.
-- `cli.rs` - clap definitions, registry-enriched command tree, usage rendering, completions, guide, and man output.
+- `cli.rs` - clap definitions, registry-enriched command tree, usage rendering, guide, and man output.
 - `envelope.rs` - compact `fez/v1` JSON response envelope.
 - `error.rs` - stable error codes, exit codes, and structured error details.
 - `safety.rs` - protected-operation guardrails.
@@ -52,7 +52,7 @@ For command details, CI caveats, release flow, and packaging, read `docs/agents/
 
 - Error codes and exit codes are stable API. Update tests and `docs/agents/cli-contract.md` when changing `FezError`, `EXIT_CODES`, or usage rendering.
 - `--json` output uses the compact `fez/v1` envelope. Tests should assert compact substrings like `"kind":"ServiceList"`.
-- The capability registry in `src/capability/mod.rs` is canonical for help, examples, `fez describe`, `fez man`, and indirectly completions. Keep clap args and descriptors in sync.
+- The capability registry in `src/capability/mod.rs` is canonical for help, examples, `fez describe`, and `fez man`. Keep clap args and descriptors in sync.
 - Privileged operations escalate through cockpit, not fez-owned sudo/password handling. `FEZ_ESCALATION=off` disables escalation; any other value forces that single mechanism.
 - Mutations apply to subsystem-owned state. If a feature seems to need memory across invocations, push that state into the subsystem or recompute it.
 - CI actions are SHA-pinned. When bumping an action, pin the new commit SHA and keep the `# vX.Y.Z` comment accurate.

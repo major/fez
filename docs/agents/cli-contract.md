@@ -1,6 +1,6 @@
 # CLI Contract Notes For Agents
 
-Read this before changing `src/cli.rs`, `src/schema/`, `src/error.rs`, help text, examples, completions, man output, or CLI tests.
+Read this before changing `src/cli.rs`, `src/schema/`, `src/error.rs`, help text, examples, man output, or CLI tests.
 
 ## Clap Entry Points
 
@@ -13,7 +13,6 @@ Read this before changing `src/cli.rs`, `src/schema/`, `src/error.rs`, help text
 Top-level verbs beyond capability commands:
 
 - `fez guide` renders the agent contract; `--json` emits an `AgentGuide` envelope.
-- `fez completions <shell>` supports bash, zsh, and fish.
 - Hidden `fez man` emits the `fez.1` roff page for packaging.
 
 ## Envelope And Exit Codes
@@ -55,9 +54,9 @@ When adding or changing a command, flag, or argument, update both:
 
 `fez describe <id> --json` emits the compatibility `flags: ["--flag"]` list and computed `flag_schema` entries with `type`, `description`, `repeatable`, `default`, and `conflicts_with` metadata. Constrained positional inputs use `choices`.
 
-## Help, Describe, Guide, Man, And Completions
+## Help, Describe, Guide, And Man
 
-Help, `fez describe`, `fez man`, and indirectly completions derive from descriptors. Drift guards in `tests/cli.rs` lock down descriptor path/id mapping, examples, safety-global visibility, and exit-code tables.
+Help, `fez describe`, and `fez man` derive from descriptors. Drift guards in `tests/cli.rs` lock down descriptor path/id mapping, examples, safety-global visibility, and exit-code tables.
 
 The `services <action>` to `services.<action>` path/id mapping is covered by drift tests. Keep new descriptors consistent with that convention.
 
@@ -65,7 +64,7 @@ The `services <action>` to `services.<action>` path/id mapping is covered by dri
 
 `--dry-run` and `--force` are clap globals on the root `Cli`, so clap accepts them on every subcommand.
 
-`inject()` hides a global from a leaf's help and completions when that leaf's descriptor does not advertise it. The hide is help-only: a hidden global still parses as a no-op for read-only commands. This preserves the global CLI contract while keeping leaf help aligned with descriptors.
+`inject()` hides a global from a leaf's help when that leaf's descriptor does not advertise it. The hide is help-only: a hidden global still parses as a no-op for read-only commands. This preserves the global CLI contract while keeping leaf help aligned with descriptors.
 
 The implementation uses local hidden non-global shadow args with the same id because clap propagates globals lazily and child commands cannot reliably reach them with `mut_arg`.
 
