@@ -180,7 +180,7 @@ static FLAG_TABLE: &[(&str, &str, &str, bool, Option<&str>, &[&str])] = &[
     ("--json",      "boolean", "Emit a fez/v1 JSON envelope.",                                               false, None,             &[]),
     ("--dry-run",   "boolean", "Resolve and report the planned mutation without applying it.",                false, None,             &[]),
     ("--force",     "boolean", "Override command-specific safety guardrails.",                               false, None,             &[]),
-    ("--state",     "string",  "Filter by state.",                                                           false, None,             &[]),
+    ("--state",     "string",  "Filter by active state.",                                                    false, None,             &[]),
     ("--since",     "string",  "Only include log entries since this journalctl time expression.",             false, None,             &[]),
     ("--priority",  "string",  "Only include log entries at this priority or higher.",                       false, None,             &[]),
     ("--lines",     "integer", "Limit log output to the last N entries.",                                    false, None,             &[]),
@@ -196,8 +196,19 @@ static FLAG_TABLE: &[(&str, &str, &str, bool, Option<&str>, &[&str])] = &[
     ("--timeout",   "integer", "Auto-revert the runtime firewall change after this many seconds.",           false, None,             &[]),
 ];
 
+/// Allowed active-state values for `services.list --state`.
+pub(crate) const SERVICE_STATES: &[&str] = &[
+    "active",
+    "inactive",
+    "activating",
+    "deactivating",
+    "failed",
+    "maintenance",
+    "reloading",
+];
+
 fn flag_schema(capability_id: &str, flag: &'static str) -> FlagSchema {
-    // Per-capability override: packages.repolist --all has different semantics.
+    // Per-capability overrides where the global flag table doesn't apply.
     let row = if flag == "--all" && capability_id == "packages.repolist" {
         (
             "--all",
@@ -222,13 +233,18 @@ fn flag_schema(capability_id: &str, flag: &'static str) -> FlagSchema {
             ))
     };
     let (_, ty, description, repeatable, default, conflicts_with) = row;
+    let choices = if flag == "--state" && capability_id == "services.list" {
+        Some(SERVICE_STATES.to_vec())
+    } else {
+        None
+    };
     FlagSchema {
         name: flag,
         ty,
         description,
         repeatable,
         default,
-        choices: None,
+        choices,
         conflicts_with: conflicts_with.to_vec(),
     }
 }
