@@ -26,7 +26,45 @@ pub fn examples_block(examples: &[String]) -> String {
 /// Walk `cmd`, attaching `long_about` and `after_help` from the registry to
 /// every subcommand whose path resolves to a capability id.
 pub fn inject(cmd: Command) -> Command {
-    inject_at(cmd, &mut Vec::new())
+    let cmd = inject_at(cmd, &mut Vec::new());
+    group_root_commands(cmd)
+}
+
+/// Discovery subcommands shown in their own help section rather than the
+/// default "Commands" heading.
+const DISCOVERY_COMMANDS: [&str; 3] = ["capabilities", "describe", "guide"];
+
+/// Reorganise root subcommands into two visual groups:
+/// - **Subsystems** (services, packages, network, firewall) under the renamed
+///   default heading.
+/// - **Agent discovery** (capabilities, describe, guide) in an `after_help`
+///   block, hidden from the default listing so they don't clutter the primary
+///   surface.
+fn group_root_commands(mut cmd: Command) -> Command {
+    // Collect about strings before mutating, so the after_help block can
+    // reproduce them.
+    let discovery_entries: Vec<(String, String)> = cmd
+        .get_subcommands()
+        .filter(|c| DISCOVERY_COMMANDS.contains(&c.get_name()))
+        .map(|c| {
+            let name = c.get_name().to_string();
+            let about = c.get_about().map(|s| s.to_string()).unwrap_or_default();
+            (name, about)
+        })
+        .collect();
+
+    // Hide discovery subcommands from the default heading.
+    for name in DISCOVERY_COMMANDS {
+        cmd = cmd.mut_subcommand(name, |c| c.hide(true));
+    }
+
+    // Rename the default heading and append the discovery section.
+    let mut section = String::from("Agent Discovery:\n");
+    for (name, about) in &discovery_entries {
+        section.push_str(&format!("  {name:<14}{about}\n"));
+    }
+    cmd.subcommand_help_heading("Subsystems")
+        .after_help(section)
 }
 
 /// The safety globals that only apply to mutating commands. They are declared
@@ -103,6 +141,38 @@ mod tests {
         assert!(block.contains("fez a"));
         assert!(block.contains("fez b"));
         assert!(block.starts_with("Examples:"));
+    }
+
+    #[test]
+    fn root_help_groups_subsystems_and_discovery() {
+        let mut cmd = inject(crate::cli::raw_command());
+        let help = cmd.render_help().to_string();
+        assert!(help.contains("Subsystems:"), "missing Subsystems heading");
+        assert!(
+            help.contains("Agent Discovery:"),
+            "missing Agent Discovery heading"
+        );
+        // Subsystem commands are visible in the main listing.
+        assert!(help.contains("services"));
+        assert!(help.contains("firewall"));
+        // Discovery commands appear in the output but not in the Subsystems section.
+        assert!(help.contains("capabilities"));
+        assert!(help.contains("describe"));
+        assert!(help.contains("guide"));
+        let subsystems_section =
+            &help[help.find("Subsystems:").unwrap()..help.find("Agent Discovery:").unwrap()];
+        assert!(
+            !subsystems_section.contains("capabilities"),
+            "capabilities leaked into Subsystems"
+        );
+        assert!(
+            !subsystems_section.contains("describe"),
+            "describe leaked into Subsystems"
+        );
+        assert!(
+            !subsystems_section.contains("guide"),
+            "guide leaked into Subsystems"
+        );
     }
 
     #[test]
