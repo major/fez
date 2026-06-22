@@ -1,5 +1,4 @@
 use clap::{CommandFactory, FromArgMatches, Parser, Subcommand};
-use clap_complete::Shell;
 
 #[derive(Parser, Debug)]
 #[command(
@@ -173,12 +172,6 @@ pub enum TopCommand {
     },
     /// Print the agent contract: discovery loop, envelope, exit codes, env vars.
     Guide,
-    /// Generate a shell completion script on stdout.
-    Completions {
-        /// Shell to generate completions for.
-        #[arg(value_enum)]
-        shell: Shell,
-    },
     /// Emit the roff man page on stdout (used by packaging).
     #[command(hide = true)]
     Man,

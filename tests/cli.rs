@@ -469,15 +469,6 @@ fn describe_text_shows_long_and_all_examples() {
 }
 
 #[test]
-fn completions_bash_emits_script() {
-    fez()
-        .args(["completions", "bash"])
-        .assert()
-        .success()
-        .stdout(contains("_fez"));
-}
-
-#[test]
 fn man_emits_roff() {
     fez()
         .arg("man")
@@ -539,7 +530,7 @@ fn broken_pipe_does_not_panic() {
 
     let exe = assert_cmd::cargo::cargo_bin("fez");
     let mut child = StdCommand::new(exe)
-        .args(["completions", "zsh"])
+        .args(["man"])
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()

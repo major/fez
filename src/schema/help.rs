@@ -54,7 +54,7 @@ fn inject_at(mut cmd: Command, path: &mut Vec<String>) -> Command {
             // cannot be reached via `mut_arg`. Re-declare a local, hidden,
             // non-global shadow with the same id: clap renders the local arg
             // (hidden) instead of inheriting the visible global, while parsing
-            // still accepts the flag. Only the help/completion visibility
+            // still accepts the flag. Only the help visibility
             // changes; the value is read from the root global at parse time.
             for (id, long) in HIDEABLE_GLOBALS {
                 let advertised = d.flags.iter().any(|f| f == &format!("--{long}"));
