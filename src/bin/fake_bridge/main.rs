@@ -6,6 +6,7 @@ mod hosttime;
 mod nm;
 mod pk;
 mod systemd;
+mod udisks;
 
 use fez::protocol::frame::{read_frame, write_frame, Frame};
 use serde_json::{json, Value};
@@ -210,6 +211,8 @@ fn handle_data(
     } else if path.starts_with(fw::FW_PATH) {
         let on_privileged = privileged_channels.contains(&frame.channel);
         fw::fw_reply(path, iface, method, &args, on_privileged, &id)
+    } else if path.starts_with("/org/freedesktop/UDisks2") {
+        udisks::udisks_reply(path, iface, method, &args, &id)
     } else if path.starts_with(nm::NM_MGR_PATH) {
         nm::nm_reply(path, method, &id)
     } else if path == pk::PK_PATH && method == "CreateTransaction" {

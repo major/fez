@@ -129,3 +129,19 @@ The protected-op guard refuses lockout-prone operations without `--force`:
 When firewalld is absent or unreachable, `fez` returns exit 9 (`dependency-missing`) with remediation covering both install and enable/start. Firewalld is D-Bus-activated, so absent service and stopped-but-installed are not reliably distinct over the bridge.
 
 Older firewalld APIs that return `UnknownMethod` for a feature, such as `getMasquerade`, map to `FezError::UnsupportedApi` (`unsupported-api`, exit 12) rather than dependency-missing.
+
+## Storage
+
+The storage capability reads UDisks2 (`org.freedesktop.UDisks2`) over the bridge. Read-only: no mutations, no privilege escalation.
+
+Three actions:
+
+- `storage list` — block device inventory with filesystem type, label, UUID, size, and mount point.
+- `storage show <device>` — full detail for one block device: partition info, partition table type, drive model/serial, LUKS encryption status.
+- `storage health [--drive <filter>]` — NVMe/SMART drive health: temperature, power-on hours, critical warnings, self-test status.
+
+UDisks2 sends device paths as byte arrays (`ay`) with trailing NUL; the capability decodes these transparently. Mount points arrive as `aay` and are similarly decoded.
+
+`storage show` accepts both full paths (`/dev/nvme0n1p1`) and short names (`nvme0n1p1`). UDisks2 interfaces (`Filesystem`, `Partition`, `PartitionTable`, `Encrypted`, `NVMe.Controller`) are optional per object; absent interfaces return `None` rather than erroring.
+
+Canned fake bridge topology: one NVMe drive (`Samsung SSD 990 PRO 4TB`), whole disk `nvme0n1` with GPT, three partitions (EFI vfat, ext4 boot, LUKS), and a dm cleartext device. Tests depend on that canned state.
