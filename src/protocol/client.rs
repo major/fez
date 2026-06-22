@@ -477,7 +477,11 @@ impl Drop for BridgeClient {
 /// `v` when present, otherwise the value unchanged, so callers can treat
 /// variant-wrapped and bare values uniformly (same convention as the services
 /// status parser).
-fn variant_value(v: &Value) -> &Value {
+/// Unwrap a cockpit-bridge D-Bus variant envelope.
+///
+/// Returns the inner `"v"` value from `{"t":"...", "v":...}`, or the
+/// original value if the envelope is absent.
+pub(crate) fn variant_value(v: &Value) -> &Value {
     v.get("v").unwrap_or(v)
 }
 

@@ -26,6 +26,9 @@ transport); both are pulled in automatically.
 fez capabilities
 fez describe services.status --json
 
+# System overview — the first thing an agent should run.
+fez system show --json
+
 # Read-only (no elevation).
 fez services list --state failed
 fez services status sshd.service --json

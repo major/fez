@@ -6,7 +6,7 @@ Read this before changing `src/capabilities/`, `src/protocol/`, `src/transport/`
 
 - `protocol/` - bridge wire protocol: framed JSON, message types including `DbusSignal`, `dbus_call` request/reply flow, and `dbus_call_collect` for signal-driven PackageKit calls.
 - `transport/` - `local` spawns the bridge; `ssh` shells out to the system OpenSSH client.
-- `capabilities/` - command implementations for services, packages, network, and firewall.
+- `capabilities/` - command implementations for services, packages, network, firewall, and system.
 - `capabilities/mod.rs` - shared `View` result and `render` envelope shaping.
 - `dispatch.rs` - routes parsed CLI commands to capabilities.
 - `safety.rs` - guardrails for protected units, dangerous package removals, and firewall lockout-prone actions.
@@ -95,6 +95,16 @@ Canned topology from `GetDevices`:
 - `veth0` - veth, unmanaged, hidden by default and shown only with `--all`.
 
 `network list` hides unmanaged virtual interfaces unless `--all`. `network show <device>` looks up by `Interface` name and returns exit 4 (`not-found`) for unknown devices.
+
+## System
+
+The system capability gathers a host overview from two universally available systemd D-Bus services: `org.freedesktop.hostname1` and `org.freedesktop.timedate1`. Both are part of systemd itself, so they require zero extra packages on Fedora or RHEL.
+
+`system show` calls `hostname1.Describe()`, which returns a JSON string containing hostname, OS, kernel, hardware, and firmware fields, then `timedate1.GetAll` for timezone, NTP, and clock data. Both are read-only and unprivileged.
+
+`hostname1.Describe()` returns a single `s` D-Bus out-arg containing a JSON object as a string (not a variant-wrapped `a{sv}` dict). The capability parses the inner JSON string to extract typed fields. The `OperatingSystemReleaseData` array of `KEY=VALUE` strings is parsed into a flat `os_release` object with lowercase keys so agents can read `id`, `version_id`, `variant_id` etc. directly.
+
+Canned fake bridge data: hostname `testbox.example.com`, Fedora 44 Server, QEMU VM, America/Chicago timezone, NTP synchronized. Tests depend on that canned state.
 
 ## Firewall
 

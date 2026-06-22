@@ -358,6 +358,53 @@ fn firewall_confirm_schema() -> Value {
     )
 }
 
+fn system_overview_schema() -> Value {
+    object_schema(
+        json!({
+            "hostname": nullable_string_prop(),
+            "static_hostname": nullable_string_prop(),
+            "pretty_hostname": nullable_string_prop(),
+            "hostname_source": nullable_string_prop(),
+            "machine_id": nullable_string_prop(),
+            "boot_id": nullable_string_prop(),
+            "os": nullable_string_prop(),
+            "os_id": nullable_string_prop(),
+            "os_version_id": nullable_string_prop(),
+            "os_variant_id": nullable_string_prop(),
+            "os_cpe": nullable_string_prop(),
+            "os_support_end": nullable_string_prop(),
+            "os_release": object_schema(json!({}), &[]),
+            "kernel": nullable_string_prop(),
+            "kernel_release": nullable_string_prop(),
+            "kernel_version": nullable_string_prop(),
+            "chassis": nullable_string_prop(),
+            "hardware_vendor": nullable_string_prop(),
+            "hardware_model": nullable_string_prop(),
+            "firmware_vendor": nullable_string_prop(),
+            "firmware_version": nullable_string_prop(),
+            "timezone": nullable_string_prop(),
+            "ntp_enabled": nullable_boolean_prop(),
+            "ntp_synchronized": nullable_boolean_prop(),
+            "local_rtc": nullable_boolean_prop(),
+            "time_utc": string_prop(),
+            "rtc_time_utc": string_prop(),
+        }),
+        &[
+            "hostname",
+            "machine_id",
+            "boot_id",
+            "os",
+            "kernel",
+            "kernel_release",
+            "timezone",
+            "ntp_enabled",
+            "ntp_synchronized",
+            "time_utc",
+            "rtc_time_utc",
+        ],
+    )
+}
+
 /// Dispatch output kind to its JSON Schema. Adding a new kind requires only a
 /// new named function above and one entry in this match.
 pub(super) fn output_schema(kind: &str) -> Value {
@@ -381,6 +428,7 @@ pub(super) fn output_schema(kind: &str) -> Value {
         "FirewallServiceCatalog" => object_schema(json!({"services": array_prop()}), &["services"]),
         "FirewallChange" => firewall_change_schema(),
         "FirewallConfirm" => firewall_confirm_schema(),
+        "SystemOverview" => system_overview_schema(),
         _ => object_schema(json!({}), &[]),
     }
 }

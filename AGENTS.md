@@ -38,7 +38,7 @@ For command details, CI caveats, release flow, and packaging, read `docs/agents/
 
 - `protocol/` - bridge framing, messages, request/reply calls, and signal collection.
 - `transport/` - local bridge spawning and SSH transport.
-- `capabilities/` - command implementations plus shared rendering.
+- `capabilities/` - command implementations (services, packages, network, firewall, system) plus shared rendering.
 - `capability/` - canonical machine-readable command descriptors.
 - `dispatch.rs` - parsed CLI routing.
 - `cli.rs` - clap definitions, registry-enriched command tree, usage rendering, guide, and man output.

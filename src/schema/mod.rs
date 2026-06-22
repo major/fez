@@ -11,6 +11,7 @@ mod network;
 mod packages;
 mod schemas;
 mod services;
+mod system;
 
 /// A single named input a capability accepts.
 #[derive(Serialize, Clone)]
@@ -297,6 +298,7 @@ pub fn registry() -> Vec<Descriptor> {
     descriptors.extend(packages::descriptors());
     descriptors.extend(network::descriptors());
     descriptors.extend(firewall::descriptors());
+    descriptors.extend(system::descriptors());
     descriptors
 }
 
