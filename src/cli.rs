@@ -199,6 +199,12 @@ pub enum TopCommand {
         #[command(subcommand)]
         action: FirewallAction,
     },
+    /// Show the system overview (host identity, OS, kernel, hardware, time).
+    System {
+        /// The `system` action to perform.
+        #[command(subcommand)]
+        action: SystemAction,
+    },
 }
 
 /// Actions under the `services` subcommand.
@@ -352,6 +358,13 @@ pub enum NetworkAction {
         /// Device interface name to inspect (e.g. `enp1s0`).
         device: String,
     },
+}
+
+/// Actions under the `system` subcommand.
+#[derive(Subcommand, Debug)]
+pub enum SystemAction {
+    /// Show host identity, OS, kernel, hardware, and time/NTP status.
+    Show,
 }
 
 /// Actions under the `firewall` subcommand.

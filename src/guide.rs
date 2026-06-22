@@ -9,6 +9,8 @@ use serde_json::json;
 pub fn text() -> String {
     let mut s = String::new();
     s.push_str("fez agent guide\n\n");
+    s.push_str("Start here:\n");
+    s.push_str("  fez system show --json          orient: OS, kernel, hardware, time\n\n");
     s.push_str("Discovery loop:\n");
     s.push_str("  1. fez capabilities            list capability ids\n");
     s.push_str("  2. fez describe <id> --json    inputs, flags, output kind, examples\n");
@@ -31,6 +33,7 @@ pub fn text() -> String {
 /// The guide as a structured JSON value for `--json`.
 pub fn data() -> serde_json::Value {
     json!({
+        "orient": "fez system show --json",
         "discovery": [
             "fez capabilities",
             "fez describe <id> --json",

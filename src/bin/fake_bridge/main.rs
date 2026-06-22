@@ -2,6 +2,7 @@
 
 mod dnf;
 mod fw;
+mod hosttime;
 mod nm;
 mod pk;
 mod systemd;
@@ -204,7 +205,9 @@ fn handle_data(
         "open_session" | "list" | "install" | "remove" | "upgrade" | "resolve" | "do_transaction"
     );
 
-    let reply = if path.starts_with(fw::FW_PATH) {
+    let reply = if path == hosttime::HOSTNAME_PATH || path == hosttime::TIMEDATE_PATH {
+        hosttime::hosttime_reply(path, method, &args, &id)
+    } else if path.starts_with(fw::FW_PATH) {
         let on_privileged = privileged_channels.contains(&frame.channel);
         fw::fw_reply(path, iface, method, &args, on_privileged, &id)
     } else if path.starts_with(nm::NM_MGR_PATH) {

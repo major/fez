@@ -333,3 +333,6 @@ pub mod network;
 
 /// firewalld management capabilities.
 pub mod firewall;
+
+/// System overview capability (hostname + time).
+pub mod system;
