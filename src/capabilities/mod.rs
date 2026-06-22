@@ -336,3 +336,6 @@ pub mod firewall;
 
 /// System overview capability (hostname + time).
 pub mod system;
+
+/// UDisks2 storage inspection capability.
+pub mod storage;

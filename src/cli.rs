@@ -205,6 +205,12 @@ pub enum TopCommand {
         #[command(subcommand)]
         action: SystemAction,
     },
+    /// Inspect storage devices, partitions, and drive health (via UDisks2).
+    Storage {
+        /// The `storage` action to perform.
+        #[command(subcommand)]
+        action: StorageAction,
+    },
 }
 
 /// Actions under the `services` subcommand.
@@ -365,6 +371,24 @@ pub enum NetworkAction {
 pub enum SystemAction {
     /// Show host identity, OS, kernel, hardware, and time/NTP status.
     Show,
+}
+
+/// Actions under the `storage` subcommand.
+#[derive(Subcommand, Debug)]
+pub enum StorageAction {
+    /// List block devices with filesystem type, label, UUID, size, and mount point.
+    List,
+    /// Show one block device's full detail (partition, drive, encryption).
+    Show {
+        /// Block device path or short name (e.g. `/dev/sda1` or `sda1`).
+        device: String,
+    },
+    /// Show NVMe/SMART drive health (temperature, power-on hours, critical warnings, self-test status).
+    Health {
+        /// Filter by drive model, serial, or path substring.
+        #[arg(long)]
+        drive: Option<String>,
+    },
 }
 
 /// Actions under the `firewall` subcommand.
