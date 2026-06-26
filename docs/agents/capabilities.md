@@ -118,19 +118,25 @@ Canned fake bridge data: 3-interface topology (`lo`, `enp1s0`, `enp2s0`), ~3.2% 
 
 ## DNS
 
-The DNS capability reads `org.freedesktop.resolve1` (systemd-resolved) over the bridge. Three actions: `dns status`, `dns flush`, and `dns query`.
+The DNS capability has two backends, selected automatically:
 
-`dns status` shows the global resolver configuration (DNS servers, DNSSEC, DNS-over-TLS, LLMNR, multicast DNS, resolv.conf mode, cache statistics) plus per-link DNS detail. By default only links with DNS servers configured are shown; `--all` includes every link. This mirrors `network list` hiding unmanaged veth interfaces by default.
+**Primary: systemd-resolved** (`org.freedesktop.resolve1`) — full resolver config, cache stats, DNSSEC/DoT status, per-link detail, cache flush, and hostname resolution. Present on Fedora 41+.
 
-Link objects live at `/org/freedesktop/resolve1/link/<encoded-ifindex>`. Node names use D-Bus label encoding: the leading digit is underscore + two hex chars (ASCII value), remaining chars literal. Link 2 → `_32`, link 14 → `_314`, link 130 → `_3130`. Enumerated via `Introspect` on `/org/freedesktop/resolve1/link`.
+**Fallback: NetworkManager DnsManager** (`org.freedesktop.NetworkManager.DnsManager`) — basic DNS server list, mode, and per-interface config. Used automatically when systemd-resolved is absent (e.g. RHEL 10). Flush and query are unavailable on the fallback and return exit 9 with remediation.
 
-`dns flush` calls `FlushCaches()`. Unprivileged (polkit default allows it). Audited as operation `"dns-flush"` since it destroys cache state.
+Three actions: `dns status`, `dns flush`, and `dns query`.
 
-`dns query <hostname>` calls `ResolveHostname(0, name, AF_UNSPEC, 0)`. Returns decoded IPv4/IPv6 addresses. NXDOMAIN maps to exit 4 (`not-found`).
+`dns status` on resolve1 shows global config (DNS servers, DNSSEC, DNS-over-TLS, LLMNR, multicast DNS, resolv.conf mode, cache statistics) plus per-link DNS detail. Default output hides links without DNS servers; `--all` shows every link. On the NM fallback, shows mode, resolv.conf manager, and per-interface DNS servers. The envelope carries `"backend":"networkmanager"` and a hint noting the reduced feature set.
 
-When systemd-resolved is absent, exit 9 (`dependency-missing`) with remediation: `systemctl enable --now systemd-resolved`.
+Link objects on resolve1 live at `/org/freedesktop/resolve1/link/<encoded-ifindex>`. Node names use D-Bus label encoding: the leading digit is underscore + two hex chars (ASCII value), remaining chars literal. Link 2 → `_32`, link 14 → `_314`, link 130 → `_3130`. Enumerated via `Introspect` on `/org/freedesktop/resolve1/link`.
 
-Canned fake bridge data: 3 links (2 with DNS, 3 and 10 without), global DNS `192.168.1.1` + `fd00::1`, cache stats `(100, 500, 50)`. `ResolveHostname("example.com")` → `93.184.215.14`. Tests depend on that canned state.
+Real cockpit-bridge encodes D-Bus `ay` byte arrays as base64 strings; the capability handles both base64 and JSON integer arrays transparently.
+
+`dns flush` calls `FlushCaches()`. Unprivileged (polkit default allows it). Audited as operation `"dns-flush"`. Requires systemd-resolved.
+
+`dns query <hostname>` calls `ResolveHostname(0, name, AF_UNSPEC, 0)`. Returns decoded IPv4/IPv6 addresses. NXDOMAIN maps to exit 4 (`not-found`). Requires systemd-resolved.
+
+Canned fake bridge data: 3 resolve1 links (2 with DNS, 3 and 10 without), global DNS `192.168.1.1` + `fd00::1`, cache stats `(100, 500, 50)`. NM DnsManager fallback: mode `default`, one interface `enp1s0` with `192.168.1.1`. Tests depend on that canned state.
 
 ## Firewall
 
