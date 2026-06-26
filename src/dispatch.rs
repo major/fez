@@ -24,6 +24,7 @@ pub fn run(cli: Cli) -> i32 {
         TopCommand::Firewall { action } => crate::capabilities::firewall::dispatch(&cli, action),
         TopCommand::System { action } => crate::capabilities::system::dispatch(&cli, action),
         TopCommand::Storage { action } => crate::capabilities::storage::dispatch(&cli, action),
+        TopCommand::Dns { action } => crate::capabilities::dns::dispatch(&cli, action),
     }
 }
 
