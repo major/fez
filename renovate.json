@@ -1,4 +1,12 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
-  "extends": ["github>major/renovate-config"]
+  "extends": ["github>major/renovate-config"],
+  "packageRules": [
+    {
+      "description": "Pin Rust toolchain to MSRV 1.92",
+      "matchManagers": ["rust"],
+      "matchPackageNames": ["rust"],
+      "allowedVersions": "<=1.92"
+    }
+  ]
 }
