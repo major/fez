@@ -54,6 +54,7 @@ Firewalld fake bridge contracts:
 | `FEZ_FAKE_PK_ERROR` | `notauth` injects a PackageKit `NOT_AUTHORIZED` error, mapped to exit 11. |
 | `FEZ_FAKE_BRIDGES` | Ordered `cockpit.Superuser` mechanism list like `sudo:ok` or `sudo:err,polkit:ok`; unset defaults to `sudo:ok`, empty means no mechanism. |
 | `FEZ_FAKE_DENY_PRIVILEGED` | Denies privileged channel after successful escalation. |
+| `FEZ_FAKE_NO_PCP` | Simulates absent PCP (`python3-pcp` not installed). |
 | `FEZ_FAKE_NO_FIREWALLD` | Simulates absent firewalld. |
 | `FEZ_FAKE_FIREWALLD_UNREACHABLE` | Closes the FirewallD1 channel as `not-found`, exercising dependency mapping. |
 | `FEZ_FAKE_NO_MASQUERADE` | Returns `UnknownMethod` for `getMasquerade`, exercising unsupported-API mapping. |

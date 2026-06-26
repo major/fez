@@ -141,6 +141,14 @@ fn handle_open(
         return Ok(());
     }
 
+    if payload == "metrics1" && std::env::var_os("FEZ_FAKE_NO_PCP").is_some() {
+        send_control(
+            stdout,
+            &json!({"command":"close","channel":channel,"problem":"not-supported"}),
+        );
+        return Ok(());
+    }
+
     let privileged = ctrl.get("superuser").and_then(Value::as_str) == Some("require");
     let force_deny = std::env::var_os("FEZ_FAKE_DENY_PRIVILEGED").is_some();
     let deny_privileged = !*escalated || force_deny;
@@ -155,26 +163,94 @@ fn handle_open(
         privileged_channels.insert(channel.clone());
     }
     send_control(stdout, &json!({"command":"ready","channel":channel}));
-    if payload == "stream" {
-        let mut blob = serde_json::to_vec(&json!({
-            "__REALTIME_TIMESTAMP":"1700000000000000","PRIORITY":"6",
-            "SYSLOG_IDENTIFIER":"sshd","MESSAGE":"Server listening on port 22.","_PID":"1001"
-        }))
-        .unwrap();
-        blob.push(b'\n');
-        blob.extend_from_slice(
-            &serde_json::to_vec(&json!({
-                "__REALTIME_TIMESTAMP":"1700000001000000","PRIORITY":"6",
-                "SYSLOG_IDENTIFIER":"sshd","MESSAGE":"Accepted publickey for fedora","_PID":"1002"
+    match payload {
+        "stream" => {
+            let mut blob = serde_json::to_vec(&json!({
+                "__REALTIME_TIMESTAMP":"1700000000000000","PRIORITY":"6",
+                "SYSLOG_IDENTIFIER":"sshd","MESSAGE":"Server listening on port 22.","_PID":"1001"
             }))
-            .unwrap(),
-        );
-        blob.push(b'\n');
-        blob.extend_from_slice(b"not-json\n");
-        write_frame(stdout, &Frame::new(&channel, blob))?;
-        send_control(stdout, &json!({"command":"done","channel":channel}));
-        send_control(stdout, &json!({"command":"close","channel":channel}));
+            .unwrap();
+            blob.push(b'\n');
+            blob.extend_from_slice(
+                &serde_json::to_vec(&json!({
+                    "__REALTIME_TIMESTAMP":"1700000001000000","PRIORITY":"6",
+                    "SYSLOG_IDENTIFIER":"sshd","MESSAGE":"Accepted publickey for fedora","_PID":"1002"
+                }))
+                .unwrap(),
+            );
+            blob.push(b'\n');
+            blob.extend_from_slice(b"not-json\n");
+            write_frame(stdout, &Frame::new(&channel, blob))?;
+            send_control(stdout, &json!({"command":"done","channel":channel}));
+            send_control(stdout, &json!({"command":"close","channel":channel}));
+        }
+        "metrics1" => {
+            handle_metrics1(stdout, &channel)?;
+        }
+        _ => {}
     }
+    Ok(())
+}
+
+/// Emit canned `metrics1` channel data: meta + two samples, then done/close.
+fn handle_metrics1(stdout: &mut impl Write, channel: &str) -> io::Result<()> {
+    // Meta message (JSON object on data channel)
+    let meta = json!({
+        "source": "direct",
+        "interval": 1000,
+        "timestamp": 1_700_000_000_000_i64,
+        "metrics": [
+            {"name": "kernel.all.load", "units": "", "semantics": "instant",
+             "instances": ["1 minute", "5 minute", "15 minute"]},
+            {"name": "kernel.all.cpu.user", "derive": "rate",
+             "units": "millisec", "semantics": "counter"},
+            {"name": "kernel.all.cpu.sys", "derive": "rate",
+             "units": "millisec", "semantics": "counter"},
+            {"name": "kernel.all.cpu.idle", "derive": "rate",
+             "units": "millisec", "semantics": "counter"},
+            {"name": "mem.physmem", "units": "Kbyte", "semantics": "discrete"},
+            {"name": "mem.util.available", "units": "Kbyte", "semantics": "instant"},
+            {"name": "disk.all.total", "derive": "rate",
+             "units": "count", "semantics": "counter"},
+            {"name": "network.interface.total.bytes", "derive": "rate",
+             "units": "byte", "semantics": "counter",
+             "instances": ["lo", "enp1s0", "enp2s0"]},
+        ],
+        "now": 1_700_000_000_000_i64,
+    });
+    let meta_bytes = serde_json::to_vec(&meta).unwrap();
+    write_frame(stdout, &Frame::new(channel, meta_bytes))?;
+
+    // Sample 1: rate values are false (no prior sample for delta)
+    let sample1 = json!([[
+        [0.42, 0.38, 0.35],
+        false,
+        false,
+        false,
+        16_384_000.0,
+        12_000_000.0,
+        false,
+        [false, false, false]
+    ]]);
+    let s1_bytes = serde_json::to_vec(&sample1).unwrap();
+    write_frame(stdout, &Frame::new(channel, s1_bytes))?;
+
+    // Sample 2: real rate values
+    let sample2 = json!([[
+        [0.45, 0.38, 0.35],
+        250.0,
+        75.0,
+        9675.0,
+        16_384_000.0,
+        12_000_000.0,
+        42.5,
+        [1024.0, 50000.0, 0.0]
+    ]]);
+    let s2_bytes = serde_json::to_vec(&sample2).unwrap();
+    write_frame(stdout, &Frame::new(channel, s2_bytes))?;
+
+    send_control(stdout, &json!({"command":"done","channel":channel}));
+    send_control(stdout, &json!({"command":"close","channel":channel}));
     Ok(())
 }
 

@@ -127,3 +127,98 @@ fn capabilities_lists_system_show() {
         .success()
         .stdout(contains("system.show"));
 }
+
+// --- system metrics integration tests ---
+
+// `system metrics --json` returns a SystemMetrics envelope with all sections.
+#[test]
+fn metrics_json_returns_performance_snapshot() {
+    fez_fake()
+        .args(["system", "metrics", "--json"])
+        .assert()
+        .success()
+        .stdout(contains("\"kind\":\"SystemMetrics\""))
+        // Load
+        .stdout(contains("\"1_minute\""))
+        .stdout(contains("\"5_minute\""))
+        .stdout(contains("\"15_minute\""))
+        // CPU
+        .stdout(contains("\"user_ms_per_s\""))
+        .stdout(contains("\"system_ms_per_s\""))
+        .stdout(contains("\"idle_ms_per_s\""))
+        .stdout(contains("\"used_percent\""))
+        // Memory
+        .stdout(contains("\"total_kb\""))
+        .stdout(contains("\"available_kb\""))
+        // Disk
+        .stdout(contains("\"iops\""))
+        // Network
+        .stdout(contains("\"interface\""))
+        .stdout(contains("\"bytes_per_s\""));
+}
+
+// Human output renders section headings and key values.
+#[test]
+fn metrics_human_shows_summary() {
+    fez_fake()
+        .args(["system", "metrics"])
+        .assert()
+        .success()
+        .stdout(contains("Load average:"))
+        .stdout(contains("CPU:"))
+        .stdout(contains("Memory:"))
+        .stdout(contains("Disk I/O:"))
+        .stdout(contains("enp1s0"));
+}
+
+// Missing PCP packages close the channel with not-supported → exit 9.
+#[test]
+fn metrics_missing_pcp_exits_9() {
+    fez_fake()
+        .env("FEZ_FAKE_NO_PCP", "1")
+        .args(["system", "metrics"])
+        .assert()
+        .code(9)
+        .stderr(contains("missing dependency pcp"));
+}
+
+// Missing PCP with --json returns a structured error envelope.
+#[test]
+fn metrics_missing_pcp_json_returns_error_envelope() {
+    fez_fake()
+        .env("FEZ_FAKE_NO_PCP", "1")
+        .args(["system", "metrics", "--json"])
+        .assert()
+        .code(9)
+        .stdout(contains("\"status\":\"error\""))
+        .stdout(contains("\"code\":\"dependency-missing\""));
+}
+
+// Parsed JSON has correct computed values from the canned fake-bridge data.
+#[test]
+fn metrics_json_has_expected_structure() {
+    let out = fez_fake()
+        .args(["system", "metrics", "--json"])
+        .output()
+        .expect("run fez");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let env: Value = serde_json::from_str(&stdout).expect("parse JSON");
+
+    // Envelope shape
+    assert_eq!(env["apiVersion"], "fez/v1");
+    assert_eq!(env["kind"], "SystemMetrics");
+    assert_eq!(env["status"], "ok");
+
+    let cpu_pct = env["data"]["cpu"]["used_percent"].as_f64().unwrap();
+    // (250+75)/(250+75+9675)*100 = 3.25 → round to 1 decimal = 3.3
+    assert_eq!(cpu_pct, 3.3, "cpu used_percent: {cpu_pct}");
+
+    // Memory used_percent: (16384000-12000000)/16384000 = 26.8%
+    let mem_pct = env["data"]["memory"]["used_percent"].as_f64().unwrap();
+    // (16384000-12000000)/16384000*100 = 26.757... → round to 1 decimal = 26.8
+    assert_eq!(mem_pct, 26.8, "mem used_percent: {mem_pct}");
+
+    // Network has 3 interfaces
+    let net = env["data"]["network"].as_array().unwrap();
+    assert_eq!(net.len(), 3);
+}
