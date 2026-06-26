@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0](https://github.com/major/fez/compare/v0.5.0...v0.6.0) - 2026-06-26
+
+### Added
+
+- *(system)* add PCP metrics snapshot via metrics1 channel
+- *(storage)* add read-only UDisks2 storage capability
+- *(system)* add system overview capability
+
+### Other
+
+- Merge pull request #124 from major/renovate/actions-checkout-7.x
+- *(renovate)* cap rust version at MSRV 1.92
+- *(deps)* update taiki-e/install-action action to v2.82.0
+- *(system)* improve metrics patch coverage
+- Merge pull request #121 from major/feat/storage
+- *(cli)* group help output into Subsystems and Agent Discovery
+- *(cli)* remove MCP support
+- *(cli)* remove completions subcommand
+
 ## [0.5.0](https://github.com/major/fez/compare/v0.4.0...v0.5.0) - 2026-06-18
 
 ### Fixed
