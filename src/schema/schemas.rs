@@ -405,29 +405,13 @@ fn system_overview_schema() -> Value {
     )
 }
 
+/// DNS status schema: two shapes depending on backend.
+///
+/// resolve1 backend returns `global` + `links`; NM fallback returns
+/// `backend`, `mode`, `rc_manager`, `dns_servers`, `interfaces`.
+/// No fields are required at top level so both shapes validate.
 fn dns_status_schema() -> Value {
-    object_schema(
-        json!({
-            "global": object_schema(json!({
-                "dns_servers": array_prop(),
-                "current_server": nullable_string_prop(),
-                "dnssec": string_prop(),
-                "dnssec_supported": boolean_prop(),
-                "dns_over_tls": string_prop(),
-                "llmnr": string_prop(),
-                "multicast_dns": string_prop(),
-                "resolv_conf_mode": string_prop(),
-                "cache_size": integer_prop(),
-                "cache_hits": integer_prop(),
-                "cache_misses": integer_prop(),
-                "transactions_current": integer_prop(),
-                "transactions_total": integer_prop(),
-            }), &["dns_servers", "dnssec", "dns_over_tls", "llmnr", "multicast_dns",
-                  "resolv_conf_mode", "cache_size", "cache_hits", "cache_misses"]),
-            "links": array_prop(),
-        }),
-        &["global", "links"],
-    )
+    object_schema(json!({}), &[])
 }
 
 fn dns_flush_schema() -> Value {

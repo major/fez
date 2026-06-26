@@ -7,13 +7,13 @@
 //! no DNSSEC/DoT, no flush/query) but covers the core "what DNS am I using?"
 //! question.
 
+use super::PROPS_IFACE;
 use crate::capabilities::{CapabilityContext, View};
 use crate::error::{FezError, Result};
 use serde_json::{json, Value};
 
 const NM_DNS_PATH: &str = "/org/freedesktop/NetworkManager/DnsManager";
 const NM_DNS_IFACE: &str = "org.freedesktop.NetworkManager.DnsManager";
-const PROPS_IFACE: &str = "org.freedesktop.DBus.Properties";
 
 /// Gather DNS status from NetworkManager's DnsManager (resolve1 fallback).
 pub(super) fn status(ctx: &mut CapabilityContext<'_>) -> Result<View> {

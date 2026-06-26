@@ -105,7 +105,7 @@ fn decode_byte_array(val: &Value) -> Option<Vec<u8>> {
             let bytes: Vec<u8> = arr
                 .iter()
                 .filter_map(Value::as_u64)
-                .map(|b| b as u8)
+                .filter_map(|b| u8::try_from(b).ok())
                 .collect();
             if bytes.len() == arr.len() {
                 Some(bytes)
@@ -210,6 +210,11 @@ fn parse_current_server(val: &Value, manager: bool) -> Option<String> {
 
 impl GlobalDnsConfig {
     /// Parse global config from the manager's `GetAll` property dict.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`FezError::Problem`] if `DNS`, `CacheStatistics`, or
+    /// `TransactionStatistics` properties are absent.
     pub(super) fn from_value(val: Value) -> Result<Self> {
         let dns_servers = parse_manager_dns_array(
             val.get("DNS")
@@ -256,6 +261,10 @@ impl GlobalDnsConfig {
 
 impl LinkDnsConfig {
     /// Parse link config from a link's `GetAll` property dict.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`FezError::Problem`] on malformed property values.
     pub(super) fn from_value(ifindex: u32, val: Value) -> Result<Self> {
         let dns_servers = parse_link_dns_array(val.get("DNS").unwrap_or(&Value::Null));
         let current_server = val
@@ -320,7 +329,7 @@ mod tests {
 
     #[test]
     fn decode_ipv6_base64() {
-        // fd00::1 = /QAAAAAAAAAAAAAAAAAAAT
+        // fd00::1 = /QAAAAAAAAAAAAAAAAAAAQ==
         let addr = decode_dns_address(10, &json!("/QAAAAAAAAAAAAAAAAAAAQ=="));
         assert_eq!(addr, Some("fd00::1".into()));
     }

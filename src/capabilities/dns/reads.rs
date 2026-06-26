@@ -75,6 +75,11 @@ fn enumerate_links(ctx: &mut CapabilityContext<'_>) -> Result<Vec<u32>> {
 }
 
 /// Gather DNS resolver status: global config plus per-link detail.
+///
+/// # Errors
+///
+/// Returns errors from D-Bus calls or property parsing. Stale links
+/// (removed between introspect and `GetAll`) are silently skipped.
 pub(super) fn status(ctx: &mut CapabilityContext<'_>, all: bool) -> Result<View> {
     let global_props = get_all(ctx, RESOLVE_PATH, RESOLVE_MGR_IFACE)?;
     let global = GlobalDnsConfig::from_value(global_props)?;
@@ -84,7 +89,17 @@ pub(super) fn status(ctx: &mut CapabilityContext<'_>, all: bool) -> Result<View>
     for idx in link_indices {
         let encoded = encode_ifindex(idx);
         let path = format!("/org/freedesktop/resolve1/link/{encoded}");
-        let link_props = get_all(ctx, &path, RESOLVE_LINK_IFACE)?;
+        // Links can disappear between introspect and GetAll (e.g. container
+        // veth torn down); skip stale entries instead of aborting.
+        let link_props = match get_all(ctx, &path, RESOLVE_LINK_IFACE) {
+            Ok(props) => props,
+            Err(FezError::Dbus { ref name, .. })
+                if name.contains("UnknownObject") || name.contains("UnknownInterface") =>
+            {
+                continue;
+            }
+            Err(e) => return Err(e),
+        };
         let link = LinkDnsConfig::from_value(idx, link_props)?;
         if all || link.has_dns() {
             links.push(link);
@@ -170,6 +185,11 @@ fn render_status_human(global: &GlobalDnsConfig, links: &[LinkDnsConfig]) -> Str
 }
 
 /// Resolve a hostname via `ResolveHostname`.
+///
+/// # Errors
+///
+/// Returns [`FezError::NotFound`] for NXDOMAIN, or [`FezError::Problem`]
+/// for malformed replies or other D-Bus errors.
 pub(super) fn query(ctx: &mut CapabilityContext<'_>, hostname: &str) -> Result<View> {
     let result = ctx.client.dbus_call(
         ctx.channel,
@@ -188,28 +208,35 @@ pub(super) fn query(ctx: &mut CapabilityContext<'_>, hostname: &str) -> Result<V
     };
 
     // Parse: [a(iiay), canonical_name, flags]
-    let addr_array = out.get(0).and_then(Value::as_array);
+    let addr_array = out
+        .get(0)
+        .and_then(Value::as_array)
+        .ok_or_else(|| FezError::Problem("ResolveHostname returned no addresses".into()))?;
     let canonical = out
         .get(1)
         .and_then(Value::as_str)
-        .unwrap_or(hostname)
+        .ok_or_else(|| FezError::Problem("ResolveHostname returned no canonical name".into()))?
         .to_string();
 
     let mut addresses = Vec::new();
-    if let Some(entries) = addr_array {
-        for entry in entries {
-            if let Some(arr) = entry.as_array() {
-                let ifindex = arr.first().and_then(Value::as_i64).unwrap_or(0);
-                let family = arr.get(1).and_then(Value::as_i64).unwrap_or(0);
-                let bytes = arr.get(2).unwrap_or(&Value::Null);
-                if let Some(address) = decode_dns_address(family, bytes) {
-                    addresses.push(DnsAddress {
-                        family: if family == 2 { "ipv4" } else { "ipv6" }.into(),
-                        address,
-                        ifindex,
-                    });
-                }
-            }
+    for entry in addr_array {
+        let arr = entry
+            .as_array()
+            .ok_or_else(|| FezError::Problem("ResolveHostname entry not a tuple".into()))?;
+        let ifindex = arr.first().and_then(Value::as_i64).unwrap_or(0);
+        let family = arr
+            .get(1)
+            .and_then(Value::as_i64)
+            .ok_or_else(|| FezError::Problem("ResolveHostname entry missing family".into()))?;
+        let bytes = arr
+            .get(2)
+            .ok_or_else(|| FezError::Problem("ResolveHostname entry missing address".into()))?;
+        if let Some(address) = decode_dns_address(family, bytes) {
+            addresses.push(DnsAddress {
+                family: if family == 2 { "ipv4" } else { "ipv6" }.into(),
+                address,
+                ifindex,
+            });
         }
     }
 
@@ -219,8 +246,8 @@ pub(super) fn query(ctx: &mut CapabilityContext<'_>, hostname: &str) -> Result<V
         addresses,
     };
 
-    let data =
-        serde_json::to_value(&query_result).unwrap_or_else(|_| json!({"hostname": hostname}));
+    let data = serde_json::to_value(&query_result)
+        .map_err(|e| FezError::Problem(format!("failed to serialize DnsQuery: {e}")))?;
 
     let mut human = String::new();
     for addr in &query_result.addresses {

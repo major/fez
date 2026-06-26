@@ -8,10 +8,12 @@ pub(super) fn descriptors() -> Vec<Descriptor> {
         Descriptor {
             id: "dns.status",
             summary: "Show DNS resolver configuration and cache statistics",
-            long: "Show the systemd-resolved configuration: DNS servers (global and per-link), \
-        DNSSEC mode, DNS-over-TLS, LLMNR, multicast DNS, resolv.conf mode, and cache hit/miss \
-        statistics. By default only links with DNS servers configured are shown; use --all to \
-        include every link. Read-only: no privilege escalation. Requires systemd-resolved.",
+            long: "Show DNS resolver configuration. Uses systemd-resolved when available \
+        (full detail: DNS servers, DNSSEC, DNS-over-TLS, LLMNR, cache statistics, per-link \
+        config). Falls back to NetworkManager DnsManager when resolved is absent (RHEL 10), \
+        showing DNS servers, mode, and per-interface config with reduced detail. By default \
+        only links with DNS servers configured are shown; use --all to include every link. \
+        Read-only: no privilege escalation.",
             privileged: false,
             output_kind: "DnsStatus",
             inputs: vec![],
