@@ -119,18 +119,52 @@ fn query_nxdomain_json_envelope() {
         .stdout(contains("NXDOMAIN"));
 }
 
-// --- dependency-missing ---
+// --- NM fallback (resolved absent) ---
 
 #[test]
-fn resolved_absent_exits_9() {
+fn status_falls_back_to_nm_when_resolved_absent() {
     let mut cmd = fez_fake();
     cmd.env("FEZ_FAKE_NO_RESOLVED", "1");
     cmd.args(["dns", "status", "--json"])
         .assert()
+        .success()
+        .stdout(contains("\"kind\":\"DnsStatus\""))
+        .stdout(contains("\"backend\":\"networkmanager\""))
+        .stdout(contains("192.168.1.1"))
+        .stdout(contains("\"mode\":\"default\""));
+}
+
+#[test]
+fn status_nm_fallback_human_shows_mode() {
+    let mut cmd = fez_fake();
+    cmd.env("FEZ_FAKE_NO_RESOLVED", "1");
+    cmd.args(["dns", "status"])
+        .assert()
+        .success()
+        .stdout(contains("DNS Mode"))
+        .stdout(contains("192.168.1.1"));
+}
+
+#[test]
+fn flush_exits_9_when_resolved_absent() {
+    let mut cmd = fez_fake_quiet();
+    cmd.env("FEZ_FAKE_NO_RESOLVED", "1");
+    cmd.args(["dns", "flush", "--json"])
+        .assert()
         .code(9)
         .stdout(contains("\"code\":\"dependency-missing\""))
-        .stdout(contains("systemd-resolved"))
-        .stdout(contains("systemctl enable --now systemd-resolved"));
+        .stdout(contains("dns flush requires systemd-resolved"));
+}
+
+#[test]
+fn query_exits_9_when_resolved_absent() {
+    let mut cmd = fez_fake_quiet();
+    cmd.env("FEZ_FAKE_NO_RESOLVED", "1");
+    cmd.args(["dns", "query", "example.com", "--json"])
+        .assert()
+        .code(9)
+        .stdout(contains("\"code\":\"dependency-missing\""))
+        .stdout(contains("dns query requires systemd-resolved"));
 }
 
 // --- describe ---
