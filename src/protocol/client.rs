@@ -38,6 +38,23 @@ const SUPERUSER_IFACE: &str = "cockpit.Superuser";
 /// is viable.
 const ESCALATION_REMEDIATION: &str = "fez could not escalate to root: no superuser mechanism succeeded. Install the cockpit-system package (it ships the sudo/pkexec superuser bridge definitions), then either configure passwordless sudo (NOPASSWD) for this user or grant a polkit rule allowing this user the privileged cockpit action, and retry. fez does not supply sudo passwords";
 
+/// A single PCP metric to request from the bridge's `metrics1` channel.
+pub struct MetricRequest<'a> {
+    /// PCP metric name (e.g. `"kernel.all.load"`).
+    pub name: &'a str,
+    /// Optional derivation mode (e.g. `"rate"` for counter-to-rate conversion).
+    pub derive: Option<&'a str>,
+}
+
+/// Raw result from a `metrics1` channel: the meta descriptor plus collected
+/// data samples.
+pub struct MetricsSnapshot {
+    /// The meta message: metric names, units, semantics, instance lists.
+    pub meta: Value,
+    /// Collected data arrays (one per sample interval).
+    pub samples: Vec<Value>,
+}
+
 /// A live connection to a spawned bridge process, multiplexing D-Bus and
 /// stream channels over its stdio.
 pub struct BridgeClient {
@@ -460,6 +477,99 @@ impl BridgeClient {
     /// The host label associated with this connection.
     pub fn host(&self) -> &str {
         &self.host
+    }
+
+    /// Open a `metrics1` channel, collect `sample_count` data samples, and
+    /// return the meta descriptor plus raw sample arrays.
+    ///
+    /// Uses `source: "direct"` (local PCP context, no pmcd daemon required).
+    /// Rate-derived metrics need at least 2 samples for a meaningful delta;
+    /// the first sample's rate values are `false`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`FezError::DependencyMissing`] when `python3-pcp` is not
+    /// installed (bridge closes the channel with `not-supported`).
+    /// Returns [`FezError::Timeout`] / [`FezError::BridgeClosed`] on
+    /// transport failure, [`FezError::Decode`] on a malformed frame, or
+    /// the mapped close problem for other channel errors.
+    pub fn metrics_collect(
+        &mut self,
+        metrics: &[MetricRequest<'_>],
+        interval_ms: u64,
+        sample_count: u64,
+    ) -> Result<MetricsSnapshot> {
+        let channel = self.alloc_channel();
+        let metric_specs: Vec<Value> = metrics
+            .iter()
+            .map(|m| {
+                let mut spec = json!({"name": m.name});
+                if let Some(d) = m.derive {
+                    spec["derive"] = json!(d);
+                }
+                spec
+            })
+            .collect();
+
+        self.send_control(
+            &Control::open(&channel, "metrics1")
+                .opt("source", json!("direct"))
+                .opt("interval", json!(interval_ms))
+                .opt("limit", json!(sample_count))
+                .opt("metrics", json!(metric_specs)),
+        )?;
+
+        let mut meta = Value::Null;
+        let mut samples: Vec<Value> = Vec::new();
+
+        loop {
+            let frame = self.recv()?;
+            if frame.channel == channel {
+                let parsed: Value =
+                    serde_json::from_slice(&frame.payload).map_err(FezError::Decode)?;
+                if parsed.is_object() {
+                    meta = parsed;
+                } else if let Value::Array(batch) = parsed {
+                    let remaining = sample_count.saturating_sub(samples.len() as u64) as usize;
+                    samples.extend(batch.into_iter().take(remaining));
+                }
+                // ponytail: real bridge ignores `limit` for direct source
+                // and streams forever; close ourselves once we have enough
+                if samples.len() as u64 >= sample_count {
+                    let _ = self.send_control(&Control::Close {
+                        channel: channel.clone(),
+                        problem: None,
+                    });
+                    return Ok(MetricsSnapshot { meta, samples });
+                }
+            } else if frame.channel.is_empty() {
+                let c: IncomingControl =
+                    serde_json::from_slice(&frame.payload).map_err(FezError::Decode)?;
+                if c.channel.as_deref() != Some(&channel) {
+                    continue;
+                }
+                match c.command.as_str() {
+                    "ready" => {}
+                    "done" => return Ok(MetricsSnapshot { meta, samples }),
+                    "close" => {
+                        if c.problem.as_deref() == Some("not-supported") {
+                            return Err(FezError::DependencyMissing {
+                                component: "pcp".into(),
+                                dbus_name: "metrics1".into(),
+                                remediation: "install the pcp and python3-pcp packages on the \
+                                              target host: sudo dnf install pcp python3-pcp"
+                                    .into(),
+                            });
+                        }
+                        if c.problem.is_some() {
+                            return Err(close_problem_to_error(c.problem));
+                        }
+                        return Ok(MetricsSnapshot { meta, samples });
+                    }
+                    _ => {}
+                }
+            }
+        }
     }
 }
 

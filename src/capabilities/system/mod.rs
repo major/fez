@@ -10,6 +10,7 @@ use crate::capabilities::{render, View};
 use crate::cli::{Cli, SystemAction};
 use crate::error::Result;
 
+mod metrics;
 mod reads;
 
 // ponytail: name == iface for both services, so 4 constants not 6
@@ -35,5 +36,6 @@ fn run(cli: &Cli, action: &SystemAction) -> Result<View> {
     let host = client.host().to_string();
     match action {
         SystemAction::Show => reads::show(&mut client, &host),
+        SystemAction::Metrics => metrics::show(&mut client, &host),
     }
 }

@@ -106,6 +106,16 @@ The system capability gathers a host overview from two universally available sys
 
 Canned fake bridge data: hostname `testbox.example.com`, Fedora 44 Server, QEMU VM, America/Chicago timezone, NTP synchronized. Tests depend on that canned state.
 
+### System Metrics (PCP)
+
+`system metrics` gathers a one-shot performance snapshot from PCP through cockpit-bridge's `metrics1` channel. It opens a `direct` source (local PCP context, no pmcd daemon required), collects 2 samples at 1-second intervals (rate metrics need a delta), and returns CPU, memory, load, disk I/O, and per-interface network throughput.
+
+Requires `pcp` and `python3-pcp` on the target. When PCP is absent, the bridge closes the channel with `not-supported` and fez returns exit 9 with remediation naming both packages.
+
+The real cockpit-bridge ignores `limit` for direct sources and streams indefinitely. The client closes the channel itself once enough samples are collected.
+
+Canned fake bridge data: 3-interface topology (`lo`, `enp1s0`, `enp2s0`), ~3.2% CPU, ~26.8% memory usage, 42.5 disk IOPS. Tests depend on that canned state.
+
 ## Firewall
 
 The firewall capability drives firewalld over `org.fedoraproject.FirewallD1`. Interface discipline matters:

@@ -371,6 +371,8 @@ pub enum NetworkAction {
 pub enum SystemAction {
     /// Show host identity, OS, kernel, hardware, and time/NTP status.
     Show,
+    /// Show a live performance snapshot (CPU, memory, load, disk, network) via PCP.
+    Metrics,
 }
 
 /// Actions under the `storage` subcommand.
