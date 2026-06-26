@@ -270,6 +270,7 @@ mod tests {
                 {"name": "mem.util.available"},
                 {"name": "disk.all.total"},
                 {"name": "network.interface.total.bytes", "instances": ["lo", "eth0"]},
+                {"name": "some.future.metric"},
             ]
         });
         // Sample 0: rate metrics return false
@@ -281,7 +282,8 @@ mod tests {
             16384000,
             8192000,
             false,
-            [false, false]
+            [false, false],
+            false
         ]);
         // Sample 1: rate metrics have values
         let sample1 = json!([
@@ -292,7 +294,8 @@ mod tests {
             16384000,
             8192000,
             42.5,
-            [1024.0, 5120.0]
+            [1024.0, 5120.0],
+            99.0
         ]);
 
         let data = build_data(&meta, &[sample0, sample1]);
@@ -340,6 +343,24 @@ mod tests {
         assert!(human.contains("Disk I/O: 42.5 ops/s"));
         assert!(human.contains("eth0: 5.0 KB/s"));
         assert!(!human.contains("lo:"), "loopback should be filtered");
+    }
+
+    #[test]
+    fn render_human_truncates_long_interface_list() {
+        let mut ifaces = vec![json!({"interface": "lo", "bytes_per_s": 100.0})];
+        for i in 0..8 {
+            ifaces.push(
+                json!({"interface": format!("eth{i}"), "bytes_per_s": (8 - i) as f64 * 1000.0}),
+            );
+        }
+        let data = json!({
+            "load": {}, "cpu": {}, "memory": {}, "disk": {},
+            "network": ifaces,
+        });
+        let human = render_human(&data);
+        assert!(human.contains("eth0:"), "top interface shown");
+        assert!(human.contains("... and 3 more interfaces"));
+        assert!(!human.contains("lo:"), "loopback filtered");
     }
 
     #[test]
