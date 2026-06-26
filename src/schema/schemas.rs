@@ -405,6 +405,37 @@ fn system_overview_schema() -> Value {
     )
 }
 
+/// DNS status schema: two shapes depending on backend.
+///
+/// resolve1 backend returns `global` + `links`; NM fallback returns
+/// `backend`, `mode`, `rc_manager`, `dns_servers`, `interfaces`.
+/// No fields are required at top level so both shapes validate.
+fn dns_status_schema() -> Value {
+    object_schema(json!({}), &[])
+}
+
+fn dns_flush_schema() -> Value {
+    object_schema(json!({"flushed": boolean_prop()}), &["flushed"])
+}
+
+fn dns_query_schema() -> Value {
+    object_schema(
+        json!({
+            "hostname": string_prop(),
+            "canonical": string_prop(),
+            "addresses": array_of(object_schema(
+                json!({
+                    "family": string_prop(),
+                    "address": string_prop(),
+                    "ifindex": integer_prop(),
+                }),
+                &["family", "address", "ifindex"],
+            )),
+        }),
+        &["hostname", "canonical", "addresses"],
+    )
+}
+
 /// Dispatch output kind to its JSON Schema. Adding a new kind requires only a
 /// new named function above and one entry in this match.
 pub(super) fn output_schema(kind: &str) -> Value {
@@ -429,6 +460,9 @@ pub(super) fn output_schema(kind: &str) -> Value {
         "FirewallChange" => firewall_change_schema(),
         "FirewallConfirm" => firewall_confirm_schema(),
         "SystemOverview" => system_overview_schema(),
+        "DnsStatus" => dns_status_schema(),
+        "DnsFlush" => dns_flush_schema(),
+        "DnsQuery" => dns_query_schema(),
         _ => object_schema(json!({}), &[]),
     }
 }

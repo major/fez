@@ -5,6 +5,7 @@ mod fw;
 mod hosttime;
 mod nm;
 mod pk;
+mod resolve;
 mod systemd;
 mod udisks;
 
@@ -130,6 +131,15 @@ fn handle_open(
         .to_string();
     let payload = ctrl.get("payload").and_then(Value::as_str).unwrap_or("");
     let open_name = ctrl.get("name").and_then(Value::as_str).unwrap_or("");
+
+    if std::env::var_os("FEZ_FAKE_NO_RESOLVED").is_some() && open_name == "org.freedesktop.resolve1"
+    {
+        send_control(
+            stdout,
+            &json!({"command":"close","channel":channel,"problem":"not-found"}),
+        );
+        return Ok(());
+    }
 
     if std::env::var_os("FEZ_FAKE_FIREWALLD_UNREACHABLE").is_some()
         && open_name == "org.fedoraproject.FirewallD1"
@@ -289,6 +299,8 @@ fn handle_data(
         fw::fw_reply(path, iface, method, &args, on_privileged, &id)
     } else if path.starts_with("/org/freedesktop/UDisks2") {
         udisks::udisks_reply(path, iface, method, &args, &id)
+    } else if path.starts_with("/org/freedesktop/resolve1") {
+        resolve::resolve_reply(path, iface, method, &args, &id)
     } else if path.starts_with(nm::NM_MGR_PATH) {
         nm::nm_reply(path, method, &id)
     } else if path == pk::PK_PATH && method == "CreateTransaction" {

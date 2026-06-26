@@ -211,6 +211,12 @@ pub enum TopCommand {
         #[command(subcommand)]
         action: StorageAction,
     },
+    /// DNS resolver status and troubleshooting (via systemd-resolved).
+    Dns {
+        /// The `dns` action to perform.
+        #[command(subcommand)]
+        action: DnsAction,
+    },
 }
 
 /// Actions under the `services` subcommand.
@@ -390,6 +396,24 @@ pub enum StorageAction {
         /// Filter by drive model, serial, or path substring.
         #[arg(long)]
         drive: Option<String>,
+    },
+}
+
+/// Actions under the `dns` subcommand.
+#[derive(Subcommand, Debug)]
+pub enum DnsAction {
+    /// Show DNS resolver configuration and cache statistics.
+    Status {
+        /// Include links with no DNS servers configured.
+        #[arg(long)]
+        all: bool,
+    },
+    /// Flush the DNS resolver cache.
+    Flush,
+    /// Resolve a hostname to addresses.
+    Query {
+        /// Hostname to resolve.
+        hostname: String,
     },
 }
 

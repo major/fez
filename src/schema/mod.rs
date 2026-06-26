@@ -6,6 +6,7 @@ use serde_json::{json, Value};
 
 pub mod help;
 
+mod dns;
 mod firewall;
 mod network;
 mod packages;
@@ -301,6 +302,7 @@ pub fn registry() -> Vec<Descriptor> {
     descriptors.extend(firewall::descriptors());
     descriptors.extend(storage::descriptors());
     descriptors.extend(system::descriptors());
+    descriptors.extend(dns::descriptors());
     descriptors
 }
 

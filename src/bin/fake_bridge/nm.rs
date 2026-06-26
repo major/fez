@@ -21,7 +21,26 @@ pub(super) const NM_MGR_PATH: &str = "/org/freedesktop/NetworkManager";
 /// - `/Devices/3` `lo`: loopback (type 32), unmanaged (10).
 /// - `/Devices/9` `veth0`: veth (type 20), unmanaged (10); hidden by the
 ///   default filter, shown only with `--all`.
+const NM_DNS_PATH: &str = "/org/freedesktop/NetworkManager/DnsManager";
+
 pub(super) fn nm_reply(path: &str, method: &str, id: &Value) -> Value {
+    if path == NM_DNS_PATH && method == "GetAll" {
+        return ok_reply(
+            id,
+            json!([{
+                "Mode": {"t": "s", "v": "default"},
+                "RcManager": {"t": "s", "v": "symlink"},
+                "Configuration": {"t": "aa{sv}", "v": [
+                    {
+                        "nameservers": {"t": "as", "v": ["192.168.1.1"]},
+                        "interface": {"t": "s", "v": "enp1s0"},
+                        "priority": {"t": "i", "v": 100},
+                        "vpn": {"t": "b", "v": false}
+                    }
+                ]}
+            }]),
+        );
+    }
     if path == NM_MGR_PATH {
         return match method {
             "GetDevices" => ok_reply(

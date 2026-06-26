@@ -116,6 +116,28 @@ The real cockpit-bridge ignores `limit` for direct sources and streams indefinit
 
 Canned fake bridge data: 3-interface topology (`lo`, `enp1s0`, `enp2s0`), ~3.2% CPU, ~26.8% memory usage, 42.5 disk IOPS. Tests depend on that canned state.
 
+## DNS
+
+The DNS capability has two backends, selected automatically:
+
+**Primary: systemd-resolved** (`org.freedesktop.resolve1`) — full resolver config, cache stats, DNSSEC/DoT status, per-link detail, cache flush, and hostname resolution. Present on Fedora 41+.
+
+**Fallback: NetworkManager DnsManager** (`org.freedesktop.NetworkManager.DnsManager`) — basic DNS server list, mode, and per-interface config. Used automatically when systemd-resolved is absent (e.g. RHEL 10). Flush and query are unavailable on the fallback and return exit 9 with remediation.
+
+Three actions: `dns status`, `dns flush`, and `dns query`.
+
+`dns status` on resolve1 shows global config (DNS servers, DNSSEC, DNS-over-TLS, LLMNR, multicast DNS, resolv.conf mode, cache statistics) plus per-link DNS detail. Default output hides links without DNS servers; `--all` shows every link. On the NM fallback, shows mode, resolv.conf manager, and per-interface DNS servers. The envelope carries `"backend":"networkmanager"` and a hint noting the reduced feature set.
+
+Link objects on resolve1 live at `/org/freedesktop/resolve1/link/<encoded-ifindex>`. Node names use D-Bus label encoding: the leading digit is underscore + two hex chars (ASCII value), remaining chars literal. Link 2 → `_32`, link 14 → `_314`, link 130 → `_3130`. Enumerated via `Introspect` on `/org/freedesktop/resolve1/link`.
+
+Real cockpit-bridge encodes D-Bus `ay` byte arrays as base64 strings; the capability handles both base64 and JSON integer arrays transparently.
+
+`dns flush` calls `FlushCaches()`. Unprivileged (polkit default allows it). Audited as operation `"dns-flush"`. Requires systemd-resolved.
+
+`dns query <hostname>` calls `ResolveHostname(0, name, AF_UNSPEC, 0)`. Returns decoded IPv4/IPv6 addresses. NXDOMAIN maps to exit 4 (`not-found`). Requires systemd-resolved.
+
+Canned fake bridge data: 3 resolve1 links (2 with DNS, 3 and 10 without), global DNS `192.168.1.1` + `fd00::1`, cache stats `(100, 500, 50)`. NM DnsManager fallback: mode `default`, one interface `enp1s0` with `192.168.1.1`. Tests depend on that canned state.
+
 ## Firewall
 
 The firewall capability drives firewalld over `org.fedoraproject.FirewallD1`. Interface discipline matters:

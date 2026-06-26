@@ -339,3 +339,6 @@ pub mod system;
 
 /// UDisks2 storage inspection capability.
 pub mod storage;
+
+/// DNS resolver capability (systemd-resolved).
+pub mod dns;
