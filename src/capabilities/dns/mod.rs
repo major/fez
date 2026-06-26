@@ -4,9 +4,13 @@
 //! detail from `org.freedesktop.resolve1` over cockpit-bridge. Also supports
 //! cache flush and hostname resolution. Read-only except for flush.
 
-use crate::capabilities::{render, View};
+use crate::capabilities::{render, CapabilityContext, View};
 use crate::cli::{Cli, DnsAction};
 use crate::error::{FezError, Result};
+
+mod flush;
+mod model;
+mod reads;
 
 pub(super) const RESOLVE_NAME: &str = "org.freedesktop.resolve1";
 pub(super) const RESOLVE_PATH: &str = "/org/freedesktop/resolve1";
@@ -36,9 +40,22 @@ fn run(cli: &Cli, action: &DnsAction) -> Result<View> {
         },
     )?;
     match action {
-        DnsAction::Status { .. } | DnsAction::Flush | DnsAction::Query { .. } => {
-            drop(channel);
-            todo!("dns capability — wired in next tasks")
+        DnsAction::Status { all } => {
+            let mut ctx = CapabilityContext {
+                client: &mut client,
+                channel: &channel,
+                host: &host,
+            };
+            reads::status(&mut ctx, *all)
+        }
+        DnsAction::Flush => flush::flush(&mut client, &channel, &host),
+        DnsAction::Query { hostname } => {
+            let mut ctx = CapabilityContext {
+                client: &mut client,
+                channel: &channel,
+                host: &host,
+            };
+            reads::query(&mut ctx, hostname)
         }
     }
 }
