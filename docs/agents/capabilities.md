@@ -116,6 +116,22 @@ The real cockpit-bridge ignores `limit` for direct sources and streams indefinit
 
 Canned fake bridge data: 3-interface topology (`lo`, `enp1s0`, `enp2s0`), ~3.2% CPU, ~26.8% memory usage, 42.5 disk IOPS. Tests depend on that canned state.
 
+## DNS
+
+The DNS capability reads `org.freedesktop.resolve1` (systemd-resolved) over the bridge. Three actions: `dns status`, `dns flush`, and `dns query`.
+
+`dns status` shows the global resolver configuration (DNS servers, DNSSEC, DNS-over-TLS, LLMNR, multicast DNS, resolv.conf mode, cache statistics) plus per-link DNS detail. By default only links with DNS servers configured are shown; `--all` includes every link. This mirrors `network list` hiding unmanaged veth interfaces by default.
+
+Link objects live at `/org/freedesktop/resolve1/link/<encoded-ifindex>`. Node names use D-Bus label encoding: the leading digit is underscore + two hex chars (ASCII value), remaining chars literal. Link 2 → `_32`, link 14 → `_314`, link 130 → `_3130`. Enumerated via `Introspect` on `/org/freedesktop/resolve1/link`.
+
+`dns flush` calls `FlushCaches()`. Unprivileged (polkit default allows it). Audited as operation `"dns-flush"` since it destroys cache state.
+
+`dns query <hostname>` calls `ResolveHostname(0, name, AF_UNSPEC, 0)`. Returns decoded IPv4/IPv6 addresses. NXDOMAIN maps to exit 4 (`not-found`).
+
+When systemd-resolved is absent, exit 9 (`dependency-missing`) with remediation: `systemctl enable --now systemd-resolved`.
+
+Canned fake bridge data: 3 links (2 with DNS, 3 and 10 without), global DNS `192.168.1.1` + `fd00::1`, cache stats `(100, 500, 50)`. `ResolveHostname("example.com")` → `93.184.215.14`. Tests depend on that canned state.
+
 ## Firewall
 
 The firewall capability drives firewalld over `org.fedoraproject.FirewallD1`. Interface discipline matters:
