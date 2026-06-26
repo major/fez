@@ -27,19 +27,40 @@ pub fn dispatch(cli: &Cli, action: &DnsAction) -> i32 {
     render(cli, result)
 }
 
+/// The `DependencyMissing` error returned when systemd-resolved is absent.
+fn dependency_missing() -> FezError {
+    FezError::DependencyMissing {
+        component: "systemd-resolved".into(),
+        dbus_name: RESOLVE_NAME.into(),
+        remediation: "systemctl enable --now systemd-resolved".into(),
+    }
+}
+
+/// Map a resolve1 error to `dependency_missing` when the service is absent.
+///
+/// systemd-resolved absence surfaces as:
+/// - `Dbus { ServiceUnknown | NameHasNoOwner }`: name not activatable.
+/// - `Problem("not-found")`: cockpit closed the channel because the name
+///   could not be reached.
+/// - `Problem("not-supported")`: the bus refused the name.
+fn map_resolve_error(e: FezError) -> FezError {
+    match e {
+        FezError::Dbus { ref name, .. } if crate::error::is_service_unknown(name) => {
+            dependency_missing()
+        }
+        FezError::Problem(ref p) if p == "not-found" || p == "not-supported" => {
+            dependency_missing()
+        }
+        other => other,
+    }
+}
+
 /// Connect to the bridge and dispatch the requested action.
 fn run(cli: &Cli, action: &DnsAction) -> Result<View> {
     let mut client = crate::capabilities::connect(cli)?;
     let host = client.host().to_string();
-    let channel = crate::capabilities::map_service_unknown(
-        client.dbus_open(RESOLVE_NAME),
-        || FezError::DependencyMissing {
-            component: "systemd-resolved".into(),
-            dbus_name: RESOLVE_NAME.into(),
-            remediation: "systemctl enable --now systemd-resolved".into(),
-        },
-    )?;
-    match action {
+    let channel = client.dbus_open(RESOLVE_NAME)?;
+    let result = match action {
         DnsAction::Status { all } => {
             let mut ctx = CapabilityContext {
                 client: &mut client,
@@ -57,5 +78,6 @@ fn run(cli: &Cli, action: &DnsAction) -> Result<View> {
             };
             reads::query(&mut ctx, hostname)
         }
-    }
+    };
+    result.map_err(map_resolve_error)
 }

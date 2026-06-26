@@ -109,7 +109,11 @@ fn render_status_human(global: &GlobalDnsConfig, links: &[LinkDnsConfig]) -> Str
         out.push_str(&format!("  Current DNS Server: {current}\n"));
     }
     if !global.dns_servers.is_empty() {
-        let servers: Vec<&str> = global.dns_servers.iter().map(|a| a.address.as_str()).collect();
+        let servers: Vec<&str> = global
+            .dns_servers
+            .iter()
+            .map(|a| a.address.as_str())
+            .collect();
         out.push_str(&format!("       DNS Servers: {}\n", servers.join(" ")));
     }
     out.push_str(&format!(
@@ -148,7 +152,11 @@ fn render_status_human(global: &GlobalDnsConfig, links: &[LinkDnsConfig]) -> Str
             out.push_str(&format!("  Current DNS Server: {current}\n"));
         }
         if !link.dns_servers.is_empty() {
-            let servers: Vec<&str> = link.dns_servers.iter().map(|a| a.address.as_str()).collect();
+            let servers: Vec<&str> = link
+                .dns_servers
+                .iter()
+                .map(|a| a.address.as_str())
+                .collect();
             out.push_str(&format!("       DNS Servers: {}\n", servers.join(" ")));
         }
         out.push_str(&format!("     Default Route: {}\n", link.default_route));
@@ -193,8 +201,11 @@ pub(super) fn query(ctx: &mut CapabilityContext<'_>, hostname: &str) -> Result<V
             if let Some(arr) = entry.as_array() {
                 let ifindex = arr.first().and_then(Value::as_i64).unwrap_or(0);
                 let family = arr.get(1).and_then(Value::as_i64).unwrap_or(0);
-                let bytes: Vec<Value> =
-                    arr.get(2).and_then(Value::as_array).cloned().unwrap_or_default();
+                let bytes: Vec<Value> = arr
+                    .get(2)
+                    .and_then(Value::as_array)
+                    .cloned()
+                    .unwrap_or_default();
                 if let Some(address) = decode_dns_address(family, &bytes) {
                     addresses.push(DnsAddress {
                         family: if family == 2 { "ipv4" } else { "ipv6" }.into(),

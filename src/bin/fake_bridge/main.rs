@@ -132,8 +132,7 @@ fn handle_open(
     let payload = ctrl.get("payload").and_then(Value::as_str).unwrap_or("");
     let open_name = ctrl.get("name").and_then(Value::as_str).unwrap_or("");
 
-    if std::env::var_os("FEZ_FAKE_NO_RESOLVED").is_some()
-        && open_name == "org.freedesktop.resolve1"
+    if std::env::var_os("FEZ_FAKE_NO_RESOLVED").is_some() && open_name == "org.freedesktop.resolve1"
     {
         send_control(
             stdout,

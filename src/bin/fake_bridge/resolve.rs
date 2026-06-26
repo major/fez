@@ -128,10 +128,7 @@ pub fn resolve_reply(path: &str, iface: &str, method: &str, args: &[Value], id: 
             let hostname = args.get(1).and_then(Value::as_str).unwrap_or("");
             if hostname == "example.com" {
                 // a(iiay) s t
-                return ok_reply(
-                    id,
-                    json!([[[0, 2, [93, 184, 215, 14]]], "example.com", 0]),
-                );
+                return ok_reply(id, json!([[[0, 2, [93, 184, 215, 14]]], "example.com", 0]));
             }
             return err_reply(
                 id,

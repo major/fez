@@ -80,14 +80,22 @@ fn unwrap_bool(val: &Value) -> bool {
 pub(super) fn decode_dns_address(family: i64, bytes: &[Value]) -> Option<String> {
     match family {
         2 if bytes.len() == 4 => {
-            let octets: Vec<u8> = bytes.iter().filter_map(Value::as_u64).map(|b| b as u8).collect();
+            let octets: Vec<u8> = bytes
+                .iter()
+                .filter_map(Value::as_u64)
+                .map(|b| b as u8)
+                .collect();
             if octets.len() != 4 {
                 return None;
             }
             Some(Ipv4Addr::from([octets[0], octets[1], octets[2], octets[3]]).to_string())
         }
         10 if bytes.len() == 16 => {
-            let octets: Vec<u8> = bytes.iter().filter_map(Value::as_u64).map(|b| b as u8).collect();
+            let octets: Vec<u8> = bytes
+                .iter()
+                .filter_map(Value::as_u64)
+                .map(|b| b as u8)
+                .collect();
             if octets.len() != 16 {
                 return None;
             }
@@ -100,7 +108,11 @@ pub(super) fn decode_dns_address(family: i64, bytes: &[Value]) -> Option<String>
 }
 
 fn family_label(family: i64) -> &'static str {
-    if family == 2 { "ipv4" } else { "ipv6" }
+    if family == 2 {
+        "ipv4"
+    } else {
+        "ipv6"
+    }
 }
 
 /// Parse a manager DNS array: `a(iiay)` → `(ifindex, family, bytes)`.
