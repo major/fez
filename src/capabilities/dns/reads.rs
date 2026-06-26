@@ -201,12 +201,8 @@ pub(super) fn query(ctx: &mut CapabilityContext<'_>, hostname: &str) -> Result<V
             if let Some(arr) = entry.as_array() {
                 let ifindex = arr.first().and_then(Value::as_i64).unwrap_or(0);
                 let family = arr.get(1).and_then(Value::as_i64).unwrap_or(0);
-                let bytes: Vec<Value> = arr
-                    .get(2)
-                    .and_then(Value::as_array)
-                    .cloned()
-                    .unwrap_or_default();
-                if let Some(address) = decode_dns_address(family, &bytes) {
+                let bytes = arr.get(2).unwrap_or(&Value::Null);
+                if let Some(address) = decode_dns_address(family, bytes) {
                     addresses.push(DnsAddress {
                         family: if family == 2 { "ipv4" } else { "ipv6" }.into(),
                         address,

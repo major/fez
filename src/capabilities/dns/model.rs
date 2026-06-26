@@ -77,34 +77,70 @@ fn unwrap_bool(val: &Value) -> bool {
 ///
 /// Family 2 = `AF_INET` (4 bytes → IPv4), family 10 = `AF_INET6` (16 bytes → IPv6).
 /// Returns `None` for unknown families or mismatched byte lengths.
-pub(super) fn decode_dns_address(family: i64, bytes: &[Value]) -> Option<String> {
+///
+/// The byte array may arrive as either a JSON array of integers (fake bridge)
+/// or a base64-encoded string (real cockpit-bridge encodes `ay` as base64).
+pub(super) fn decode_dns_address(family: i64, bytes: &Value) -> Option<String> {
+    let octets = decode_byte_array(bytes)?;
     match family {
-        2 if bytes.len() == 4 => {
-            let octets: Vec<u8> = bytes
-                .iter()
-                .filter_map(Value::as_u64)
-                .map(|b| b as u8)
-                .collect();
-            if octets.len() != 4 {
-                return None;
-            }
+        2 if octets.len() == 4 => {
             Some(Ipv4Addr::from([octets[0], octets[1], octets[2], octets[3]]).to_string())
         }
-        10 if bytes.len() == 16 => {
-            let octets: Vec<u8> = bytes
-                .iter()
-                .filter_map(Value::as_u64)
-                .map(|b| b as u8)
-                .collect();
-            if octets.len() != 16 {
-                return None;
-            }
+        10 if octets.len() == 16 => {
             let mut arr = [0u8; 16];
             arr.copy_from_slice(&octets);
             Some(Ipv6Addr::from(arr).to_string())
         }
         _ => None,
     }
+}
+
+/// Decode a byte array from either a JSON integer array or a base64 string.
+///
+/// cockpit-bridge encodes D-Bus `ay` values as base64 strings; the fake
+/// bridge uses JSON integer arrays. This handles both transparently.
+fn decode_byte_array(val: &Value) -> Option<Vec<u8>> {
+    match val {
+        Value::Array(arr) => {
+            let bytes: Vec<u8> = arr
+                .iter()
+                .filter_map(Value::as_u64)
+                .map(|b| b as u8)
+                .collect();
+            if bytes.len() == arr.len() {
+                Some(bytes)
+            } else {
+                None
+            }
+        }
+        Value::String(s) => base64_decode(s),
+        _ => None,
+    }
+}
+
+/// Minimal base64 decoder (RFC 4648, no padding required).
+///
+/// ponytail: 15-line stdlib-only decoder avoids adding a base64 crate dep
+/// for one call site. Upgrade to the `base64` crate if a second consumer appears.
+fn base64_decode(input: &str) -> Option<Vec<u8>> {
+    const TABLE: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut buf = Vec::with_capacity(input.len() * 3 / 4);
+    let mut acc: u32 = 0;
+    let mut bits: u32 = 0;
+    for &ch in input.as_bytes() {
+        if ch == b'=' {
+            break;
+        }
+        let val = TABLE.iter().position(|&c| c == ch)? as u32;
+        acc = (acc << 6) | val;
+        bits += 6;
+        if bits >= 8 {
+            bits -= 8;
+            buf.push((acc >> bits) as u8);
+            acc &= (1 << bits) - 1;
+        }
+    }
+    Some(buf)
 }
 
 fn family_label(family: i64) -> &'static str {
@@ -127,8 +163,8 @@ pub(super) fn parse_manager_dns_array(val: &Value) -> Vec<DnsAddress> {
             let entry = entry.as_array()?;
             let ifindex = entry.first()?.as_i64()?;
             let family = entry.get(1)?.as_i64()?;
-            let bytes: Vec<Value> = entry.get(2)?.as_array()?.clone();
-            let address = decode_dns_address(family, &bytes)?;
+            let bytes = entry.get(2)?;
+            let address = decode_dns_address(family, bytes)?;
             Some(DnsAddress {
                 family: family_label(family).into(),
                 address,
@@ -149,8 +185,8 @@ pub(super) fn parse_link_dns_array(val: &Value) -> Vec<DnsAddress> {
         .filter_map(|entry| {
             let entry = entry.as_array()?;
             let family = entry.first()?.as_i64()?;
-            let bytes: Vec<Value> = entry.get(1)?.as_array()?.clone();
-            let address = decode_dns_address(family, &bytes)?;
+            let bytes = entry.get(1)?;
+            let address = decode_dns_address(family, bytes)?;
             Some(DnsAddress {
                 family: family_label(family).into(),
                 address,
@@ -165,12 +201,10 @@ fn parse_current_server(val: &Value, manager: bool) -> Option<String> {
     let arr = unwrap_variant(val).as_array()?;
     if manager {
         let family = arr.get(1)?.as_i64()?;
-        let bytes: Vec<Value> = arr.get(2)?.as_array()?.clone();
-        decode_dns_address(family, &bytes)
+        decode_dns_address(family, arr.get(2)?)
     } else {
         let family = arr.first()?.as_i64()?;
-        let bytes: Vec<Value> = arr.get(1)?.as_array()?.clone();
-        decode_dns_address(family, &bytes)
+        decode_dns_address(family, arr.get(1)?)
     }
 }
 
@@ -254,28 +288,41 @@ mod tests {
 
     #[test]
     fn decode_ipv4() {
-        let addr = decode_dns_address(2, &[json!(192), json!(168), json!(1), json!(1)]);
+        let addr = decode_dns_address(2, &json!([192, 168, 1, 1]));
         assert_eq!(addr, Some("192.168.1.1".into()));
     }
 
     #[test]
     fn decode_ipv6() {
-        let bytes: Vec<Value> = [253, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1]
-            .iter()
-            .map(|&b| json!(b))
-            .collect();
-        let addr = decode_dns_address(10, &bytes);
+        let addr = decode_dns_address(
+            10,
+            &json!([253, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1]),
+        );
         assert_eq!(addr, Some("fd00::1".into()));
     }
 
     #[test]
     fn decode_unknown_family_returns_none() {
-        assert_eq!(decode_dns_address(99, &[]), None);
+        assert_eq!(decode_dns_address(99, &json!([])), None);
     }
 
     #[test]
     fn decode_wrong_length_returns_none() {
-        assert_eq!(decode_dns_address(2, &[json!(1), json!(2)]), None);
+        assert_eq!(decode_dns_address(2, &json!([1, 2])), None);
+    }
+
+    #[test]
+    fn decode_ipv4_base64() {
+        // cockpit-bridge sends ay as base64: 192.168.10.1 = wKgKAQ==
+        let addr = decode_dns_address(2, &json!("wKgKAQ=="));
+        assert_eq!(addr, Some("192.168.10.1".into()));
+    }
+
+    #[test]
+    fn decode_ipv6_base64() {
+        // fd00::1 = /QAAAAAAAAAAAAAAAAAAAT
+        let addr = decode_dns_address(10, &json!("/QAAAAAAAAAAAAAAAAAAAQ=="));
+        assert_eq!(addr, Some("fd00::1".into()));
     }
 
     #[test]
