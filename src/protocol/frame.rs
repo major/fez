@@ -65,6 +65,13 @@ pub fn read_frame<R: Read>(r: &mut R) -> io::Result<Option<Frame>> {
         .ok()
         .and_then(|s| s.trim().parse().ok())
         .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "bad frame length"))?;
+    const MAX_FRAME: usize = 16 * 1024 * 1024;
+    if len > MAX_FRAME {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "frame too large",
+        ));
+    }
     let mut message = vec![0u8; len];
     r.read_exact(&mut message)?;
     let nl = message.iter().position(|&b| b == b'\n').ok_or_else(|| {
@@ -113,6 +120,16 @@ mod tests {
             assert_eq!(read_frame(&mut cur).unwrap().unwrap(), *f);
         }
         assert_eq!(read_frame(&mut cur).unwrap(), None); // clean EOF
+    }
+
+    #[test]
+    fn rejects_oversized_frame() {
+        // A length prefix claiming 17 MB must be rejected before allocation.
+        let header = format!("{}\n", 17 * 1024 * 1024);
+        let mut cur = Cursor::new(header.into_bytes());
+        let err = read_frame(&mut cur).unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+        assert!(err.to_string().contains("too large"));
     }
 
     #[test]

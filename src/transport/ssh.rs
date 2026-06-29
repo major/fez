@@ -36,8 +36,8 @@ impl Transport for SshTransport {
             .arg("ControlPersist=60")
             .arg("-o")
             .arg("ControlPath=~/.ssh/fez-%r@%h:%p")
-            .arg(&self.target)
             .arg("--")
+            .arg(&self.target)
             .arg("cockpit-bridge");
         cmd
     }
@@ -61,9 +61,10 @@ mod tests {
             .collect();
         assert!(args.windows(2).any(|w| w == ["-o", "BatchMode=yes"]));
         assert!(args.contains(&"fedora@host.example".to_string()));
-        // bridge invocation after a literal `--`
+        // target and bridge invocation both after `--` (prevents option injection)
         let dd = args.iter().position(|a| a == "--").unwrap();
-        assert_eq!(args[dd + 1], "cockpit-bridge");
+        assert_eq!(args[dd + 1], "fedora@host.example");
+        assert_eq!(args[dd + 2], "cockpit-bridge");
     }
 
     #[test]
