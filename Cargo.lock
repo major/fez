@@ -305,6 +305,7 @@ dependencies = [
  "assert_cmd",
  "clap",
  "clap_mangen",
+ "libc",
  "predicates",
  "serde",
  "serde_json",
