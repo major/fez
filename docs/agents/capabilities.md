@@ -42,7 +42,7 @@ Later, the client reads the internal `cockpit.Superuser` `Bridges` property and 
 
 Real standalone `cockpit-bridge` without `cockpit-system` advertises zero superuser bridges. Escalation requires `cockpit-system` plus passwordless sudo or a suitable polkit rule. `fez` does not supply sudo passwords.
 
-`FEZ_ESCALATION=off` disables escalation. Any other value forces that single mechanism with no fall-through.
+`FEZ_ESCALATION=off` disables escalation. Any other non-empty value forces that single mechanism with no fall-through only when it is a safe known mechanism advertised by the bridge.
 
 ## Services
 
