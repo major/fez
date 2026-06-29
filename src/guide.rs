@@ -24,9 +24,7 @@ pub fn text() -> String {
     for e in EXIT_CODES {
         s.push_str(&format!("  {:>2}  {:<14} {}\n", e.code, e.label, e.meaning));
     }
-    s.push_str(
-        "\nEnv vars: FEZ_BRIDGE, FEZ_AUDIT, FEZ_SSH_CONFIG, FEZ_ACTOR, FEZ_CORRELATION_ID.\n",
-    );
+    s.push_str("\nEnv vars: FEZ_ESCALATION, FEZ_SSH_CONFIG.\n");
     s
 }
 
@@ -48,11 +46,8 @@ pub fn data() -> serde_json::Value {
             "code": e.code, "label": e.label, "meaning": e.meaning
         })).collect::<Vec<_>>(),
         "envVars": [
-            "FEZ_BRIDGE",
-            "FEZ_AUDIT",
-            "FEZ_SSH_CONFIG",
-            "FEZ_ACTOR",
-            "FEZ_CORRELATION_ID"
+            "FEZ_ESCALATION",
+            "FEZ_SSH_CONFIG"
         ]
     })
 }

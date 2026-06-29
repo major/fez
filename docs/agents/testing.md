@@ -107,7 +107,7 @@ Firewalld fake bridge contracts:
 - Teardown is a single `EXIT` trap that destroys the shared Terraform stack, including tainted hosts.
 - Failures are not auto-filed as issues; forensics are printed inline to the matrix log.
 - Runs write `test/e2e/logs/matrix-<ts>.log` and update `test/e2e/logs/last-run.log`; inspect the log on failure.
-- SSH behavior is pinned with `FEZ_SSH_CONFIG` because OpenSSH ignores `$HOME/.ssh/config` non-interactively.
+- SSH behavior is pinned with `FEZ_SSH_CONFIG` because OpenSSH ignores `$HOME/.ssh/config` non-interactively. The path must be absolute and under `/etc/fez/` or `/run/fez/`.
 - AWS credential preflight uses `aws sts get-caller-identity` and exits 2 when credentials are unavailable.
 - E2E provisioning hard-requires `cockpit-bridge cockpit-system firewalld`.
 - `dnf5daemon-server` is installed only for OSes where it exists. RHEL 10 lacks it; current package capability E2E treats exit 9 as `skip`, though the PackageKit fallback should be revisited in follow-up work.

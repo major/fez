@@ -244,14 +244,20 @@ pub(super) fn session_port_from(ssh_connection: &str) -> Option<u16> {
     ssh_connection.split_whitespace().nth(3)?.parse().ok()
 }
 
-/// The session-critical port set, derived live from `$SSH_CONNECTION`.
-/// Empty when fez is invoked locally (no SSH session).
+fn session_ports_from(ssh_connection: Option<&str>) -> Vec<u16> {
+    let mut ports = vec![22];
+    if let Some(port) = ssh_connection.and_then(session_port_from) {
+        if port != 22 {
+            ports.push(port);
+        }
+    }
+    ports
+}
+
+/// The session-critical port set: the default SSH port plus any server-side
+/// port parsed from `$SSH_CONNECTION`.
 pub(super) fn session_ports() -> Vec<u16> {
-    std::env::var("SSH_CONNECTION")
-        .ok()
-        .and_then(|c| session_port_from(&c))
-        .into_iter()
-        .collect()
+    session_ports_from(std::env::var("SSH_CONNECTION").ok().as_deref())
 }
 
 #[cfg(test)]
@@ -412,5 +418,18 @@ mod tests {
     #[test]
     fn session_services_always_includes_ssh() {
         assert_eq!(session_services(), vec!["ssh".to_string()]);
+    }
+
+    #[test]
+    fn session_ports_always_include_ssh_default_port() {
+        assert_eq!(session_ports_from(None), vec![22]);
+        assert_eq!(
+            session_ports_from(Some("10.0.0.1 5520 10.0.0.2 22")),
+            vec![22]
+        );
+        assert_eq!(
+            session_ports_from(Some("10.0.0.1 5520 10.0.0.2 2222")),
+            vec![22, 2222]
+        );
     }
 }

@@ -1,7 +1,7 @@
 //! Structured audit for mutations (Section 8, layer 4). Records are written to a
 //! pluggable sink; the default writes to the systemd journal via its native
-//! protocol over a datagram socket. Selection is via the `FEZ_AUDIT` env var:
-//!   unset | "journal" -> journal   "off" | "0" -> no-op   "file:<path>" -> JSON lines
+//! protocol over a datagram socket. Debug/test builds may select `off` or
+//! `file:<path>` via `FEZ_AUDIT`; release builds keep journald.
 use serde::Serialize;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -176,11 +176,21 @@ where
     result
 }
 
-/// The actor identity, best-effort from the environment.
+/// The actor identity from OS user ids, not spoofable environment names.
 pub fn actor() -> String {
-    std::env::var("USER")
-        .or_else(|_| std::env::var("LOGNAME"))
-        .unwrap_or_else(|_| "unknown".into())
+    // SAFETY: `getuid` has no preconditions and does not access Rust-managed memory.
+    let uid = unsafe { libc::getuid() };
+    // SAFETY: `geteuid` has no preconditions and does not access Rust-managed memory.
+    let euid = unsafe { libc::geteuid() };
+    actor_from_uids(uid, euid)
+}
+
+fn actor_from_uids(uid: libc::uid_t, euid: libc::uid_t) -> String {
+    if uid == euid {
+        format!("uid:{uid}")
+    } else {
+        format!("uid:{uid} euid:{euid}")
+    }
 }
 
 /// A best-effort-unique correlation id for one invocation's records.
@@ -256,11 +266,19 @@ pub struct FileSink {
 impl AuditSink for FileSink {
     fn write(&self, rec: &AuditRecord) {
         use std::io::Write;
+        use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
         if let Ok(mut f) = std::fs::OpenOptions::new()
             .create(true)
             .append(true)
+            .mode(0o600)
+            .custom_flags(libc::O_CLOEXEC | libc::O_NOFOLLOW)
             .open(&self.path)
         {
+            if f.set_permissions(std::fs::Permissions::from_mode(0o600))
+                .is_err()
+            {
+                return;
+            }
             if let Ok(line) = serde_json::to_string(rec) {
                 let _ = writeln!(f, "{line}");
             }
@@ -280,14 +298,35 @@ impl AuditSink for JournalSink {
     }
 }
 
-/// Select a sink from the `FEZ_AUDIT` environment variable.
+#[derive(Debug, PartialEq, Eq)]
+enum SinkSelection {
+    Journal,
+    Noop,
+    File(std::path::PathBuf),
+}
+
+fn select_sink(raw: Option<&str>, allow_unsafe_env: bool) -> SinkSelection {
+    if !allow_unsafe_env {
+        return SinkSelection::Journal;
+    }
+    match raw {
+        Some("off") | Some("0") => SinkSelection::Noop,
+        Some(v) if v.starts_with("file:") => {
+            SinkSelection::File(std::path::PathBuf::from(&v["file:".len()..]))
+        }
+        _ => SinkSelection::Journal,
+    }
+}
+
+/// Select a sink from the `FEZ_AUDIT` environment variable in debug/test builds.
 pub fn sink_from_env() -> Box<dyn AuditSink> {
-    match std::env::var("FEZ_AUDIT").ok().as_deref() {
-        Some("off") | Some("0") => Box::new(NoopSink),
-        Some(v) if v.starts_with("file:") => Box::new(FileSink {
-            path: std::path::PathBuf::from(&v["file:".len()..]),
-        }),
-        _ => Box::new(JournalSink),
+    match select_sink(
+        std::env::var("FEZ_AUDIT").ok().as_deref(),
+        cfg!(debug_assertions),
+    ) {
+        SinkSelection::Journal => Box::new(JournalSink),
+        SinkSelection::Noop => Box::new(NoopSink),
+        SinkSelection::File(path) => Box::new(FileSink { path }),
     }
 }
 
@@ -379,6 +418,52 @@ mod tests {
         assert_eq!(lines.len(), 2);
         assert!(lines[0].contains("\"result\":\"attempt\""));
         assert!(lines[1].contains("\"result\":\"ok\""));
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn actor_uses_numeric_uids_not_environment_names() {
+        assert_eq!(actor_from_uids(1000, 1000), "uid:1000");
+        assert_eq!(actor_from_uids(1000, 0), "uid:1000 euid:0");
+    }
+
+    #[test]
+    fn release_audit_sink_ignores_env_overrides() {
+        assert_eq!(select_sink(Some("off"), false), SinkSelection::Journal);
+        assert_eq!(
+            select_sink(Some("file:/tmp/fez-audit.jsonl"), false),
+            SinkSelection::Journal
+        );
+    }
+
+    #[test]
+    fn file_sink_refuses_symlink() {
+        let target = audit_temp_path("symlink-target");
+        let link = audit_temp_path("symlink-link");
+        let _ = std::fs::remove_file(&target);
+        let _ = std::fs::remove_file(&link);
+        std::fs::write(&target, "").unwrap();
+        std::os::unix::fs::symlink(&target, &link).unwrap();
+
+        FileSink { path: link.clone() }.write(&rec("ok", None));
+
+        assert_eq!(std::fs::read_to_string(&target).unwrap(), "");
+        let _ = std::fs::remove_file(&link);
+        let _ = std::fs::remove_file(&target);
+    }
+
+    #[test]
+    fn file_sink_tightens_existing_permissions() {
+        use std::os::unix::fs::PermissionsExt;
+        let path = audit_temp_path("perms");
+        let _ = std::fs::remove_file(&path);
+        std::fs::write(&path, "").unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o666)).unwrap();
+
+        FileSink { path: path.clone() }.write(&rec("ok", None));
+
+        let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600);
         let _ = std::fs::remove_file(&path);
     }
 

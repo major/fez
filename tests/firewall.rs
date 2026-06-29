@@ -139,6 +139,16 @@ fn remove_port_succeeds() {
         .stdout(contains("fez firewall confirm"));
 }
 
+#[test]
+fn remove_ssh_port_requires_force_without_ssh_connection() {
+    let mut cmd = fez_fake();
+    cmd.env_remove("SSH_CONNECTION");
+    cmd.args(["firewall", "remove-port", "22/tcp", "--json"])
+        .assert()
+        .code(8)
+        .stdout(contains("\"code\":\"protected-unit\""));
+}
+
 // After a removal, a follow-up runtime read no longer lists the port. The fake
 // bridge models the post-removal runtime state via FEZ_FAKE_PORT_REMOVED, so the
 // drift port 9090/tcp is gone from the public zone.

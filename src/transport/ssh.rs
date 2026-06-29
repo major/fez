@@ -1,4 +1,5 @@
 use super::Transport;
+use std::path::{Component, Path};
 use std::process::Command;
 
 /// Runs the bridge on a remote host over SSH, reusing a multiplexed connection.
@@ -10,14 +11,25 @@ pub struct SshTransport {
     config: Option<String>,
 }
 
+fn ssh_config_from_env(raw: Option<String>) -> Option<String> {
+    raw.filter(|path| safe_ssh_config_path(path))
+}
+
+fn safe_ssh_config_path(path: &str) -> bool {
+    let path = Path::new(path);
+    path.is_absolute()
+        && (path.starts_with("/etc/fez") || path.starts_with("/run/fez"))
+        && !path
+            .components()
+            .any(|component| component == Component::ParentDir)
+}
+
 impl SshTransport {
     /// Build a transport for `target` (host, user@host, or ssh_config alias).
     pub fn new(target: &str) -> Self {
         SshTransport {
             target: target.to_string(),
-            config: std::env::var("FEZ_SSH_CONFIG")
-                .ok()
-                .filter(|s| !s.is_empty()),
+            config: ssh_config_from_env(std::env::var("FEZ_SSH_CONFIG").ok()),
         }
     }
 }
@@ -101,5 +113,14 @@ mod tests {
             .map(|a| a.to_string_lossy().into_owned())
             .collect();
         assert!(!args.iter().any(|a| a == "-F"), "unexpected -F in {args:?}");
+    }
+
+    #[test]
+    fn env_config_rejects_untrusted_paths() {
+        assert_eq!(ssh_config_from_env(Some("/tmp/evil".into())), None);
+        assert_eq!(
+            ssh_config_from_env(Some("/etc/fez/ssh_config".into())),
+            Some("/etc/fez/ssh_config".into())
+        );
     }
 }

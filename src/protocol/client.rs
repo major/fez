@@ -37,6 +37,7 @@ const SUPERUSER_IFACE: &str = "cockpit.Superuser";
 /// action. The message names both mechanisms so the operator knows either path
 /// is viable.
 const ESCALATION_REMEDIATION: &str = "fez could not escalate to root: no superuser mechanism succeeded. Install the cockpit-system package (it ships the sudo/pkexec superuser bridge definitions), then either configure passwordless sudo (NOPASSWD) for this user or grant a polkit rule allowing this user the privileged cockpit action, and retry. fez does not supply sudo passwords";
+const SAFE_ESCALATION_MECHANISMS: &[&str] = &["sudo", "pkexec", "polkit"];
 
 /// A single PCP metric to request from the bridge's `metrics1` channel.
 pub struct MetricRequest<'a> {
@@ -203,13 +204,15 @@ impl BridgeClient {
     /// [`BridgeClient::superuser_start`] in order until one succeeds, so a host
     /// with password-only sudo but a working polkit rule still escalates. The
     /// `FEZ_ESCALATION` environment variable overrides the default loop:
-    /// `off` disables escalation, and any other value forces that single
-    /// mechanism (no fall-through). Idempotent: a no-op once escalated.
+    /// `off` disables escalation, and any other non-empty value forces that
+    /// single mechanism only when it is safe and bridge-advertised (no
+    /// fall-through). Idempotent: a no-op once escalated.
     ///
     /// # Errors
     ///
     /// Returns [`FezError::AccessDenied`] (exit 11) when no mechanism succeeds,
-    /// when the host advertises none, or when `FEZ_ESCALATION=off`. Propagates
+    /// when the host advertises none, when `FEZ_ESCALATION=off`, or when
+    /// `FEZ_ESCALATION` names an unsafe or non-advertised mechanism. Propagates
     /// any non-`Dbus` transport error encountered while talking to the bridge.
     pub fn escalate(&mut self) -> Result<()> {
         if self.escalated {
@@ -218,26 +221,31 @@ impl BridgeClient {
         let denied = || FezError::AccessDenied {
             remediation: ESCALATION_REMEDIATION.into(),
         };
-        match std::env::var("FEZ_ESCALATION").ok().as_deref() {
+        let forced = std::env::var("FEZ_ESCALATION").ok();
+        if forced.as_deref() == Some("off") {
             // Never escalate. Mutations fail; reads are unaffected because they
             // never call escalate().
-            Some("off") => return Err(denied()),
-            // Force a single named mechanism with no fall-through.
-            Some(name) if !name.is_empty() => {
-                return match self.superuser_start(name) {
-                    Ok(()) => {
-                        self.escalated = true;
-                        Ok(())
-                    }
-                    Err(FezError::Dbus { .. }) => Err(denied()),
-                    Err(e) => Err(e),
-                };
-            }
-            // Empty or unset: default transparent loop below.
-            _ => {}
+            return Err(denied());
         }
         let names = self.superuser_bridges()?;
+        if let Some(name) = forced.as_deref().filter(|name| !name.is_empty()) {
+            // Force a single safe, advertised mechanism with no fall-through.
+            if !forced_escalation_is_advertised(name, &names) {
+                return Err(denied());
+            }
+            return match self.superuser_start(name) {
+                Ok(()) => {
+                    self.escalated = true;
+                    Ok(())
+                }
+                Err(FezError::Dbus { .. }) => Err(denied()),
+                Err(e) => Err(e),
+            };
+        }
         for name in names {
+            if !safe_escalation_mechanism(&name) {
+                continue;
+            }
             match self.superuser_start(&name) {
                 Ok(()) => {
                     self.escalated = true;
@@ -591,6 +599,14 @@ impl Drop for BridgeClient {
 ///
 /// Returns the inner `"v"` value from `{"t":"...", "v":...}`, or the
 /// original value if the envelope is absent.
+fn safe_escalation_mechanism(name: &str) -> bool {
+    SAFE_ESCALATION_MECHANISMS.contains(&name)
+}
+
+fn forced_escalation_is_advertised(name: &str, advertised: &[String]) -> bool {
+    safe_escalation_mechanism(name) && advertised.iter().any(|advertised| advertised == name)
+}
+
 pub(crate) fn variant_value(v: &Value) -> &Value {
     v.get("v").unwrap_or(v)
 }
@@ -609,5 +625,18 @@ fn close_problem_to_error(problem: Option<String>) -> FezError {
         },
         Some(p) => FezError::Problem(p),
         None => FezError::Problem("channel-closed".into()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn forced_escalation_must_be_advertised() {
+        let advertised = vec!["sudo".to_string(), "polkit".to_string()];
+        assert!(forced_escalation_is_advertised("sudo", &advertised));
+        assert!(!forced_escalation_is_advertised("pkexec", &advertised));
+        assert!(!forced_escalation_is_advertised("../../evil", &advertised));
     }
 }
