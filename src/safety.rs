@@ -24,7 +24,11 @@ fn matches_pattern(pattern: &str, unit: &str) -> bool {
 
 /// The first protected pattern this unit matches, if any.
 pub fn protected_match(unit: &str) -> Option<&'static str> {
-    PROTECTED.iter().copied().find(|p| matches_pattern(p, unit))
+    let base = std::path::Path::new(unit)
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or(unit);
+    PROTECTED.iter().copied().find(|p| matches_pattern(p, base))
 }
 
 /// Refuse a mutation on a protected unit unless `force` is set.
@@ -224,6 +228,16 @@ mod tests {
         assert_eq!(protected_match("cockpit.socket"), Some("cockpit*"));
         assert_eq!(protected_match("fez.service"), Some("fez*"));
         assert_eq!(protected_match("chronyd.service"), None);
+    }
+
+    #[test]
+    fn matches_absolute_path_by_basename() {
+        assert_eq!(protected_match("/tmp/sshd.service"), Some("sshd.service"));
+        assert_eq!(
+            protected_match("/etc/systemd/system/cockpit.socket"),
+            Some("cockpit*")
+        );
+        assert_eq!(protected_match("/tmp/chronyd.service"), None);
     }
 
     #[test]
