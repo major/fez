@@ -50,6 +50,12 @@ impl Transport for SshTransport {
             // - PasswordAuthentication=no: never fall back to keyboard-interactive
             //   or password auth even if the user's config allows it.  fez is an
             //   agent-driven tool; credentials belong in ssh-agent or key files.
+            // - IdentitiesOnly=yes: only offer keys explicitly listed in
+            //   IdentityFile / CertificateFile directives (or the ssh_config
+            //   the user supplies via FEZ_SSH_CONFIG).  Without this, ssh offers
+            //   every key in the agent, which can hit MaxAuthTries on the target
+            //   and lock the user out — common in enterprise environments with
+            //   many identities loaded.
             // - SSH processes command-line -o options with higher precedence than
             //   any -F config, so these override user-level settings regardless
             //   of argument order.
@@ -57,6 +63,8 @@ impl Transport for SshTransport {
             .arg("StrictHostKeyChecking=yes")
             .arg("-o")
             .arg("PasswordAuthentication=no")
+            .arg("-o")
+            .arg("IdentitiesOnly=yes")
             .arg("-o")
             .arg("ControlMaster=auto")
             .arg("-o")
@@ -93,6 +101,7 @@ mod tests {
         assert!(args
             .windows(2)
             .any(|w| w == ["-o", "PasswordAuthentication=no"]));
+        assert!(args.windows(2).any(|w| w == ["-o", "IdentitiesOnly=yes"]));
         assert!(args.contains(&"fedora@host.example".to_string()));
         // target and bridge invocation both after `--` (prevents option injection)
         let dd = args.iter().position(|a| a == "--").unwrap();
@@ -166,6 +175,11 @@ mod tests {
         assert!(
             strict_pos > config_pos,
             "StrictHostKeyChecking appeared at index {strict_pos}, must be after -F at index {config_pos}"
+        );
+        let ident_pos = args.iter().position(|a| a == "IdentitiesOnly=yes").unwrap();
+        assert!(
+            ident_pos > config_pos,
+            "IdentitiesOnly appeared at index {ident_pos}, must be after -F at index {config_pos}"
         );
     }
 }
