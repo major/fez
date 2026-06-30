@@ -3,6 +3,7 @@
 mod dnf;
 mod fw;
 mod hosttime;
+mod logind;
 mod nm;
 mod pk;
 mod resolve;
@@ -311,6 +312,8 @@ fn handle_data(
     } else if path == pk::PK_TX_PATH {
         pk::pk_emit(stdout, &frame.channel, method);
         return;
+    } else if path.starts_with("/org/freedesktop/login1") {
+        logind::logind_reply(path, iface, method, &args, &id)
     } else if dnf_options_method {
         if let Some(err) = dnf::reject_unwrapped_options(&args, &id) {
             send_data(stdout, &frame.channel, &err);

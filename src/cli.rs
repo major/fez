@@ -379,6 +379,15 @@ pub enum SystemAction {
     Show,
     /// Show a live performance snapshot (CPU, memory, load, disk, network) via PCP.
     Metrics,
+    /// List active login sessions.
+    Sessions,
+    /// List logged-in users.
+    Users,
+    /// List shutdown/sleep inhibitors.
+    Inhibitors,
+    /// List boot loader entries.
+    #[command(name = "boot-entries")]
+    BootEntries,
 }
 
 /// Actions under the `storage` subcommand.

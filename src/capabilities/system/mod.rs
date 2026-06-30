@@ -12,6 +12,7 @@ use crate::error::Result;
 
 mod metrics;
 mod reads;
+mod sessions;
 
 // ponytail: name == iface for both services, so 4 constants not 6
 pub(super) const HOSTNAME_NAME: &str = "org.freedesktop.hostname1";
@@ -40,5 +41,9 @@ fn run(cli: &Cli, action: &SystemAction) -> Result<View> {
     match action {
         SystemAction::Show => reads::show(&mut client, &host),
         SystemAction::Metrics => metrics::show(&mut client, &host),
+        SystemAction::Sessions => sessions::list(&mut client, &host),
+        SystemAction::Users => sessions::users(&mut client, &host),
+        SystemAction::Inhibitors => sessions::inhibitors(&mut client, &host),
+        SystemAction::BootEntries => sessions::boot_entries(&mut client, &host),
     }
 }
