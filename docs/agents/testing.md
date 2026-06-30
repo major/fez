@@ -62,6 +62,8 @@ Firewalld fake bridge contracts:
 | `FEZ_FAKE_PORT_REMOVED` | Drops `9090/tcp` from runtime `public`, modeling post-remove-port state. |
 | `FEZ_FAKE_CONFIG_INFO_DENIED` | Denies permanent firewalld `config.info` reads after escalation; `firewall status` should return partial runtime status with hints, and `firewall reload` should require `--force`. |
 | `FEZ_FAKE_CONFIG_UNKNOWN_METHOD` | Returns `UnknownMethod` from the permanent firewalld config root, used to prove only `config.info` denial is converted into the reload guard. |
+| `FEZ_FAKE_NO_RHSM` | Makes `com.redhat.RHSM1` channel open fail with `not-found`. Simulates Fedora or missing subscription-manager. |
+| `FEZ_FAKE_NO_FWUPD` | Makes `org.freedesktop.fwupd` channel open fail with `not-found`. Simulates missing fwupd. |
 
 ## Compact JSON Assertions
 

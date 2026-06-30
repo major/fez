@@ -379,6 +379,52 @@ pub enum SystemAction {
     Show,
     /// Show a live performance snapshot (CPU, memory, load, disk, network) via PCP.
     Metrics,
+    /// List active login sessions.
+    Sessions,
+    /// List logged-in users.
+    Users,
+    /// List shutdown/sleep inhibitors.
+    Inhibitors,
+    /// List boot loader entries.
+    #[command(name = "boot-entries")]
+    BootEntries,
+    /// Reboot the host (requires --force).
+    Reboot {
+        /// Confirm the reboot.
+        #[arg(long)]
+        force: bool,
+    },
+    /// Power off the host (requires --force).
+    Poweroff {
+        /// Confirm the power-off.
+        #[arg(long)]
+        force: bool,
+    },
+    /// Suspend the host (requires --force).
+    Suspend {
+        /// Confirm the suspend.
+        #[arg(long)]
+        force: bool,
+    },
+    /// Show RHEL subscription status (RHEL only).
+    Subscription,
+    /// Inspect firmware devices, security posture, and available upgrades (via fwupd).
+    Firmware {
+        /// The `firmware` action to perform.
+        #[command(subcommand)]
+        action: FirmwareAction,
+    },
+}
+
+/// Actions under the `system firmware` subcommand.
+#[derive(Subcommand, Debug)]
+pub enum FirmwareAction {
+    /// List firmware devices.
+    List,
+    /// Show host firmware security posture (HSI).
+    Security,
+    /// List available firmware upgrades.
+    Upgrades,
 }
 
 /// Actions under the `storage` subcommand.

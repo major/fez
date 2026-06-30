@@ -1,6 +1,9 @@
 //! Read-only system overview: hostname + time gathered in a single command.
 
-use super::{HOSTNAME_NAME, HOSTNAME_PATH, PROPS_IFACE, TIMEDATE_NAME, TIMEDATE_PATH};
+use super::{
+    HOSTNAME_NAME, HOSTNAME_PATH, LOCALE_NAME, LOCALE_PATH, PROPS_IFACE, TIMEDATE_NAME,
+    TIMEDATE_PATH,
+};
 use crate::capabilities::View;
 use crate::error::{FezError, Result};
 use crate::protocol::client::{variant_value, BridgeClient};
@@ -8,14 +11,16 @@ use serde_json::{json, Value};
 
 /// Gather the full system overview and return a `SystemOverview` view.
 ///
-/// Opens two unprivileged D-Bus channels (hostname1 and timedate1), calls
-/// `hostname1.Describe()` for identity/hardware/OS and `timedate1 GetAll`
-/// for time/NTP, then merges both into a single flat overview.
+/// Opens three unprivileged D-Bus channels (hostname1, timedate1, and locale1),
+/// calls `hostname1.Describe()` for identity/hardware/OS, `timedate1 GetAll`
+/// for time/NTP, and `locale1 GetAll` for locale/keyboard settings, then merges
+/// all three into a single flat overview.
 pub(super) fn show(client: &mut BridgeClient, host: &str) -> Result<View> {
     let hostname = gather_hostname(client)?;
     let time = gather_time(client)?;
+    let locale = gather_locale(client)?;
 
-    let data = merge_overview(&hostname, &time);
+    let data = merge_overview(&hostname, &time, &locale);
     let human = render_human(&data);
 
     Ok(View::new("SystemOverview", host, data, human))
@@ -59,6 +64,21 @@ fn gather_time(client: &mut BridgeClient) -> Result<Value> {
     out.get(0)
         .cloned()
         .ok_or_else(|| FezError::Problem("timedate1 GetAll returned no value".into()))
+}
+
+/// Read `locale1` properties via `GetAll`.
+fn gather_locale(client: &mut BridgeClient) -> Result<Value> {
+    let channel = client.dbus_open(LOCALE_NAME)?;
+    let out = client.dbus_call(
+        &channel,
+        LOCALE_PATH,
+        PROPS_IFACE,
+        "GetAll",
+        json!([LOCALE_NAME]),
+    )?;
+    out.get(0)
+        .cloned()
+        .ok_or_else(|| FezError::Problem("locale1 GetAll returned no value".into()))
 }
 
 /// Convert microsecond timestamps to ISO 8601 UTC strings.
@@ -122,8 +142,8 @@ fn time_usec(time: &Value, key: &str) -> u64 {
         .unwrap_or(0)
 }
 
-/// Merge hostname and time data into the unified overview object.
-fn merge_overview(hostname: &Value, time: &Value) -> Value {
+/// Merge hostname, time, and locale data into the unified overview object.
+fn merge_overview(hostname: &Value, time: &Value, locale: &Value) -> Value {
     let os_release = hostname
         .get("OperatingSystemReleaseData")
         .and_then(Value::as_array)
@@ -168,6 +188,18 @@ fn merge_overview(hostname: &Value, time: &Value) -> Value {
         "local_rtc": time_bool(time, "LocalRTC"),
         "time_utc": usec_to_iso(time_usec(time, "TimeUSec")),
         "rtc_time_utc": usec_to_iso(time_usec(time, "RTCTimeUSec")),
+
+        "locale": variant_value(locale.get("Locale").unwrap_or(&Value::Null))
+            .as_array()
+            .and_then(|a| a.first())
+            .and_then(Value::as_str)
+            .unwrap_or(""),
+        "keymap": variant_value(locale.get("X11Layout").unwrap_or(&Value::Null))
+            .as_str()
+            .unwrap_or(""),
+        "console_keymap": variant_value(locale.get("VConsoleKeymap").unwrap_or(&Value::Null))
+            .as_str()
+            .unwrap_or(""),
     })
 }
 
@@ -224,6 +256,14 @@ const SECTIONS: &[(&str, &[(&str, &str)])] = &[
             ("Local RTC", "local_rtc"),
             ("Time (UTC)", "time_utc"),
             ("RTC time (UTC)", "rtc_time_utc"),
+        ],
+    ),
+    (
+        "Locale",
+        &[
+            ("Locale", "locale"),
+            ("Keyboard layout", "keymap"),
+            ("Console keymap", "console_keymap"),
         ],
     ),
 ];
@@ -319,7 +359,12 @@ mod tests {
             "TimeUSec": {"t":"t","v":1700006400000000u64},
             "RTCTimeUSec": {"t":"t","v":1700006400000000u64},
         });
-        let data = merge_overview(&hostname, &time);
+        let locale = json!({
+            "Locale": {"t":"as","v":["LANG=en_US.UTF-8"]},
+            "X11Layout": {"t":"s","v":"us"},
+            "VConsoleKeymap": {"t":"s","v":"us"},
+        });
+        let data = merge_overview(&hostname, &time, &locale);
         assert_eq!(data["hostname"], "box1");
         assert_eq!(data["os"], "Fedora 44");
         assert_eq!(data["os_id"], "fedora");
@@ -337,6 +382,9 @@ mod tests {
             .unwrap()
             .starts_with("2027-"));
         assert!(data["pretty_hostname"].is_null());
+        assert_eq!(data["locale"], "LANG=en_US.UTF-8");
+        assert_eq!(data["keymap"], "us");
+        assert_eq!(data["console_keymap"], "us");
     }
 
     #[test]
@@ -368,6 +416,9 @@ mod tests {
             "local_rtc": false,
             "time_utc": "2023-11-15T00:00:00Z",
             "rtc_time_utc": "2023-11-15T00:00:00Z",
+            "locale": "LANG=en_US.UTF-8",
+            "keymap": "us",
+            "console_keymap": "us",
         });
         let human = render_human(&data);
         assert!(human.contains("Hostname"));
@@ -379,5 +430,7 @@ mod tests {
         assert!(!human.contains("Pretty hostname"));
         assert!(!human.contains("Chassis"));
         assert!(!human.contains("Variant"));
+        assert!(human.contains("Locale"));
+        assert!(human.contains("LANG=en_US.UTF-8"));
     }
 }

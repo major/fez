@@ -116,6 +116,48 @@ The real cockpit-bridge ignores `limit` for direct sources and streams indefinit
 
 Canned fake bridge data: 3-interface topology (`lo`, `enp1s0`, `enp2s0`), ~3.2% CPU, ~26.8% memory usage, 42.5 disk IOPS. Tests depend on that canned state.
 
+### Sessions and Users (logind)
+
+`system sessions` lists active login sessions from systemd-logind (`org.freedesktop.login1`). Uses `ListSessions` to enumerate sessions, then `GetAll` per session for full detail (type, remote host, state, service, class). Session counts are always small (<10), so the per-session calls are negligible.
+
+`system users` lists logged-in users via `ListUsers`. `system inhibitors` lists shutdown/sleep inhibitors via `ListInhibitors`. `system boot-entries` reads the `BootLoaderEntries` property. All four are unprivileged reads.
+
+Canned fake bridge data: 2 sessions (SSH + local TTY), 2 users (major + root), 1 inhibitor (NetworkManager sleep delay), 2 boot entries. Tests depend on that canned state.
+
+### Power Actions (logind)
+
+`system reboot`, `system poweroff`, and `system suspend` call `login1.Reboot(true)`, `PowerOff(true)`, and `Suspend(true)` respectively. All are protected operations requiring `--force` (exit 8 without it). `CanReboot`/`CanPowerOff`/`CanSuspend` is checked first; `"na"` → exit 9 with remediation. Privileged: requires cockpit escalation. Audited as `system-reboot`, `system-poweroff`, `system-suspend`.
+
+Canned fake: `CanReboot` = `"yes"`, `CanPowerOff` = `"yes"`, `CanSuspend` = `"na"`. Reboot/PowerOff succeed (no-op). Tests depend on that canned state.
+
+## Subscription (RHSM)
+
+The subscription capability reads RHEL subscription status from `com.redhat.RHSM1`. RHEL only: absent on Fedora (exit 9).
+
+`system subscription` calls four RHSM interfaces:
+- `Consumer.GetUuid("")` for consumer UUID
+- `Entitlement.GetStatus("", "")` for entitlement status
+- `Products.ListInstalledProducts("", {}, "")` for installed products
+- `Syspurpose.GetSyspurpose("")` for system purpose
+
+All methods take a locale string as the last argument (pass `""`). RHSM methods return JSON-encoded strings as D-Bus `s` values; the inner JSON is parsed.
+
+Canned fake bridge data: UUID `12345678-abcd-...`, status "Current", 1 product (RHEL 10 x86_64), syspurpose role "Red Hat Enterprise Linux Server". `FEZ_FAKE_NO_RHSM=1` → ServiceUnknown. Tests depend on that canned state.
+
+## Firmware (fwupd)
+
+The firmware capability reads device and security data from `org.freedesktop.fwupd`. Read-only: no install/update mutations.
+
+Three actions: `system firmware list`, `system firmware security`, `system firmware upgrades`.
+
+`GetDevices` returns `aa{sv}`. The `Flags` field is a bitmask; bit 2 (`0x4`) indicates the device is updatable. `GetHostSecurityAttrs` returns the HSI security attributes. `GetUpgrades(device_id)` returns available upgrades per device; called only for updatable devices.
+
+The `HostSecurityId` property (e.g. `"HSI:1 (v2.1.3)"`) is read via `Properties.Get`.
+
+fwupd is polkit-gated. `fez` tries unprivileged first; absent service → exit 9 with remediation.
+
+Canned fake bridge data: 2 devices (UEFI updatable, System Firmware not), 3 security attrs (TPM, SecureBoot, IOMMU), 1 upgrade for the UEFI device. `FEZ_FAKE_NO_FWUPD=1` → ServiceUnknown. Tests depend on that canned state.
+
 ## DNS
 
 The DNS capability has two backends, selected automatically:

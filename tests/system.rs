@@ -41,7 +41,11 @@ fn show_json_returns_complete_overview() {
         .stdout(contains("\"ntp_enabled\":true"))
         .stdout(contains("\"ntp_synchronized\":true"))
         .stdout(contains("\"local_rtc\":false"))
-        .stdout(contains("\"time_utc\":\"2023-11-15T00:00:00Z\""));
+        .stdout(contains("\"time_utc\":\"2023-11-15T00:00:00Z\""))
+        // Locale
+        .stdout(contains("\"locale\":\"LANG=en_US.UTF-8\""))
+        .stdout(contains("\"keymap\":\"us\""))
+        .stdout(contains("\"console_keymap\":\"us\""));
 }
 
 // The parsed os_release object has lowercase keys agents can read directly.
@@ -75,6 +79,9 @@ fn show_json_parses_os_release_and_shape() {
         "ntp_enabled",
         "ntp_synchronized",
         "time_utc",
+        "locale",
+        "keymap",
+        "console_keymap",
     ] {
         assert!(
             env["data"].get(field).is_some(),
@@ -103,6 +110,9 @@ fn show_human_renders_sections_and_omits_nulls() {
     assert!(stdout.contains("America/Chicago"));
     // Null PrettyHostname should be omitted
     assert!(!stdout.contains("Pretty hostname"));
+    // Locale section
+    assert!(stdout.contains("Locale"));
+    assert!(stdout.contains("LANG=en_US.UTF-8"));
 }
 
 // `fez describe system.show --json` returns the capability descriptor.
