@@ -7,9 +7,10 @@
 //! and RHEL. Read-only: no mutations, no privilege escalation.
 
 use crate::capabilities::{render, View};
-use crate::cli::{Cli, SystemAction};
+use crate::cli::{Cli, FirmwareAction, SystemAction};
 use crate::error::Result;
 
+mod firmware;
 mod metrics;
 mod power;
 mod reads;
@@ -51,5 +52,10 @@ fn run(cli: &Cli, action: &SystemAction) -> Result<View> {
         SystemAction::Poweroff { force } => power::run(&mut client, &host, "poweroff", *force),
         SystemAction::Suspend { force } => power::run(&mut client, &host, "suspend", *force),
         SystemAction::Subscription => subscription::show(&mut client, &host),
+        SystemAction::Firmware { action } => match action {
+            FirmwareAction::List => firmware::list(&mut client, &host),
+            FirmwareAction::Security => firmware::security(&mut client, &host),
+            FirmwareAction::Upgrades => firmware::upgrades(&mut client, &host),
+        },
     }
 }

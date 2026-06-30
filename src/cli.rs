@@ -408,6 +408,23 @@ pub enum SystemAction {
     },
     /// Show RHEL subscription status (RHEL only).
     Subscription,
+    /// Inspect firmware devices, security posture, and available upgrades (via fwupd).
+    Firmware {
+        /// The `firmware` action to perform.
+        #[command(subcommand)]
+        action: FirmwareAction,
+    },
+}
+
+/// Actions under the `system firmware` subcommand.
+#[derive(Subcommand, Debug)]
+pub enum FirmwareAction {
+    /// List firmware devices.
+    List,
+    /// Show host firmware security posture (HSI).
+    Security,
+    /// List available firmware upgrades.
+    Upgrades,
 }
 
 /// Actions under the `storage` subcommand.

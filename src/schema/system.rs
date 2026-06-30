@@ -146,6 +146,44 @@ pub(super) fn descriptors() -> Vec<Descriptor> {
                 "fez --host rhel1 system subscription".into(),
             ],
         },
+        Descriptor {
+            id: "system.firmware.list",
+            summary: "List firmware devices",
+            long: "List all firmware-updatable devices from fwupd. Shows device name, \
+        vendor, current version, and whether the device is updatable. \
+        Read-only. Returns exit 9 when fwupd is not installed.",
+            privileged: false,
+            output_kind: "FirmwareDeviceList",
+            inputs: vec![],
+            flags: vec!["--host", "--json"],
+            examples: vec!["fez system firmware list --json".into()],
+        },
+        Descriptor {
+            id: "system.firmware.security",
+            summary: "Show host firmware security posture (HSI)",
+            long: "Show the Host Security ID (HSI) score and individual security \
+        attributes from fwupd. HSI levels range from 0 (insecure) to 4 \
+        (hardened). Each attribute shows its result and required HSI level. \
+        Read-only.",
+            privileged: false,
+            output_kind: "FirmwareSecurityReport",
+            inputs: vec![],
+            flags: vec!["--host", "--json"],
+            examples: vec!["fez system firmware security --json".into()],
+        },
+        Descriptor {
+            id: "system.firmware.upgrades",
+            summary: "List available firmware upgrades",
+            long: "List available firmware upgrades for all updatable devices from \
+        fwupd. Shows the device name, current version, available version, \
+        and upgrade description. Returns an empty list if no upgrades are \
+        available. Read-only.",
+            privileged: false,
+            output_kind: "FirmwareUpgradeList",
+            inputs: vec![],
+            flags: vec!["--host", "--json"],
+            examples: vec!["fez system firmware upgrades --json".into()],
+        },
     ]
 }
 
@@ -170,6 +208,9 @@ mod tests {
                 "system.poweroff",
                 "system.suspend",
                 "system.subscription",
+                "system.firmware.list",
+                "system.firmware.security",
+                "system.firmware.upgrades",
             ]
         );
 
