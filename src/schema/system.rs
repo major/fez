@@ -70,7 +70,7 @@ pub(super) fn descriptors() -> Vec<Descriptor> {
             summary: "List shutdown/sleep inhibitors",
             long: "List active inhibitor locks from systemd-logind. Shows what is \
         inhibited (shutdown, sleep, etc.), which application holds the lock, \
-        why, and the lock mode (block or delay). Read-only.",
+        why, and the lock mode (block or delay). Read-only: no privilege escalation.",
             privileged: false,
             output_kind: "InhibitorList",
             inputs: vec![],

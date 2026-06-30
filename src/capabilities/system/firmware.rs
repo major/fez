@@ -4,8 +4,8 @@
 //! firmware upgrades. Read-only. fwupd is polkit-gated; try unprivileged
 //! first, escalate on access-denied.
 
-use crate::capabilities::View;
-use crate::error::{is_service_unknown, FezError, Result};
+use crate::capabilities::{map_absent_service, View};
+use crate::error::{FezError, Result};
 use crate::protocol::client::{variant_value, BridgeClient};
 use serde_json::{json, Value};
 
@@ -25,25 +25,8 @@ fn dependency_missing() -> FezError {
     }
 }
 
-/// Map fwupd-specific errors to actionable failures.
-///
-/// fwupd is D-Bus-activated, so an absent service manifests as:
-/// - `Dbus { ServiceUnknown }`: name not activatable.
-/// - `Problem("not-found")`: cockpit closed the channel (service unreachable).
-///
-/// Both map to [`dependency_missing`].
-fn map_fwupd_error(e: FezError) -> FezError {
-    match e {
-        FezError::Dbus { ref name, .. } if is_service_unknown(name) => dependency_missing(),
-        FezError::Problem(ref p) if p == "not-found" || p == "not-supported" => {
-            dependency_missing()
-        }
-        other => other,
-    }
-}
-
 fn open_fwupd(client: &mut BridgeClient) -> Result<String> {
-    client.dbus_open(FWUPD_NAME).map_err(map_fwupd_error)
+    map_absent_service(client.dbus_open(FWUPD_NAME), dependency_missing)
 }
 
 fn fwupd_call(
@@ -52,9 +35,10 @@ fn fwupd_call(
     method: &str,
     args: Value,
 ) -> Result<Value> {
-    client
-        .dbus_call(channel, FWUPD_PATH, FWUPD_IFACE, method, args)
-        .map_err(map_fwupd_error)
+    map_absent_service(
+        client.dbus_call(channel, FWUPD_PATH, FWUPD_IFACE, method, args),
+        dependency_missing,
+    )
 }
 
 fn vv_str(dict: &Value, key: &str) -> String {
@@ -126,15 +110,16 @@ pub(super) fn security(client: &mut BridgeClient, host: &str) -> Result<View> {
     let channel = open_fwupd(client)?;
 
     // Get HSI score from property
-    let prop_out = client
-        .dbus_call(
+    let prop_out = map_absent_service(
+        client.dbus_call(
             &channel,
             FWUPD_PATH,
             PROPS_IFACE,
             "Get",
             json!([FWUPD_IFACE, "HostSecurityId"]),
-        )
-        .map_err(map_fwupd_error)?;
+        ),
+        dependency_missing,
+    )?;
     let hsi_score = variant_value(prop_out.get(0).unwrap_or(&Value::Null))
         .as_str()
         .unwrap_or("")

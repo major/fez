@@ -4,8 +4,8 @@
 //! RHSM methods return JSON-encoded strings; the inner JSON is parsed.
 //! Absent on Fedora — returns exit 9 with remediation.
 
-use crate::capabilities::View;
-use crate::error::{is_service_unknown, FezError, Result};
+use crate::capabilities::{map_absent_service, View};
+use crate::error::{FezError, Result};
 use crate::protocol::client::BridgeClient;
 use serde_json::{json, Value};
 
@@ -38,19 +38,9 @@ fn dependency_missing() -> FezError {
 /// - `Problem("not-found")`: cockpit closed the channel (service unreachable).
 ///
 /// Both map to [`dependency_missing`] with RHEL-only remediation.
-fn map_rhsm_error(e: FezError) -> FezError {
-    match e {
-        FezError::Dbus { ref name, .. } if is_service_unknown(name) => dependency_missing(),
-        FezError::Problem(ref p) if p == "not-found" || p == "not-supported" => {
-            dependency_missing()
-        }
-        other => other,
-    }
-}
-
 /// Gather subscription status and return a SubscriptionStatus view.
 pub(super) fn show(client: &mut BridgeClient, host: &str) -> Result<View> {
-    let channel = client.dbus_open(RHSM_NAME).map_err(map_rhsm_error)?;
+    let channel = map_absent_service(client.dbus_open(RHSM_NAME), dependency_missing)?;
 
     let uuid = get_string(
         client,
@@ -85,6 +75,8 @@ pub(super) fn show(client: &mut BridgeClient, host: &str) -> Result<View> {
         json!([""]),
     )?;
 
+    // ponytail: silent fallback — UUID and status still show; empty products is better
+    // than failing the whole command on one malformed RHSM response
     let products: Value = serde_json::from_str(&products_raw).unwrap_or(json!([]));
     let syspurpose: Value = serde_json::from_str(&syspurpose_raw).unwrap_or(json!({}));
 
@@ -107,9 +99,10 @@ fn get_string(
     method: &str,
     args: Value,
 ) -> Result<String> {
-    let out = client
-        .dbus_call(channel, path, iface, method, args)
-        .map_err(map_rhsm_error)?;
+    let out = map_absent_service(
+        client.dbus_call(channel, path, iface, method, args),
+        dependency_missing,
+    )?;
     out.get(0)
         .and_then(Value::as_str)
         .map(String::from)

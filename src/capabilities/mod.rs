@@ -41,6 +41,27 @@ pub fn map_service_unknown<T>(res: Result<T>, missing: impl FnOnce() -> FezError
     }
 }
 
+/// Map both D-Bus `ServiceUnknown` and channel-close `not-found`/`not-supported`
+/// problems to a dependency-missing error.
+///
+/// Extends [`map_service_unknown`] for services where the bridge closes the
+/// channel with a problem code instead of (or in addition to) a D-Bus error.
+/// Used by RHSM and fwupd backends.
+///
+/// # Errors
+///
+/// Returns `missing()` on a service-unknown D-Bus error or a `not-found` /
+/// `not-supported` channel problem, otherwise the original error.
+pub fn map_absent_service<T>(res: Result<T>, missing: impl FnOnce() -> FezError) -> Result<T> {
+    match res {
+        Err(FezError::Dbus { name, .. }) if crate::error::is_service_unknown(&name) => {
+            Err(missing())
+        }
+        Err(FezError::Problem(ref p)) if p == "not-found" || p == "not-supported" => Err(missing()),
+        other => other,
+    }
+}
+
 /// Shared context for capability functions: bundles the bridge client,
 /// channel, and target host to avoid threading them as separate parameters.
 pub(crate) struct CapabilityContext<'a> {
@@ -197,6 +218,43 @@ mod tests {
 
         // Ok passes through.
         assert!(super::map_service_unknown(Ok(7), || FezError::NotFound("x".into())).is_ok());
+    }
+
+    #[test]
+    fn map_absent_service_catches_dbus_and_channel_problems() {
+        // ServiceUnknown maps.
+        let mapped = super::map_absent_service::<()>(
+            Err(FezError::Dbus {
+                name: "org.freedesktop.DBus.Error.ServiceUnknown".into(),
+                message: "gone".into(),
+            }),
+            || FezError::NotFound("svc".into()),
+        );
+        assert!(matches!(mapped, Err(FezError::NotFound(_))));
+
+        // Problem("not-found") maps.
+        let mapped =
+            super::map_absent_service::<()>(Err(FezError::Problem("not-found".into())), || {
+                FezError::NotFound("svc".into())
+            });
+        assert!(matches!(mapped, Err(FezError::NotFound(_))));
+
+        // Problem("not-supported") maps.
+        let mapped =
+            super::map_absent_service::<()>(Err(FezError::Problem("not-supported".into())), || {
+                FezError::NotFound("svc".into())
+            });
+        assert!(matches!(mapped, Err(FezError::NotFound(_))));
+
+        // Other Problem passes through.
+        let other = super::map_absent_service::<()>(
+            Err(FezError::Problem("something-else".into())),
+            || FezError::NotFound("svc".into()),
+        );
+        assert!(matches!(other, Err(FezError::Problem(_))));
+
+        // Ok passes through.
+        assert!(super::map_absent_service(Ok(42), || FezError::NotFound("x".into())).is_ok());
     }
 
     #[test]
