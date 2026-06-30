@@ -35,7 +35,7 @@ fn get_devices(id: &Value) -> Value {
                 "DeviceId": {"t":"s","v":"abc123"},
                 "Vendor": {"t":"s","v":"Dell Inc."},
                 "Version": {"t":"s","v":"1.10.1"},
-                "Flags": {"t":"t","v":4},
+                "Flags": {"t":"t","v":2},
             },
             {
                 "Name": {"t":"s","v":"System Firmware"},

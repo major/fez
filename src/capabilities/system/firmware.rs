@@ -14,8 +14,8 @@ const FWUPD_PATH: &str = "/org/freedesktop/fwupd";
 const FWUPD_IFACE: &str = "org.freedesktop.fwupd";
 const PROPS_IFACE: &str = "org.freedesktop.DBus.Properties";
 
-/// fwupd `FWUPD_DEVICE_FLAG_UPDATABLE` — bit 2 of the device Flags bitmask.
-const FWUPD_FLAG_UPDATABLE: u64 = 0x4;
+/// fwupd `FWUPD_DEVICE_FLAG_UPDATABLE` — bit 1 of the device Flags bitmask.
+const FWUPD_FLAG_UPDATABLE: u64 = 0x2;
 
 fn dependency_missing() -> FezError {
     FezError::DependencyMissing {
