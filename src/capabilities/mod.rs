@@ -161,20 +161,6 @@ pub fn render(cli: &Cli, result: Result<View>) -> i32 {
     }
 }
 
-/// Deprecated alias for [`render`].
-///
-/// Previously accepted a per-capability `error_hints` hook; hints now live on
-/// [`crate::error::FezError::hints`] so the hook is unused. Kept temporarily
-/// to avoid a breaking change; callers should migrate to [`render`].
-#[deprecated(since = "0.0.0", note = "use render(); hints are on FezError::hints()")]
-#[allow(dead_code)]
-pub fn render_with_hints<F>(cli: &Cli, result: Result<View>, _error_hints: F) -> i32
-where
-    F: FnOnce(&crate::error::FezError) -> Option<Value>,
-{
-    render(cli, result)
-}
-
 #[cfg(test)]
 mod tests {
     use super::{render, View};
