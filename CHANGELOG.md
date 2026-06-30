@@ -7,6 +7,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.0](https://github.com/major/fez/compare/v0.6.0...v0.7.0) - 2026-06-30
+
+### Added
+
+- *(dev)* add fuzz target for wire frame parser
+- *(dns)* fall back to NM DnsManager when resolved is absent
+- *(dns)* add integration tests and dependency-missing handling
+- *(dns)* add capability descriptors and output schemas
+- *(dns)* implement status, query, and flush capabilities
+- *(dns)* add DnsAction CLI enum and stub dispatch
+- *(fake-bridge)* add canned resolve1 handler
+
+### Fixed
+
+- *(security)* enforce IdentitiesOnly=yes to prevent agent key lockouts
+- *(firewall)* protect ssh port removals by default
+- *(audit)* stop trusting env for audit identity
+- *(transport)* validate env-selected mechanisms
+- *(transport)* restrict bridge env override
+- *(protocol)* cap frame allocation at 16 MB to prevent OOM
+- *(safety)* prevent systemd path bypass of protected-unit check
+- *(ssh)* prevent argument injection via target host string
+- *(dns)* address CodeRabbit review findings
+- *(dns)* handle base64-encoded byte arrays from real cockpit-bridge
+
+### Other
+
+- *(cleanup)* remove dead render_with_hints and dedup variant unwrap
+- *(dns)* document dual-backend (resolve1 + NM fallback)
+- *(dns)* add DNS capability to agent docs and architecture map
+
 ## [0.6.0](https://github.com/major/fez/compare/v0.5.0...v0.6.0) - 2026-06-26
 
 ### Added
