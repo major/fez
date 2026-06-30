@@ -1,4 +1,4 @@
-use super::{logs, mangle_unit, ReadAction, MGR_IFACE, MGR_PATH, PROPS_IFACE, UNIT_IFACE};
+use super::{logs, ReadAction, MGR_IFACE, MGR_PATH, PROPS_IFACE, UNIT_IFACE};
 use crate::capabilities::View;
 use crate::cli::Cli;
 use crate::error::{FezError, Result};
@@ -49,7 +49,7 @@ pub(super) fn run(cli: &Cli, action: ReadAction<'_>) -> Result<View> {
     let host = client.host().to_string();
     match action {
         ReadAction::List { state } => list(&mut client, host, state),
-        ReadAction::Status { unit } => status(&mut client, host, &mangle_unit(unit)),
+        ReadAction::Status { unit } => status(&mut client, host, unit),
         ReadAction::Logs {
             unit,
             since,
@@ -60,7 +60,7 @@ pub(super) fn run(cli: &Cli, action: ReadAction<'_>) -> Result<View> {
             &mut client,
             host,
             cli.json,
-            &mangle_unit(unit),
+            unit,
             since,
             priority,
             lines,

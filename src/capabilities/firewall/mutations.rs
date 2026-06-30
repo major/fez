@@ -78,6 +78,7 @@ pub(super) fn mutate(
             zone,
             timeout,
         } => {
+            super::validate_firewall_service(service)?;
             let zone = effective_zone(ctx.client, ctx.channel, zone)?;
             let t = i64::from(timeout.unwrap_or(0));
             execute_mutation(
@@ -99,6 +100,7 @@ pub(super) fn mutate(
             )
         }
         Mutation::RemoveService { service, zone } => {
+            super::validate_firewall_service(service)?;
             let zone = effective_zone(ctx.client, ctx.channel, zone)?;
             crate::safety::check_firewall_service_removal(service, &session_services(), cli.force)?;
             execute_mutation(
