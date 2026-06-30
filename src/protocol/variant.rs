@@ -13,6 +13,20 @@
 use serde::de::{self, Deserialize, Deserializer};
 use serde_json::Value;
 
+/// Unwrap a cockpit D-Bus variant envelope `{"t":_, "v":_}` to its inner `"v"`.
+///
+/// Returns the inner value when both keys are present, otherwise the original
+/// value unchanged (not an envelope). Used by both [`Variant`] and [`VariantU64`].
+fn variant_payload(v: Value) -> Value {
+    match v {
+        Value::Object(mut map) if map.contains_key("t") && map.contains_key("v") => {
+            // Guarded by `contains_key("v")`, so the remove cannot be None.
+            map.remove("v").unwrap_or(Value::Null)
+        }
+        other => other,
+    }
+}
+
 /// A D-Bus value that cockpit may deliver either flat or wrapped in a
 /// `{"t": <signature>, "v": <value>}` variant envelope.
 ///
@@ -43,13 +57,7 @@ where
         D: Deserializer<'de>,
     {
         let value = Value::deserialize(deserializer)?;
-        let inner = match value {
-            Value::Object(mut map) if map.contains_key("t") && map.contains_key("v") => {
-                // Guarded by `contains_key("v")`, so the remove cannot be None.
-                map.remove("v").unwrap_or(Value::Null)
-            }
-            other => other,
-        };
+        let inner = variant_payload(value);
         serde_json::from_value(inner)
             .map(Variant)
             .map_err(de::Error::custom)
@@ -70,12 +78,7 @@ impl<'de> Deserialize<'de> for VariantU64 {
         D: Deserializer<'de>,
     {
         let value = Value::deserialize(deserializer)?;
-        let inner = match value {
-            Value::Object(mut map) if map.contains_key("t") && map.contains_key("v") => {
-                map.remove("v").unwrap_or(Value::Null)
-            }
-            other => other,
-        };
+        let inner = variant_payload(value);
         let n = match &inner {
             Value::Number(n) => n
                 .as_u64()
