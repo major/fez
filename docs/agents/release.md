@@ -29,6 +29,7 @@ CI lives in `.github/workflows/ci.yml` and `.github/workflows/codeql.yml`. Do no
 - `clippy -D warnings` and `cargo fmt --check`. Do not add `#![deny(warnings)]` to source; warning pressure lives in CI flags.
 - **MSRV build**: `cargo +1.92 check --all-targets` must pass. The pinned MSRV is a contract.
 - **Supply chain**: `cargo deny check` plus `cargo machete`.
+- **Fuzz build**: `cargo +nightly fuzz build` in `ci.yml` verifies fuzz targets still compile and link. Not a fuzz run — just a bitrot guard. Requires `cargo-fuzz` installed locally. Reproducible via `make fuzz-build`.
 - **CodeQL**: separate workflow, build-mode `none`, runs on push/PR to `main` and weekly. Rust CodeQL supports buildless extraction here; `manual` and `autobuild` are rejected at init. Not reproducible through `make check`.
 
 CI actions are SHA-pinned. When bumping an action, pin the new commit SHA and keep the `# vX.Y.Z` comment accurate.
