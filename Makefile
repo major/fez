@@ -64,3 +64,8 @@ msrv:
 clean-coverage:
 	cargo llvm-cov clean --workspace
 	rm -f $(LCOV)
+
+# Build fuzz targets to verify they compile and link. Require nightly.
+# Install: cargo install cargo-fuzz --locked
+fuzz-build:
+	cd fuzz && cargo fuzz build
