@@ -44,13 +44,18 @@ fn dependency_missing() -> FezError {
 /// Validate a firewall service name before it reaches firewalld D-Bus calls.
 ///
 /// Rejects empty, over-long, control-character, or `-`-prefixed names.
-/// Service names like `http`, `ssh`, `cockpit` pass through; the string
-/// `$(reboot)` is rejected because `$` is not a valid firewalld service name
-/// character.
+/// Service names like `http`, `ssh`, and `cockpit` pass through.
+///
+/// # Errors
+///
+/// Returns [`FezError::Usage`] (exit 2) when the name is empty, exceeds
+/// [`MAX_LEN`], starts with `-`, or contains a control character.
 pub(crate) fn validate_firewall_service(name: &str) -> Result<()> {
     const MAX_LEN: usize = 128;
     if name.is_empty() {
-        return Err(FezError::Usage("firewall service name must not be empty".into()));
+        return Err(FezError::Usage(
+            "firewall service name must not be empty".into(),
+        ));
     }
     if name.len() > MAX_LEN {
         return Err(FezError::Usage(format!(

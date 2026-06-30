@@ -41,7 +41,7 @@ fn variant(signature: &str, value: Value) -> Value {
 ///
 /// Rejects empty, over-long, control-character, or `-`-prefixed specs.
 /// dnf5daemon validates the spec syntactically; fez adds a structural
-/// guard against injection of arbibrary strings from an agent or script.
+/// guard against injection of arbitrary strings from an agent or script.
 fn validate_package_spec(spec: &str) -> Result<()> {
     const MAX_LEN: usize = 512;
     if spec.is_empty() {
@@ -927,10 +927,7 @@ mod tests {
     #[test]
     fn validate_package_spec_rejects_bad_specs() {
         use crate::error::FezError;
-        assert!(matches!(
-            validate_package_spec(""),
-            Err(FezError::Usage(_))
-        ));
+        assert!(matches!(validate_package_spec(""), Err(FezError::Usage(_))));
         assert!(matches!(
             validate_package_spec("--help"),
             Err(FezError::Usage(_))

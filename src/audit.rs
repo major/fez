@@ -312,10 +312,27 @@ fn select_sink(raw: Option<&str>, allow_unsafe_env: bool) -> SinkSelection {
     match raw {
         Some("off") | Some("0") => SinkSelection::Noop,
         Some(v) if v.starts_with("file:") => {
-            SinkSelection::File(std::path::PathBuf::from(&v["file:".len()..]))
+            let path = std::path::PathBuf::from(&v["file:".len()..]);
+            if !is_safe_file_sink_path(&path) {
+                return SinkSelection::Journal;
+            }
+            SinkSelection::File(path)
         }
         _ => SinkSelection::Journal,
     }
+}
+
+/// Only allow file-sink paths under `/tmp/fez/` or `/run/fez/` (matching
+/// the policy from [`crate::transport::ssh::safe_ssh_config_path`]).
+/// Rejects paths containing `..` parent-traversal components.
+fn is_safe_file_sink_path(path: &std::path::Path) -> bool {
+    use std::path::Component;
+    // Reject parent-traversal before any prefix check so
+    // `/tmp/fez/../../etc/cron.d/evil` is not treated as safe.
+    if path.components().any(|c| c == Component::ParentDir) {
+        return false;
+    }
+    path.starts_with("/tmp/fez") || path.starts_with("/run/fez")
 }
 
 /// Select a sink from the `FEZ_AUDIT` environment variable in debug/test builds.
@@ -431,8 +448,35 @@ mod tests {
     fn release_audit_sink_ignores_env_overrides() {
         assert_eq!(select_sink(Some("off"), false), SinkSelection::Journal);
         assert_eq!(
-            select_sink(Some("file:/tmp/fez-audit.jsonl"), false),
+            select_sink(Some("file:/tmp/fez/audit.jsonl"), false),
             SinkSelection::Journal
+        );
+    }
+
+    #[test]
+    fn file_sink_rejects_untrusted_paths() {
+        // Even with allow_unsafe_env=true, paths outside /tmp/fez or /run/fez
+        // are rejected.
+        assert_eq!(
+            select_sink(Some("file:/tmp/evil.jsonl"), true),
+            SinkSelection::Journal
+        );
+        // Parent-traversal escapes the allowlist.
+        assert_eq!(
+            select_sink(Some("file:/tmp/fez/../../etc/cron.d/evil"), true),
+            SinkSelection::Journal
+        );
+    }
+
+    #[test]
+    fn file_sink_accepts_safe_paths() {
+        assert_eq!(
+            select_sink(Some("file:/tmp/fez/audit.jsonl"), true),
+            SinkSelection::File(std::path::PathBuf::from("/tmp/fez/audit.jsonl"))
+        );
+        assert_eq!(
+            select_sink(Some("file:/run/fez/audit.jsonl"), true),
+            SinkSelection::File(std::path::PathBuf::from("/run/fez/audit.jsonl"))
         );
     }
 

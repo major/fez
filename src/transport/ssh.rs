@@ -50,8 +50,9 @@ impl Transport for SshTransport {
             // - PasswordAuthentication=no: never fall back to keyboard-interactive
             //   or password auth even if the user's config allows it.  fez is an
             //   agent-driven tool; credentials belong in ssh-agent or key files.
-            // - These appear **after** the optional -F config so they override any
-            //   user-level StrictHostKeyChecking or PasswordAuthentication setting.
+            // - SSH processes command-line -o options with higher precedence than
+            //   any -F config, so these override user-level settings regardless
+            //   of argument order.
             .arg("-o")
             .arg("StrictHostKeyChecking=yes")
             .arg("-o")
@@ -86,8 +87,12 @@ mod tests {
             .map(|a| a.to_string_lossy().into_owned())
             .collect();
         assert!(args.windows(2).any(|w| w == ["-o", "BatchMode=yes"]));
-        assert!(args.windows(2).any(|w| w == ["-o", "StrictHostKeyChecking=yes"]));
-        assert!(args.windows(2).any(|w| w == ["-o", "PasswordAuthentication=no"]));
+        assert!(args
+            .windows(2)
+            .any(|w| w == ["-o", "StrictHostKeyChecking=yes"]));
+        assert!(args
+            .windows(2)
+            .any(|w| w == ["-o", "PasswordAuthentication=no"]));
         assert!(args.contains(&"fedora@host.example".to_string()));
         // target and bridge invocation both after `--` (prevents option injection)
         let dd = args.iter().position(|a| a == "--").unwrap();
