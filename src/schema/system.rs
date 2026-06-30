@@ -129,6 +129,23 @@ pub(super) fn descriptors() -> Vec<Descriptor> {
             flags: vec!["--host", "--json", "--force"],
             examples: vec!["fez system suspend --force".into()],
         },
+        Descriptor {
+            id: "system.subscription",
+            summary: "Show RHEL subscription status",
+            long: "Show the RHEL subscription status from the subscription-manager \
+        D-Bus interface (com.redhat.RHSM1). Displays consumer UUID, \
+        entitlement status, installed products, and system purpose. \
+        RHEL only: returns exit 9 on Fedora or when subscription-manager \
+        is not installed.",
+            privileged: false,
+            output_kind: "SubscriptionStatus",
+            inputs: vec![],
+            flags: vec!["--host", "--json"],
+            examples: vec![
+                "fez system subscription --json".into(),
+                "fez --host rhel1 system subscription".into(),
+            ],
+        },
     ]
 }
 
@@ -152,6 +169,7 @@ mod tests {
                 "system.reboot",
                 "system.poweroff",
                 "system.suspend",
+                "system.subscription",
             ]
         );
 

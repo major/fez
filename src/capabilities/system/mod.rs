@@ -14,6 +14,7 @@ mod metrics;
 mod power;
 mod reads;
 mod sessions;
+mod subscription;
 
 // ponytail: name == iface for both services, so 4 constants not 6
 pub(super) const HOSTNAME_NAME: &str = "org.freedesktop.hostname1";
@@ -49,5 +50,6 @@ fn run(cli: &Cli, action: &SystemAction) -> Result<View> {
         SystemAction::Reboot { force } => power::run(&mut client, &host, "reboot", *force),
         SystemAction::Poweroff { force } => power::run(&mut client, &host, "poweroff", *force),
         SystemAction::Suspend { force } => power::run(&mut client, &host, "suspend", *force),
+        SystemAction::Subscription => subscription::show(&mut client, &host),
     }
 }

@@ -406,6 +406,8 @@ pub enum SystemAction {
         #[arg(long)]
         force: bool,
     },
+    /// Show RHEL subscription status (RHEL only).
+    Subscription,
 }
 
 /// Actions under the `storage` subcommand.

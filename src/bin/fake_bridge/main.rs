@@ -7,6 +7,7 @@ mod logind;
 mod nm;
 mod pk;
 mod resolve;
+mod rhsm;
 mod systemd;
 mod udisks;
 
@@ -145,6 +146,14 @@ fn handle_open(
     if std::env::var_os("FEZ_FAKE_FIREWALLD_UNREACHABLE").is_some()
         && open_name == "org.fedoraproject.FirewallD1"
     {
+        send_control(
+            stdout,
+            &json!({"command":"close","channel":channel,"problem":"not-found"}),
+        );
+        return Ok(());
+    }
+
+    if std::env::var_os("FEZ_FAKE_NO_RHSM").is_some() && open_name == "com.redhat.RHSM1" {
         send_control(
             stdout,
             &json!({"command":"close","channel":channel,"problem":"not-found"}),
@@ -314,6 +323,8 @@ fn handle_data(
         return;
     } else if path.starts_with("/org/freedesktop/login1") {
         logind::logind_reply(path, iface, method, &args, &id)
+    } else if path.starts_with("/com/redhat/RHSM1") {
+        rhsm::rhsm_reply(path, iface, method, &args, &id)
     } else if dnf_options_method {
         if let Some(err) = dnf::reject_unwrapped_options(&args, &id) {
             send_data(stdout, &frame.channel, &err);
