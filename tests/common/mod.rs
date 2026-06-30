@@ -87,11 +87,16 @@ impl AuditLog {
     /// Create a guard for a process-unique audit file tagged with `label`.
     ///
     /// `label` distinguishes concurrent suites (e.g. `"audit-it"`,
-    /// `"pkg-audit"`) so their temp paths never collide. Any pre-existing file
-    /// at the path is removed.
+    /// `"pkg-audit"`) so their temp paths never collide.  Files are placed
+    /// under `/tmp/fez/` to satisfy the file-sink path policy in
+    /// [`crate::audit::is_safe_file_sink_path`].  Any pre-existing file at
+    /// the path is removed.
     #[must_use]
     pub fn new(label: &str) -> Self {
-        let path = std::env::temp_dir().join(format!("fez-{label}-{}.jsonl", std::process::id()));
+        // Use /tmp/fez/ so the path passes is_safe_file_sink_path().
+        let dir = std::path::PathBuf::from("/tmp/fez");
+        let _ = std::fs::create_dir_all(&dir);
+        let path = dir.join(format!("fez-{label}-{}.jsonl", std::process::id()));
         let _ = std::fs::remove_file(&path);
         Self { path }
     }

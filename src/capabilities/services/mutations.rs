@@ -73,8 +73,6 @@ impl Mutation {
 /// confirmation is declined, auditing fails, or the privileged systemd call
 /// fails.
 pub(super) fn run(cli: &Cli, m: Mutation, unit: &str) -> Result<View> {
-    let unit = super::mangle_unit(unit);
-    let unit = unit.as_ref();
     let host = cli.resolved_host();
 
     // Layer 3: protected-unit policy — before anything privileged.

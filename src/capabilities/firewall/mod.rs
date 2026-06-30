@@ -41,6 +41,44 @@ fn dependency_missing() -> FezError {
     }
 }
 
+/// Validate a firewall service name before it reaches firewalld D-Bus calls.
+///
+/// Rejects empty, over-long, control-character, or `-`-prefixed names.
+/// Service names like `http`, `ssh`, and `cockpit` pass through.
+///
+/// # Errors
+///
+/// Returns [`FezError::Usage`] (exit 2) when the name is empty, exceeds
+/// [`MAX_LEN`], starts with `-`, or contains a control character.
+pub(crate) fn validate_firewall_service(name: &str) -> Result<()> {
+    const MAX_LEN: usize = 128;
+    if name.is_empty() {
+        return Err(FezError::Usage(
+            "firewall service name must not be empty".into(),
+        ));
+    }
+    if name.len() > MAX_LEN {
+        return Err(FezError::Usage(format!(
+            "firewall service name too long ({} > {MAX_LEN})",
+            name.len()
+        )));
+    }
+    if name.starts_with('-') {
+        return Err(FezError::Usage(format!(
+            "firewall service name must not start with '-': {name}"
+        )));
+    }
+    for ch in name.chars() {
+        if ch.is_control() {
+            return Err(FezError::Usage(format!(
+                "firewall service name contains control character U+{:04X}",
+                ch as u32
+            )));
+        }
+    }
+    Ok(())
+}
+
 /// A read-only firewall subcommand and its borrowed arguments.
 #[derive(Debug, PartialEq, Eq)]
 enum ReadAction<'a> {
@@ -430,5 +468,33 @@ mod tests {
                 timeout: Some(60),
             })
         ));
+    }
+
+    #[test]
+    fn validate_firewall_service_rejects_bad_names() {
+        assert!(matches!(
+            super::validate_firewall_service(""),
+            Err(FezError::Usage(_))
+        ));
+        assert!(matches!(
+            super::validate_firewall_service("--help"),
+            Err(FezError::Usage(_))
+        ));
+        assert!(matches!(
+            super::validate_firewall_service("foo\x00bar"),
+            Err(FezError::Usage(_))
+        ));
+        let long = "a".repeat(129);
+        assert!(matches!(
+            super::validate_firewall_service(&long),
+            Err(FezError::Usage(_))
+        ));
+    }
+
+    #[test]
+    fn validate_firewall_service_accepts_valid_names() {
+        assert!(super::validate_firewall_service("http").is_ok());
+        assert!(super::validate_firewall_service("ssh").is_ok());
+        assert!(super::validate_firewall_service("cockpit").is_ok());
     }
 }

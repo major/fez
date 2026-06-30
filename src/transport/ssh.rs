@@ -42,6 +42,21 @@ impl Transport for SshTransport {
         }
         cmd.arg("-o")
             .arg("BatchMode=yes")
+            // Belt-and-suspenders SSH hardening (Section 5 of the security model):
+            // - StrictHostKeyChecking=yes: refuse to connect if the host key is
+            //   absent from known_hosts or mismatches.  Without this a user whose
+            //   ~/.ssh/config has `StrictHostKeyChecking no` would silently
+            //   accept any host key, making the cockpit-bridge session MITM-able.
+            // - PasswordAuthentication=no: never fall back to keyboard-interactive
+            //   or password auth even if the user's config allows it.  fez is an
+            //   agent-driven tool; credentials belong in ssh-agent or key files.
+            // - SSH processes command-line -o options with higher precedence than
+            //   any -F config, so these override user-level settings regardless
+            //   of argument order.
+            .arg("-o")
+            .arg("StrictHostKeyChecking=yes")
+            .arg("-o")
+            .arg("PasswordAuthentication=no")
             .arg("-o")
             .arg("ControlMaster=auto")
             .arg("-o")
@@ -72,6 +87,12 @@ mod tests {
             .map(|a| a.to_string_lossy().into_owned())
             .collect();
         assert!(args.windows(2).any(|w| w == ["-o", "BatchMode=yes"]));
+        assert!(args
+            .windows(2)
+            .any(|w| w == ["-o", "StrictHostKeyChecking=yes"]));
+        assert!(args
+            .windows(2)
+            .any(|w| w == ["-o", "PasswordAuthentication=no"]));
         assert!(args.contains(&"fedora@host.example".to_string()));
         // target and bridge invocation both after `--` (prevents option injection)
         let dd = args.iter().position(|a| a == "--").unwrap();
@@ -121,6 +142,30 @@ mod tests {
         assert_eq!(
             ssh_config_from_env(Some("/etc/fez/ssh_config".into())),
             Some("/etc/fez/ssh_config".into())
+        );
+    }
+
+    /// fez hardening options must appear **after** the user-supplied -F config
+    /// so they override any weaker settings in the user's file.
+    #[test]
+    fn hardening_follows_config_flag() {
+        let t = SshTransport {
+            target: "target".into(),
+            config: Some("/etc/fez/ssh_config".into()),
+        };
+        let args: Vec<String> = t
+            .command()
+            .get_args()
+            .map(|a| a.to_string_lossy().into_owned())
+            .collect();
+        let config_pos = args.iter().position(|a| a == "-F").unwrap();
+        let strict_pos = args
+            .iter()
+            .position(|a| a == "StrictHostKeyChecking=yes")
+            .unwrap();
+        assert!(
+            strict_pos > config_pos,
+            "StrictHostKeyChecking appeared at index {strict_pos}, must be after -F at index {config_pos}"
         );
     }
 }

@@ -37,6 +37,38 @@ fn variant(signature: &str, value: Value) -> Value {
     json!({ "t": signature, "v": value })
 }
 
+/// Validate a package spec before it reaches dnf5daemon.
+///
+/// Rejects empty, over-long, control-character, or `-`-prefixed specs.
+/// dnf5daemon validates the spec syntactically; fez adds a structural
+/// guard against injection of arbitrary strings from an agent or script.
+fn validate_package_spec(spec: &str) -> Result<()> {
+    const MAX_LEN: usize = 512;
+    if spec.is_empty() {
+        return Err(FezError::Usage("package spec must not be empty".into()));
+    }
+    if spec.len() > MAX_LEN {
+        return Err(FezError::Usage(format!(
+            "package spec too long ({} > {MAX_LEN})",
+            spec.len()
+        )));
+    }
+    if spec.starts_with('-') {
+        return Err(FezError::Usage(format!(
+            "package spec must not start with '-': {spec}"
+        )));
+    }
+    for ch in spec.chars() {
+        if ch.is_control() {
+            return Err(FezError::Usage(format!(
+                "package spec contains control character U+{:04X}",
+                ch as u32
+            )));
+        }
+    }
+    Ok(())
+}
+
 /// Build an `a{sv}` options dict, variant-wrapping every value.
 ///
 /// Each entry is `(key, dbus_signature, value)`; the value is wrapped via
@@ -539,6 +571,10 @@ pub(super) fn run_mutation(
     specs: &[String],
     host: &str,
 ) -> Result<View> {
+    // Validate every spec before opening a privileged session.
+    for spec in specs {
+        validate_package_spec(spec)?;
+    }
     let (channel, session) = open_session(client, true)?;
     // Do the work in an inner closure so the session is closed on every path,
     // success or failure, before the result propagates.
@@ -886,5 +922,31 @@ mod tests {
     fn parse_plan_totals_install_size() {
         let items = json!([item("Install", "a", 100), item("Install", "b", 200)]);
         assert_eq!(parse_plan(&items).install_size_total, 300);
+    }
+
+    #[test]
+    fn validate_package_spec_rejects_bad_specs() {
+        use crate::error::FezError;
+        assert!(matches!(validate_package_spec(""), Err(FezError::Usage(_))));
+        assert!(matches!(
+            validate_package_spec("--help"),
+            Err(FezError::Usage(_))
+        ));
+        assert!(matches!(
+            validate_package_spec("foo\x00bar"),
+            Err(FezError::Usage(_))
+        ));
+        let long = "a".repeat(513);
+        assert!(matches!(
+            validate_package_spec(&long),
+            Err(FezError::Usage(_))
+        ));
+    }
+
+    #[test]
+    fn validate_package_spec_accepts_valid_specs() {
+        assert!(validate_package_spec("htop").is_ok());
+        assert!(validate_package_spec("nginx-1.26.2-1.fc41.x86_64").is_ok());
+        assert!(validate_package_spec("@development-tools").is_ok());
     }
 }
