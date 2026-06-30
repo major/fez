@@ -11,6 +11,7 @@ use crate::cli::{Cli, SystemAction};
 use crate::error::Result;
 
 mod metrics;
+mod power;
 mod reads;
 mod sessions;
 
@@ -34,7 +35,7 @@ pub fn dispatch(cli: &Cli, action: &SystemAction) -> i32 {
     render(cli, result)
 }
 
-/// Connect to the bridge and dispatch the requested read action.
+/// Connect to the bridge and dispatch the requested action.
 fn run(cli: &Cli, action: &SystemAction) -> Result<View> {
     let mut client = crate::capabilities::connect(cli)?;
     let host = client.host().to_string();
@@ -45,5 +46,8 @@ fn run(cli: &Cli, action: &SystemAction) -> Result<View> {
         SystemAction::Users => sessions::users(&mut client, &host),
         SystemAction::Inhibitors => sessions::inhibitors(&mut client, &host),
         SystemAction::BootEntries => sessions::boot_entries(&mut client, &host),
+        SystemAction::Reboot { force } => power::run(&mut client, &host, "reboot", *force),
+        SystemAction::Poweroff { force } => power::run(&mut client, &host, "poweroff", *force),
+        SystemAction::Suspend { force } => power::run(&mut client, &host, "suspend", *force),
     }
 }

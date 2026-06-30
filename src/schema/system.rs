@@ -89,6 +89,46 @@ pub(super) fn descriptors() -> Vec<Descriptor> {
             flags: vec!["--host", "--json"],
             examples: vec!["fez system boot-entries --json".into()],
         },
+        Descriptor {
+            id: "system.reboot",
+            summary: "Reboot the host",
+            long: "Reboot the host via systemd-logind. Requires --force to confirm \
+        and privilege escalation through cockpit. Checks CanReboot first; \
+        returns exit 9 if the host does not support reboot via logind. \
+        Audited as system-reboot.",
+            privileged: true,
+            output_kind: "PowerAction",
+            inputs: vec![],
+            flags: vec!["--host", "--json", "--force"],
+            examples: vec![
+                "fez system reboot --force".into(),
+                "fez --host web1 system reboot --force --json".into(),
+            ],
+        },
+        Descriptor {
+            id: "system.poweroff",
+            summary: "Power off the host",
+            long: "Power off the host via systemd-logind. Requires --force to confirm \
+        and privilege escalation through cockpit. Checks CanPowerOff first. \
+        Audited as system-poweroff.",
+            privileged: true,
+            output_kind: "PowerAction",
+            inputs: vec![],
+            flags: vec!["--host", "--json", "--force"],
+            examples: vec!["fez system poweroff --force".into()],
+        },
+        Descriptor {
+            id: "system.suspend",
+            summary: "Suspend the host",
+            long: "Suspend the host via systemd-logind. Requires --force to confirm \
+        and privilege escalation through cockpit. Checks CanSuspend first; \
+        returns exit 9 if suspend is not available. Audited as system-suspend.",
+            privileged: true,
+            output_kind: "PowerAction",
+            inputs: vec![],
+            flags: vec!["--host", "--json", "--force"],
+            examples: vec!["fez system suspend --force".into()],
+        },
     ]
 }
 
@@ -109,6 +149,9 @@ mod tests {
                 "system.users",
                 "system.inhibitors",
                 "system.boot-entries",
+                "system.reboot",
+                "system.poweroff",
+                "system.suspend",
             ]
         );
 

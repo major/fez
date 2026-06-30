@@ -24,6 +24,11 @@ pub(super) fn logind_reply(
         (LOGIN1_PATH, "org.freedesktop.DBus.Properties", "Get") => boot_entries(id, _args),
         (SESSION_42_PATH, "org.freedesktop.DBus.Properties", "GetAll") => session_42_props(id),
         (SESSION_7_PATH, "org.freedesktop.DBus.Properties", "GetAll") => session_7_props(id),
+        (LOGIN1_PATH, LOGIN1_IFACE, "CanReboot") => ok_reply(id, json!(["yes"])),
+        (LOGIN1_PATH, LOGIN1_IFACE, "CanPowerOff") => ok_reply(id, json!(["yes"])),
+        (LOGIN1_PATH, LOGIN1_IFACE, "CanSuspend") => ok_reply(id, json!(["na"])),
+        (LOGIN1_PATH, LOGIN1_IFACE, "Reboot") => ok_reply(id, json!([])),
+        (LOGIN1_PATH, LOGIN1_IFACE, "PowerOff") => ok_reply(id, json!([])),
         _ => err_reply(
             id,
             "org.freedesktop.DBus.Error.UnknownMethod",

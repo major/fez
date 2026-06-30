@@ -388,6 +388,24 @@ pub enum SystemAction {
     /// List boot loader entries.
     #[command(name = "boot-entries")]
     BootEntries,
+    /// Reboot the host (requires --force).
+    Reboot {
+        /// Confirm the reboot.
+        #[arg(long)]
+        force: bool,
+    },
+    /// Power off the host (requires --force).
+    Poweroff {
+        /// Confirm the power-off.
+        #[arg(long)]
+        force: bool,
+    },
+    /// Suspend the host (requires --force).
+    Suspend {
+        /// Confirm the suspend.
+        #[arg(long)]
+        force: bool,
+    },
 }
 
 /// Actions under the `storage` subcommand.
