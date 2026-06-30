@@ -20,6 +20,9 @@ pub(super) const HOSTNAME_PATH: &str = "/org/freedesktop/hostname1";
 pub(super) const TIMEDATE_NAME: &str = "org.freedesktop.timedate1";
 pub(super) const TIMEDATE_PATH: &str = "/org/freedesktop/timedate1";
 
+pub(super) const LOCALE_NAME: &str = "org.freedesktop.locale1";
+pub(super) const LOCALE_PATH: &str = "/org/freedesktop/locale1";
+
 pub(super) const PROPS_IFACE: &str = "org.freedesktop.DBus.Properties";
 
 /// Route a parsed `system` action to its handler and render the result.

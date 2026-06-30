@@ -9,11 +9,15 @@ pub(super) const HOSTNAME_PATH: &str = "/org/freedesktop/hostname1";
 /// timedate1 object path.
 pub(super) const TIMEDATE_PATH: &str = "/org/freedesktop/timedate1";
 
+/// locale1 object path.
+pub(super) const LOCALE_PATH: &str = "/org/freedesktop/locale1";
+
 /// Canned reply for a call against hostname1 or timedate1.
 pub(super) fn hosttime_reply(path: &str, method: &str, args: &[Value], id: &Value) -> Value {
     match (path, method) {
         (HOSTNAME_PATH, "Describe") => hostname_describe(id),
         (TIMEDATE_PATH, "GetAll") => timedate_getall(args, id),
+        (LOCALE_PATH, "GetAll") => locale_getall(args, id),
         _ => err_reply(
             id,
             "org.freedesktop.DBus.Error.UnknownMethod",
@@ -75,6 +79,29 @@ fn timedate_getall(args: &[Value], id: &Value) -> Value {
             "NTPSynchronized": {"t":"b","v":true},
             "TimeUSec": {"t":"t","v":1700006400000000u64},
             "RTCTimeUSec": {"t":"t","v":1700006400000000u64},
+        }]),
+    )
+}
+
+fn locale_getall(args: &[Value], id: &Value) -> Value {
+    let iface = args.first().and_then(Value::as_str).unwrap_or("");
+    if iface != "org.freedesktop.locale1" {
+        return err_reply(
+            id,
+            "org.freedesktop.DBus.Error.UnknownInterface",
+            format!("unknown interface: {iface}"),
+        );
+    }
+    ok_reply(
+        id,
+        json!([{
+            "Locale": {"t":"as","v":["LANG=en_US.UTF-8"]},
+            "X11Layout": {"t":"s","v":"us"},
+            "X11Model": {"t":"s","v":"pc105"},
+            "X11Variant": {"t":"s","v":""},
+            "X11Options": {"t":"s","v":""},
+            "VConsoleKeymap": {"t":"s","v":"us"},
+            "VConsoleKeymapToggle": {"t":"s","v":""},
         }]),
     )
 }

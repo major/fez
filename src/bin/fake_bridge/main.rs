@@ -292,7 +292,10 @@ fn handle_data(
         "open_session" | "list" | "install" | "remove" | "upgrade" | "resolve" | "do_transaction"
     );
 
-    let reply = if path == hosttime::HOSTNAME_PATH || path == hosttime::TIMEDATE_PATH {
+    let reply = if path == hosttime::HOSTNAME_PATH
+        || path == hosttime::TIMEDATE_PATH
+        || path == hosttime::LOCALE_PATH
+    {
         hosttime::hosttime_reply(path, method, &args, &id)
     } else if path.starts_with(fw::FW_PATH) {
         let on_privileged = privileged_channels.contains(&frame.channel);
