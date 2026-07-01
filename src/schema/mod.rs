@@ -8,6 +8,7 @@ pub mod help;
 
 mod dns;
 mod firewall;
+mod journal;
 mod network;
 mod packages;
 mod schemas;
@@ -201,6 +202,13 @@ static FLAG_TABLE: &[(&str, &str, &str, bool, Option<&str>, &[&str])] = &[
     ("--all",       "boolean", "Include all entries instead of the default subset.",                         false, None,             &[]),
     ("--zone",      "string",  "Firewall zone to target. Defaults to the target host's default zone.",       false, None,             &[]),
     ("--timeout",   "integer", "Auto-revert the runtime firewall change after this many seconds.",           false, None,             &[]),
+    ("--until",     "string",  "Only include entries until this journalctl time expression.",            false, None,             &[]),
+    ("--boot",      "string",  "Restrict to a specific boot. Omit value for current boot.",             false, None,             &[]),
+    ("--grep",      "string",  "Filter messages by regex pattern (server-side, PCRE).",                 false, None,             &[]),
+    ("--list-boots","boolean", "List available boot IDs instead of log entries.",                        false, None,             &["--unit","--since","--until","--priority","--grep","--boot","--output-fields"]),
+    ("--list-fields","boolean","List available journal field names.",                                    false, None,             &["--unit","--since","--until","--priority","--grep","--boot","--output-fields","--list-boots"]),
+    ("--output-fields","string","Additional journal fields to include (comma-separated).",              false, None,             &[]),
+    ("--unit",      "string",  "Filter by systemd unit (repeatable for journal).",                      true,  None,             &[]),
 ];
 
 /// Allowed active-state values for `services.list --state`.
@@ -307,6 +315,7 @@ pub fn registry() -> Vec<Descriptor> {
     descriptors.extend(storage::descriptors());
     descriptors.extend(system::descriptors());
     descriptors.extend(dns::descriptors());
+    descriptors.extend(journal::descriptors());
     for descriptor in &mut descriptors {
         for flag in ALWAYS_ADVERTISED_GLOBAL_FLAGS {
             if !descriptor.flags.contains(&flag) {

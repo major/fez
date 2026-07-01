@@ -221,6 +221,39 @@ pub enum TopCommand {
         #[command(subcommand)]
         action: DnsAction,
     },
+    /// Query the systemd journal.
+    Journal {
+        /// Filter by systemd unit (repeatable).
+        #[arg(long, action = clap::ArgAction::Append)]
+        unit: Vec<String>,
+        /// Only entries since this time (journalctl --since syntax).
+        #[arg(long)]
+        since: Option<String>,
+        /// Only entries until this time (journalctl --until syntax).
+        #[arg(long)]
+        until: Option<String>,
+        /// Minimum priority (emerg, alert, crit, err, warning, notice, info, debug, or 0-7).
+        #[arg(long)]
+        priority: Option<String>,
+        /// Maximum number of entries to return.
+        #[arg(long, default_value = "25")]
+        lines: u32,
+        /// Restrict to a specific boot (omit value for current boot).
+        #[arg(long, num_args = 0..=1, default_missing_value = "current")]
+        boot: Option<String>,
+        /// Filter messages by regex pattern.
+        #[arg(long)]
+        grep: Option<String>,
+        /// List available boot IDs.
+        #[arg(long, conflicts_with_all = &["unit", "since", "until", "priority", "grep", "boot", "output_fields"])]
+        list_boots: bool,
+        /// List available journal field names.
+        #[arg(long, conflicts_with_all = &["unit", "since", "until", "priority", "grep", "boot", "output_fields", "list_boots"])]
+        list_fields: bool,
+        /// Additional journal fields to include in output (comma-separated).
+        #[arg(long, value_delimiter = ',')]
+        output_fields: Vec<String>,
+    },
 }
 
 /// Actions under the `services` subcommand.

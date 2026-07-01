@@ -192,17 +192,19 @@ fn dry_run_schema() -> Value {
 ///
 /// `has_dry_run` should be true when the capability lists the `--dry-run` flag.
 pub(super) fn alternate_output_schemas(output_kind: &str, has_dry_run: bool) -> Option<Value> {
-    if !has_dry_run {
-        return None;
-    }
-    let alternate = match output_kind {
-        "PackageMutation" => json!({"kind": "PackagePlan", "schema": package_mutation_schema()}),
-        "ServiceMutation" | "ServiceEnablement" => {
-            json!({"kind": "DryRun", "schema": dry_run_schema()})
+    match output_kind {
+        "JournalEntries" => Some(json!([
+            {"kind": "JournalBoots", "schema": journal_boots_schema(), "when": "--list-boots"},
+            {"kind": "JournalFields", "schema": journal_fields_schema(), "when": "--list-fields"},
+        ])),
+        "PackageMutation" if has_dry_run => {
+            Some(json!([{"kind": "PackagePlan", "schema": package_mutation_schema()}]))
         }
-        _ => return None,
-    };
-    Some(json!([alternate]))
+        "ServiceMutation" | "ServiceEnablement" if has_dry_run => {
+            Some(json!([{"kind": "DryRun", "schema": dry_run_schema()}]))
+        }
+        _ => None,
+    }
 }
 
 fn service_status_schema() -> Value {
@@ -436,6 +438,47 @@ fn dns_query_schema() -> Value {
     )
 }
 
+fn journal_entries_schema() -> Value {
+    object_schema(
+        json!({
+            "entries": array_of(object_schema(json!({
+                "timestamp": string_prop(),
+                "hostname": string_prop(),
+                "identifier": string_prop(),
+                "pid": string_prop(),
+                "priority": string_prop(),
+                "message": string_prop(),
+            }), &["timestamp", "hostname", "identifier", "pid", "priority", "message"])),
+            "lines": integer_prop(),
+            "truncated": boolean_prop(),
+        }),
+        &["entries", "lines", "truncated"],
+    )
+}
+
+fn journal_boots_schema() -> Value {
+    object_schema(
+        json!({
+            "boots": array_of(object_schema(json!({
+                "id": integer_prop(),
+                "boot_id": string_prop(),
+                "first": string_prop(),
+                "last": string_prop(),
+            }), &["id", "boot_id", "first", "last"])),
+        }),
+        &["boots"],
+    )
+}
+
+fn journal_fields_schema() -> Value {
+    object_schema(
+        json!({
+            "fields": array_of(string_prop()),
+        }),
+        &["fields"],
+    )
+}
+
 /// Dispatch output kind to its JSON Schema. Adding a new kind requires only a
 /// new named function above and one entry in this match.
 pub(super) fn output_schema(kind: &str) -> Value {
@@ -463,6 +506,9 @@ pub(super) fn output_schema(kind: &str) -> Value {
         "DnsStatus" => dns_status_schema(),
         "DnsFlush" => dns_flush_schema(),
         "DnsQuery" => dns_query_schema(),
+        "JournalEntries" => journal_entries_schema(),
+        "JournalBoots" => journal_boots_schema(),
+        "JournalFields" => journal_fields_schema(),
         _ => object_schema(json!({}), &[]),
     }
 }

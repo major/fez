@@ -96,7 +96,7 @@ const LOG_PRIORITIES: &[&str] = &[
 /// Rejects values that start with `-` (prevents option injection into
 /// journalctl's argv). Other than that, journalctl's own parser validates
 /// the timestamp; fez only enforces the structural guard.
-fn validate_log_since(raw: &str) -> Result<()> {
+pub(crate) fn validate_log_since(raw: &str) -> Result<()> {
     if raw.is_empty() || raw.starts_with('-') {
         return Err(FezError::Usage(format!("invalid --since value: {raw}")));
     }
@@ -106,7 +106,7 @@ fn validate_log_since(raw: &str) -> Result<()> {
 /// Validate a journalctl `--priority` argument.
 ///
 /// Accepts the eight named syslog levels (case-insensitive) and numeric 0-7.
-fn validate_log_priority(raw: &str) -> Result<()> {
+pub(crate) fn validate_log_priority(raw: &str) -> Result<()> {
     if raw.is_empty() || raw.starts_with('-') {
         return Err(FezError::Usage(format!("invalid --priority value: {raw}")));
     }
