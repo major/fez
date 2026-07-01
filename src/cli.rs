@@ -24,6 +24,10 @@ pub struct Cli {
     #[arg(long, global = true)]
     pub force: bool,
 
+    /// Restrict SSH authentication to identities explicitly configured for the host.
+    #[arg(long, global = true)]
+    pub ssh_identities_only: bool,
+
     /// The subcommand to run.
     #[command(subcommand)]
     pub command: TopCommand,
@@ -611,6 +615,13 @@ mod tests {
             cli(&["fez", "--host", "fedora@box.example", "services", "list"]).resolved_host(),
             "fedora@box.example"
         );
+    }
+
+    #[test]
+    fn ssh_identities_only_defaults_off_and_parses_global_flag() {
+        assert!(!cli(&["fez", "services", "list"]).ssh_identities_only);
+        assert!(cli(&["fez", "--ssh-identities-only", "services", "list"]).ssh_identities_only);
+        assert!(cli(&["fez", "services", "list", "--ssh-identities-only"]).ssh_identities_only);
     }
 
     #[test]

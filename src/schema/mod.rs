@@ -174,6 +174,9 @@ fn input_choices(name: &'static str, required: bool, choices: &[&'static str]) -
     }
 }
 
+/// Global flags that every capability advertises.
+const ALWAYS_ADVERTISED_GLOBAL_FLAGS: [&str; 3] = ["--host", "--json", "--ssh-identities-only"];
+
 /// Static flag-spec table. Each row: (flag, ty, description, repeatable, default, conflicts_with).
 /// Adding a new flag requires only a new row here.
 #[rustfmt::skip]
@@ -183,6 +186,7 @@ static FLAG_TABLE: &[(&str, &str, &str, bool, Option<&str>, &[&str])] = &[
     ("--json",      "boolean", "Emit a fez/v1 JSON envelope.",                                               false, None,             &[]),
     ("--dry-run",   "boolean", "Resolve and report the planned mutation without applying it.",                false, None,             &[]),
     ("--force",     "boolean", "Override command-specific safety guardrails.",                               false, None,             &[]),
+    ("--ssh-identities-only", "boolean", "Restrict SSH auth to identities explicitly configured for the host.", false, None,             &[]),
     ("--state",     "string",  "Filter by active state.",                                                    false, None,             &[]),
     ("--since",     "string",  "Only include log entries since this journalctl time expression.",             false, None,             &[]),
     ("--priority",  "string",  "Only include log entries at this priority or higher.",                       false, None,             &[]),
@@ -303,6 +307,13 @@ pub fn registry() -> Vec<Descriptor> {
     descriptors.extend(storage::descriptors());
     descriptors.extend(system::descriptors());
     descriptors.extend(dns::descriptors());
+    for descriptor in &mut descriptors {
+        for flag in ALWAYS_ADVERTISED_GLOBAL_FLAGS {
+            if !descriptor.flags.contains(&flag) {
+                descriptor.flags.push(flag);
+            }
+        }
+    }
     descriptors
 }
 
@@ -341,6 +352,15 @@ mod tests {
                 "{} missing error schema",
                 d.id
             );
+        }
+    }
+
+    #[test]
+    fn every_descriptor_includes_always_advertised_global_flags() {
+        for d in registry() {
+            for flag in ALWAYS_ADVERTISED_GLOBAL_FLAGS {
+                assert!(d.flags.contains(&flag), "{} missing {flag}", d.id);
+            }
         }
     }
 

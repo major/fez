@@ -9,10 +9,21 @@ pub struct SshTransport {
     /// `FEZ_SSH_CONFIG`; lets callers (and the E2E harness) pin a hermetic
     /// config instead of relying on the ambient `~/.ssh/config`.
     config: Option<String>,
+    /// Whether to pass `IdentitiesOnly=yes` to restrict auth to configured identities.
+    identities_only: bool,
 }
 
 fn ssh_config_from_env(raw: Option<String>) -> Option<String> {
     raw.filter(|path| safe_ssh_config_path(path))
+}
+
+fn ssh_identities_only_from_env(raw: Option<String>) -> bool {
+    raw.as_deref().is_some_and(|value| {
+        value == "1"
+            || value.eq_ignore_ascii_case("true")
+            || value.eq_ignore_ascii_case("yes")
+            || value.eq_ignore_ascii_case("on")
+    })
 }
 
 fn safe_ssh_config_path(path: &str) -> bool {
@@ -27,9 +38,16 @@ fn safe_ssh_config_path(path: &str) -> bool {
 impl SshTransport {
     /// Build a transport for `target` (host, user@host, or ssh_config alias).
     pub fn new(target: &str) -> Self {
+        Self::new_with_identities_only(target, false)
+    }
+
+    /// Build a transport, optionally forcing `IdentitiesOnly=yes`.
+    pub fn new_with_identities_only(target: &str, identities_only: bool) -> Self {
         SshTransport {
             target: target.to_string(),
             config: ssh_config_from_env(std::env::var("FEZ_SSH_CONFIG").ok()),
+            identities_only: identities_only
+                || ssh_identities_only_from_env(std::env::var("FEZ_SSH_IDENTITIES_ONLY").ok()),
         }
     }
 }
@@ -50,12 +68,6 @@ impl Transport for SshTransport {
             // - PasswordAuthentication=no: never fall back to keyboard-interactive
             //   or password auth even if the user's config allows it.  fez is an
             //   agent-driven tool; credentials belong in ssh-agent or key files.
-            // - IdentitiesOnly=yes: only offer keys explicitly listed in
-            //   IdentityFile / CertificateFile directives (or the ssh_config
-            //   the user supplies via FEZ_SSH_CONFIG).  Without this, ssh offers
-            //   every key in the agent, which can hit MaxAuthTries on the target
-            //   and lock the user out — common in enterprise environments with
-            //   many identities loaded.
             // - SSH processes command-line -o options with higher precedence than
             //   any -F config, so these override user-level settings regardless
             //   of argument order.
@@ -64,16 +76,15 @@ impl Transport for SshTransport {
             .arg("-o")
             .arg("PasswordAuthentication=no")
             .arg("-o")
-            .arg("IdentitiesOnly=yes")
-            .arg("-o")
             .arg("ControlMaster=auto")
             .arg("-o")
             .arg("ControlPersist=60")
             .arg("-o")
-            .arg("ControlPath=~/.ssh/fez-%r@%h:%p")
-            .arg("--")
-            .arg(&self.target)
-            .arg("cockpit-bridge");
+            .arg("ControlPath=~/.ssh/fez-%r@%h:%p");
+        if self.identities_only {
+            cmd.arg("-o").arg("IdentitiesOnly=yes");
+        }
+        cmd.arg("--").arg(&self.target).arg("cockpit-bridge");
         cmd
     }
     fn host_label(&self) -> String {
@@ -87,7 +98,11 @@ mod tests {
 
     #[test]
     fn builds_ssh_argv() {
-        let t = SshTransport::new("fedora@host.example");
+        let t = SshTransport {
+            target: "fedora@host.example".into(),
+            config: None,
+            identities_only: false,
+        };
         let cmd = t.command();
         assert_eq!(cmd.get_program(), "ssh");
         let args: Vec<String> = cmd
@@ -101,7 +116,10 @@ mod tests {
         assert!(args
             .windows(2)
             .any(|w| w == ["-o", "PasswordAuthentication=no"]));
-        assert!(args.windows(2).any(|w| w == ["-o", "IdentitiesOnly=yes"]));
+        assert!(
+            !args.windows(2).any(|w| w == ["-o", "IdentitiesOnly=yes"]),
+            "IdentitiesOnly should be opt-in so agent-backed keys work by default: {args:?}"
+        );
         assert!(args.contains(&"fedora@host.example".to_string()));
         // target and bridge invocation both after `--` (prevents option injection)
         let dd = args.iter().position(|a| a == "--").unwrap();
@@ -111,7 +129,12 @@ mod tests {
 
     #[test]
     fn host_label_is_target() {
-        assert_eq!(SshTransport::new("h1").host_label(), "h1");
+        let t = SshTransport {
+            target: "h1".into(),
+            config: None,
+            identities_only: false,
+        };
+        assert_eq!(t.host_label(), "h1");
     }
 
     #[test]
@@ -119,6 +142,7 @@ mod tests {
         let t = SshTransport {
             target: "target".into(),
             config: Some("/run/fez/ssh_config".into()),
+            identities_only: false,
         };
         let args: Vec<String> = t
             .command()
@@ -136,6 +160,7 @@ mod tests {
         let t = SshTransport {
             target: "target".into(),
             config: None,
+            identities_only: false,
         };
         let args: Vec<String> = t
             .command()
@@ -154,6 +179,33 @@ mod tests {
         );
     }
 
+    #[test]
+    fn identities_only_env_parser_accepts_explicit_truthy_values() {
+        for value in ["1", "true", "TRUE", "yes", "YES", "on", "On"] {
+            assert!(
+                ssh_identities_only_from_env(Some(value.into())),
+                "expected {value:?} to enable IdentitiesOnly"
+            );
+        }
+    }
+
+    #[test]
+    fn identities_only_env_parser_rejects_absent_and_non_truthy_values() {
+        for value in [
+            None,
+            Some(""),
+            Some("0"),
+            Some("false"),
+            Some("no"),
+            Some("maybe"),
+        ] {
+            assert!(
+                !ssh_identities_only_from_env(value.map(str::to_string)),
+                "expected {value:?} not to enable IdentitiesOnly"
+            );
+        }
+    }
+
     /// fez hardening options must appear **after** the user-supplied -F config
     /// so they override any weaker settings in the user's file.
     #[test]
@@ -161,6 +213,7 @@ mod tests {
         let t = SshTransport {
             target: "target".into(),
             config: Some("/etc/fez/ssh_config".into()),
+            identities_only: true,
         };
         let args: Vec<String> = t
             .command()

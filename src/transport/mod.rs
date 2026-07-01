@@ -16,9 +16,17 @@ pub trait Transport {
 
 /// Select a transport from the global `--host` flag.
 pub fn from_host(host: Option<&str>) -> Box<dyn Transport> {
+    from_host_with_options(host, false)
+}
+
+/// Select a transport and apply SSH-specific global options when needed.
+pub fn from_host_with_options(host: Option<&str>, ssh_identities_only: bool) -> Box<dyn Transport> {
     match host {
         None | Some("localhost") | Some("local") => Box::new(local::LocalTransport::default()),
-        Some(h) => Box::new(ssh::SshTransport::new(h)),
+        Some(h) => Box::new(ssh::SshTransport::new_with_identities_only(
+            h,
+            ssh_identities_only,
+        )),
     }
 }
 
@@ -38,5 +46,17 @@ mod tests {
         let t = from_host(Some("fedora@host.example"));
         assert_eq!(t.host_label(), "fedora@host.example");
         assert_eq!(t.command().get_program(), "ssh");
+    }
+
+    #[test]
+    fn explicit_host_can_enable_identities_only() {
+        let t = from_host_with_options(Some("fedora@host.example"), true);
+        assert_eq!(t.host_label(), "fedora@host.example");
+        let args: Vec<String> = t
+            .command()
+            .get_args()
+            .map(|a| a.to_string_lossy().into_owned())
+            .collect();
+        assert!(args.iter().any(|arg| arg == "IdentitiesOnly=yes"));
     }
 }

@@ -60,11 +60,11 @@ Help, `fez describe`, and `fez man` derive from descriptors. Drift guards in `te
 
 The `services <action>` to `services.<action>` path/id mapping is covered by drift tests. Keep new descriptors consistent with that convention.
 
-## Global Safety Flags
+## Global Flags
 
-`--dry-run` and `--force` are clap globals on the root `Cli`, so clap accepts them on every subcommand.
+`--dry-run`, `--force`, and `--ssh-identities-only` are clap globals on the root `Cli`, so clap accepts them on every subcommand. `--ssh-identities-only` is a transport knob: it opts SSH connections into OpenSSH `IdentitiesOnly=yes`; by default fez omits that option so agent-backed keys (for example 1Password SSH agent keys) work like normal `ssh`.
 
-`inject()` hides a global from a leaf's help when that leaf's descriptor does not advertise it. The hide is help-only: a hidden global still parses as a no-op for read-only commands. This preserves the global CLI contract while keeping leaf help aligned with descriptors.
+`inject()` hides a safety global from a leaf's help when that leaf's descriptor does not advertise it. The hide is help-only: a hidden global still parses as a no-op for read-only commands. This preserves the global CLI contract while keeping leaf help aligned with descriptors.
 
 The implementation uses local hidden non-global shadow args with the same id because clap propagates globals lazily and child commands cannot reliably reach them with `mut_arg`.
 

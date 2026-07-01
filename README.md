@@ -43,7 +43,8 @@ fez --host web1 services status nginx.service --json
 ```
 
 Every command supports `--json` (the `fez/v1` envelope), `--host` (localhost by
-default), and layered `--help`.
+default), `--ssh-identities-only` (opt in to OpenSSH `IdentitiesOnly=yes`), and
+layered `--help`.
 
 ## License
 

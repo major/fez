@@ -58,7 +58,7 @@ For command details, CI caveats, release flow, and packaging, read `docs/agents/
 
 ## Env Vars
 
-Runtime knobs: `FEZ_BRIDGE`, `FEZ_AUDIT`, `FEZ_SSH_CONFIG`, `FEZ_ESCALATION`. Audit records also carry `FEZ_ACTOR`, `FEZ_CORRELATION_ID`, `FEZ_TARGET_HOST`, `FEZ_OPERATION`, `FEZ_UNIT`, and related metadata.
+Runtime knobs: `FEZ_BRIDGE`, `FEZ_AUDIT`, `FEZ_SSH_CONFIG`, `FEZ_SSH_IDENTITIES_ONLY`, `FEZ_ESCALATION`. Audit records also carry `FEZ_ACTOR`, `FEZ_CORRELATION_ID`, `FEZ_TARGET_HOST`, `FEZ_OPERATION`, `FEZ_UNIT`, and related metadata.
 
 Test-only fake-bridge knobs live in `docs/agents/testing.md`.
 
