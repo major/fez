@@ -25,6 +25,70 @@ pub fn run(cli: Cli) -> i32 {
         TopCommand::System { action } => crate::capabilities::system::dispatch(&cli, action),
         TopCommand::Storage { action } => crate::capabilities::storage::dispatch(&cli, action),
         TopCommand::Dns { action } => crate::capabilities::dns::dispatch(&cli, action),
+        TopCommand::Journal {
+            unit,
+            since,
+            until,
+            priority,
+            lines,
+            boot,
+            grep,
+            list_boots,
+            list_fields,
+            output_fields,
+        } => {
+            // Validate inputs.
+            for u in unit {
+                if let Err(e) = crate::capabilities::services::validate_unit(u) {
+                    return crate::capabilities::render(&cli, Err(e));
+                }
+            }
+            if let Some(ref s) = since {
+                if let Err(e) = crate::capabilities::services::validate_log_since(s) {
+                    return crate::capabilities::render(&cli, Err(e));
+                }
+            }
+            if let Some(ref s) = until {
+                if let Err(e) = crate::capabilities::services::validate_log_since(s) {
+                    return crate::capabilities::render(&cli, Err(e));
+                }
+            }
+            if let Some(ref p) = priority {
+                if let Err(e) = crate::capabilities::services::validate_log_priority(p) {
+                    return crate::capabilities::render(&cli, Err(e));
+                }
+            }
+            // Parse --boot: None = not specified, Some("current") = current boot,
+            // Some("-1") = specific boot offset.
+            let boot_parsed = boot.as_deref().map(|b| {
+                if b == "current" {
+                    None
+                } else {
+                    b.parse::<i64>().ok()
+                }
+            });
+            let args = crate::capabilities::journal::JournalArgs {
+                units: unit,
+                since: since.as_deref(),
+                until: until.as_deref(),
+                priority: priority.as_deref(),
+                lines: *lines,
+                boot: boot_parsed,
+                grep: grep.as_deref(),
+                list_boots: *list_boots,
+                list_fields: *list_fields,
+                output_fields,
+            };
+            match crate::capabilities::connect(&cli) {
+                Ok(mut client) => {
+                    let result = crate::capabilities::journal::run(
+                        &mut client, host.clone(), cli.json, &args,
+                    );
+                    crate::capabilities::render(&cli, result)
+                }
+                Err(e) => crate::capabilities::render(&cli, Err(e)),
+            }
+        }
     }
 }
 
