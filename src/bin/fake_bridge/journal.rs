@@ -117,20 +117,13 @@ fn handle_list_boots(stdout: &mut impl Write, channel: &str) -> std::io::Result<
 fn handle_list_fields(stdout: &mut impl Write, channel: &str) -> std::io::Result<()> {
     let fields = "MESSAGE\nPRIORITY\nSYSLOG_IDENTIFIER\n_PID\n_HOSTNAME\n\
                   _SYSTEMD_UNIT\n_BOOT_ID\n_COMM\n_EXE\n__REALTIME_TIMESTAMP\n";
-    write_frame(
-        stdout,
-        &Frame::new(channel, fields.as_bytes().to_vec()),
-    )?;
+    write_frame(stdout, &Frame::new(channel, fields.as_bytes().to_vec()))?;
     send_control(stdout, &json!({"command":"done","channel":channel}));
     send_control(stdout, &json!({"command":"close","channel":channel}));
     Ok(())
 }
 
-fn handle_entries(
-    stdout: &mut impl Write,
-    channel: &str,
-    argv: &[String],
-) -> std::io::Result<()> {
+fn handle_entries(stdout: &mut impl Write, channel: &str, argv: &[String]) -> std::io::Result<()> {
     let mut entries = canned_entries();
 
     // --unit filtering

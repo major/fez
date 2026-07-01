@@ -198,7 +198,11 @@ fn handle_open(
             let spawn_argv: Vec<String> = ctrl
                 .get("spawn")
                 .and_then(|v| v.as_array())
-                .map(|a| a.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+                .map(|a| {
+                    a.iter()
+                        .filter_map(|v| v.as_str().map(String::from))
+                        .collect()
+                })
                 .unwrap_or_default();
             if spawn_argv.first().map(|s| s.as_str()) == Some("journalctl") {
                 journal::handle_stream(stdout, &channel, &spawn_argv)?;
