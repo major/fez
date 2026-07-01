@@ -194,16 +194,18 @@ fn actor_from_uids(uid: libc::uid_t, euid: libc::uid_t) -> String {
 }
 
 /// A best-effort-unique correlation id for one invocation's records.
+///
+/// Built from the nanosecond-granularity wall-clock timestamp and process ID.
+/// FEZ is single-threaded and calls this at most a handful of times per
+/// invocation, so a sequential counter is unnecessary — two calls within the
+/// same nanosecond cannot happen in a single-threaded program.
 pub fn correlation_id() -> String {
-    use std::sync::atomic::{AtomicU64, Ordering};
-    static SEQ: AtomicU64 = AtomicU64::new(0);
     let nanos = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_nanos())
         .unwrap_or(0);
     let pid = std::process::id();
-    let seq = SEQ.fetch_add(1, Ordering::Relaxed);
-    format!("{nanos:x}-{pid:x}-{seq:x}")
+    format!("{nanos:x}-{pid:x}")
 }
 
 /// Encode one journal field in the systemd native protocol. Values without a

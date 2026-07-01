@@ -29,7 +29,18 @@ pub enum FezError {
     /// The bridge connection was closed unexpectedly.
     #[error("bridge connection closed")]
     BridgeClosed,
-    /// The bridge reported a problem; the string is a problem kind.
+    /// The bridge closed a channel because the resource was not found.
+    #[error("channel problem: {0}")]
+    ChannelNotFound(String),
+    /// The bridge closed a channel because authentication failed.
+    #[error("channel problem: {0}")]
+    ChannelAuthFailed(String),
+    /// The bridge closed a channel because the operation is not supported
+    /// on this host.
+    #[error("channel problem: {0}")]
+    ChannelNotSupported(String),
+    /// The bridge reported a problem with an unrecognised kind. The string is
+    /// the raw problem text from the bridge's channel close.
     #[error("channel problem: {0}")]
     Problem(String),
     /// A D-Bus call returned an error.
@@ -171,7 +182,10 @@ impl FezError {
             FezError::Decode(_) => "protocol-error",
             FezError::Timeout => "timeout",
             FezError::BridgeClosed => "bridge-closed",
-            FezError::Problem(p) => problem_code(p),
+            FezError::ChannelNotFound(_) => "not-found",
+            FezError::ChannelAuthFailed(_) => "auth-failed",
+            FezError::ChannelNotSupported(_) => "not-supported",
+            FezError::Problem(_) => "channel-problem",
             FezError::Dbus { .. } => "dbus-error",
             FezError::NotFound(_) => "not-found",
             FezError::Protected { .. } => "protected-unit",
@@ -189,7 +203,11 @@ impl FezError {
             // Match clap's own convention so plain-text and --json usage errors
             // share exit 2.
             FezError::Usage(_) => 2,
-            FezError::NotFound(_) | FezError::Problem(_) => 4,
+            FezError::NotFound(_)
+            | FezError::ChannelNotFound(_)
+            | FezError::ChannelAuthFailed(_)
+            | FezError::ChannelNotSupported(_)
+            | FezError::Problem(_) => 4,
             FezError::Timeout => 5,
             FezError::Spawn { .. } | FezError::BridgeClosed => 6,
             FezError::Dbus { .. } => 7,
@@ -249,16 +267,6 @@ impl FezError {
             })),
             _ => None,
         }
-    }
-}
-
-fn problem_code(p: &str) -> &'static str {
-    match p {
-        "not-found" => "not-found",
-        "access-denied" => "access-denied",
-        "authentication-failed" => "auth-failed",
-        "not-supported" => "not-supported",
-        _ => "channel-problem",
     }
 }
 
@@ -324,8 +332,19 @@ mod tests {
     }
 
     #[test]
-    fn maps_problem_to_code() {
-        assert_eq!(FezError::Problem("not-found".into()).code(), "not-found");
+    fn channel_problem_variants_map_to_expected_codes() {
+        assert_eq!(
+            FezError::ChannelNotFound("not-found".into()).code(),
+            "not-found"
+        );
+        assert_eq!(
+            FezError::ChannelAuthFailed("authentication-failed".into()).code(),
+            "auth-failed"
+        );
+        assert_eq!(
+            FezError::ChannelNotSupported("not-supported".into()).code(),
+            "not-supported"
+        );
         assert_eq!(FezError::Problem("weird".into()).code(), "channel-problem");
     }
 
@@ -453,17 +472,17 @@ mod tests {
     }
 
     #[test]
-    fn problem_code_covers_all_known_kinds() {
+    fn channel_variants_cover_all_known_problem_codes() {
         assert_eq!(
-            FezError::Problem("access-denied".into()).code(),
-            "access-denied"
+            FezError::ChannelNotFound("not-found".into()).code(),
+            "not-found"
         );
         assert_eq!(
-            FezError::Problem("authentication-failed".into()).code(),
+            FezError::ChannelAuthFailed("authentication-failed".into()).code(),
             "auth-failed"
         );
         assert_eq!(
-            FezError::Problem("not-supported".into()).code(),
+            FezError::ChannelNotSupported("not-supported".into()).code(),
             "not-supported"
         );
     }
@@ -515,7 +534,7 @@ mod tests {
             "refused: sshd.service is a protected unit (use --force to override)"
         );
         assert_eq!(
-            FezError::Problem("not-found".into()).to_string(),
+            FezError::ChannelNotFound("not-found".into()).to_string(),
             "channel problem: not-found"
         );
         assert_eq!(

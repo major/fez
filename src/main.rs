@@ -1,3 +1,8 @@
+use mimalloc::MiMalloc;
+
+#[global_allocator]
+static GLOBAL: MiMalloc = MiMalloc;
+
 fn main() {
     fez::reset_sigpipe();
     // parse_or_render honors --json for clap usage errors and renders help/
