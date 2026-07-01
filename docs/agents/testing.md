@@ -45,6 +45,7 @@ Firewalld fake bridge contracts:
 | --- | --- |
 | `FEZ_BRIDGE` | Bridge binary path used by tests. |
 | `FEZ_AUDIT` | Audit sink; tests commonly use `off` or `file:/path`. |
+| `FEZ_SSH_IDENTITIES_ONLY` | Truthy values (`1`, `true`, `yes`, `on`; case-insensitive for words) make SSH transport pass `IdentitiesOnly=yes`. Default is off. |
 | `FEZ_FAKE_PLAN` | Selects dnf5daemon `Goal.resolve` plan: `install`, `small`, `protected`, or `cascade`. |
 | `FEZ_FAKE_PACKAGE_COUNT` | Makes fake `Rpm.list` return a generated large package set for large-response hint tests. |
 | `FEZ_FAKE_STDERR_BYTES` | Makes the fake bridge write N bytes to stderr before the init frame, exercising child stderr draining. |
@@ -109,7 +110,7 @@ Firewalld fake bridge contracts:
 - Teardown is a single `EXIT` trap that destroys the shared Terraform stack, including tainted hosts.
 - Failures are not auto-filed as issues; forensics are printed inline to the matrix log.
 - Runs write `test/e2e/logs/matrix-<ts>.log` and update `test/e2e/logs/last-run.log`; inspect the log on failure.
-- SSH behavior is pinned with `FEZ_SSH_CONFIG` because OpenSSH ignores `$HOME/.ssh/config` non-interactively. The path must be absolute and under `/etc/fez/` or `/run/fez/`.
+- SSH config is pinned with `FEZ_SSH_CONFIG` because OpenSSH ignores `$HOME/.ssh/config` non-interactively. The path must be absolute and under `/etc/fez/` or `/run/fez/`. `IdentitiesOnly=yes` is not forced by default; set `FEZ_SSH_IDENTITIES_ONLY=1` or pass `--ssh-identities-only` when the E2E config names explicit identities and key offering should be restricted.
 - AWS credential preflight uses `aws sts get-caller-identity` and exits 2 when credentials are unavailable.
 - E2E provisioning hard-requires `cockpit-bridge cockpit-system firewalld`.
 - `dnf5daemon-server` is installed only for OSes where it exists. RHEL 10 lacks it; current package capability E2E treats exit 9 as `skip`, though the PackageKit fallback should be revisited in follow-up work.

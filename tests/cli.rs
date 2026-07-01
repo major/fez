@@ -31,7 +31,8 @@ fn global_flags_present() {
         .assert()
         .success()
         .stdout(contains("--host"))
-        .stdout(contains("--json"));
+        .stdout(contains("--json"))
+        .stdout(contains("--ssh-identities-only"));
 }
 
 #[test]

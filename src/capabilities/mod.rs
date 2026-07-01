@@ -17,7 +17,8 @@ use serde_json::Value;
 ///
 /// Propagates any spawn or handshake error from [`BridgeClient::connect`].
 pub fn connect(cli: &Cli) -> Result<BridgeClient> {
-    let transport = crate::transport::from_host(cli.host.as_deref());
+    let transport =
+        crate::transport::from_host_with_options(cli.host.as_deref(), cli.ssh_identities_only);
     BridgeClient::connect(transport.as_ref())
 }
 

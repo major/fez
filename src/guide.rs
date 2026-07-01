@@ -19,12 +19,12 @@ pub fn text() -> String {
     s.push_str(
         "  {apiVersion:\"fez/v1\", kind, host, status:\"ok\"|\"error\", data?, error?, hints?}\n\n",
     );
-    s.push_str("Global flags: --host <h> --json --dry-run --force\n\n");
+    s.push_str("Global flags: --host <h> --json --dry-run --force --ssh-identities-only\n\n");
     s.push_str("Exit codes:\n");
     for e in EXIT_CODES {
         s.push_str(&format!("  {:>2}  {:<14} {}\n", e.code, e.label, e.meaning));
     }
-    s.push_str("\nEnv vars: FEZ_ESCALATION, FEZ_SSH_CONFIG.\n");
+    s.push_str("\nEnv vars: FEZ_ESCALATION, FEZ_SSH_CONFIG, FEZ_SSH_IDENTITIES_ONLY.\n");
     s
 }
 
@@ -41,13 +41,14 @@ pub fn data() -> serde_json::Value {
             "apiVersion": "fez/v1",
             "fields": ["kind", "host", "status", "data", "error", "hints"]
         },
-        "globalFlags": ["--host", "--json", "--dry-run", "--force"],
+        "globalFlags": ["--host", "--json", "--dry-run", "--force", "--ssh-identities-only"],
         "exitCodes": EXIT_CODES.iter().map(|e| json!({
             "code": e.code, "label": e.label, "meaning": e.meaning
         })).collect::<Vec<_>>(),
         "envVars": [
             "FEZ_ESCALATION",
-            "FEZ_SSH_CONFIG"
+            "FEZ_SSH_CONFIG",
+            "FEZ_SSH_IDENTITIES_ONLY"
         ]
     })
 }
@@ -82,5 +83,24 @@ mod tests {
         let d = data();
         assert!(d["exitCodes"].as_array().unwrap().len() == EXIT_CODES.len());
         assert_eq!(d["envelope"]["apiVersion"], "fez/v1");
+    }
+
+    #[test]
+    fn guide_documents_ssh_identities_only_controls() {
+        let t = text();
+        assert!(t.contains("--ssh-identities-only"));
+        assert!(t.contains("FEZ_SSH_IDENTITIES_ONLY"));
+
+        let d = data();
+        assert!(d["globalFlags"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|flag| flag == "--ssh-identities-only"));
+        assert!(d["envVars"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|var| var == "FEZ_SSH_IDENTITIES_ONLY"));
     }
 }
