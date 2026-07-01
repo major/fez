@@ -4,6 +4,7 @@ mod dnf;
 mod fw;
 mod fwupd;
 mod hosttime;
+mod journal;
 mod logind;
 mod nm;
 mod pk;
@@ -194,24 +195,18 @@ fn handle_open(
     send_control(stdout, &json!({"command":"ready","channel":channel}));
     match payload {
         "stream" => {
-            let mut blob = serde_json::to_vec(&json!({
-                "__REALTIME_TIMESTAMP":"1700000000000000","PRIORITY":"6",
-                "SYSLOG_IDENTIFIER":"sshd","MESSAGE":"Server listening on port 22.","_PID":"1001"
-            }))
-            .unwrap();
-            blob.push(b'\n');
-            blob.extend_from_slice(
-                &serde_json::to_vec(&json!({
-                    "__REALTIME_TIMESTAMP":"1700000001000000","PRIORITY":"6",
-                    "SYSLOG_IDENTIFIER":"sshd","MESSAGE":"Accepted publickey for fedora","_PID":"1002"
-                }))
-                .unwrap(),
-            );
-            blob.push(b'\n');
-            blob.extend_from_slice(b"not-json\n");
-            write_frame(stdout, &Frame::new(&channel, blob))?;
-            send_control(stdout, &json!({"command":"done","channel":channel}));
-            send_control(stdout, &json!({"command":"close","channel":channel}));
+            let spawn_argv: Vec<String> = ctrl
+                .get("spawn")
+                .and_then(|v| v.as_array())
+                .map(|a| a.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+                .unwrap_or_default();
+            if spawn_argv.first().map(|s| s.as_str()) == Some("journalctl") {
+                journal::handle_stream(stdout, &channel, &spawn_argv)?;
+            } else {
+                // Non-journalctl stream: emit empty done/close.
+                send_control(stdout, &json!({"command":"done","channel":channel}));
+                send_control(stdout, &json!({"command":"close","channel":channel}));
+            }
         }
         "metrics1" => {
             handle_metrics1(stdout, &channel)?;

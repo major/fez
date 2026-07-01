@@ -87,7 +87,7 @@ fn stream_collects_journal_lines() {
         .split(|&b| b == b'\n')
         .filter(|l| serde_json::from_slice::<serde_json::Value>(l).is_ok())
         .collect();
-    assert_eq!(lines.len(), 2);
+    assert_eq!(lines.len(), 4);
 }
 
 #[test]
