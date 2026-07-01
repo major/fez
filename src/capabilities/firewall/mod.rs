@@ -272,9 +272,7 @@ fn map_fw_error(e: FezError, method: &str) -> FezError {
         FezError::Dbus { ref name, .. } if name.contains("UnknownMethod") => {
             FezError::UnsupportedApi(method.to_string())
         }
-        FezError::Problem(ref p) if p == "not-found" || p == "not-supported" => {
-            dependency_missing()
-        }
+        FezError::ChannelNotFound(_) | FezError::ChannelNotSupported(_) => dependency_missing(),
         other => other,
     }
 }
@@ -348,12 +346,16 @@ mod tests {
 
     #[test]
     fn map_fw_error_channel_problem_is_dependency_missing() {
-        for problem in ["not-found", "not-supported"] {
-            let mapped = map_fw_error(FezError::Problem(problem.into()), "getZones");
+        let cases: Vec<FezError> = vec![
+            FezError::ChannelNotFound("not-found".into()),
+            FezError::ChannelNotSupported("not-supported".into()),
+        ];
+        for case in cases {
+            let mapped = map_fw_error(case, "getZones");
             assert_eq!(
                 mapped.code(),
                 "dependency-missing",
-                "Problem({problem}) should map to dependency-missing"
+                "channel error should map to dependency-missing"
             );
         }
     }
@@ -362,7 +364,7 @@ mod tests {
     fn map_fw_error_passes_through_unrelated_errors() {
         assert_eq!(
             map_fw_error(
-                FezError::Problem("authentication-failed".into()),
+                FezError::ChannelAuthFailed("authentication-failed".into()),
                 "getZones"
             )
             .code(),

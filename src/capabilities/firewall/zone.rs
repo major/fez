@@ -397,9 +397,9 @@ mod tests {
             message: "no such method".into(),
         };
         assert!(!is_config_info_denied(&e));
-        assert!(!is_config_info_denied(&FezError::Problem(
-            "access-denied".into()
-        )));
+        assert!(!is_config_info_denied(&FezError::AccessDenied {
+            remediation: "test".into(),
+        }));
     }
 
     #[test]

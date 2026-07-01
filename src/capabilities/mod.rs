@@ -57,7 +57,7 @@ pub fn map_absent_service<T>(res: Result<T>, missing: impl FnOnce() -> FezError)
         Err(FezError::Dbus { name, .. }) if crate::error::is_service_unknown(&name) => {
             Err(missing())
         }
-        Err(FezError::Problem(ref p)) if p == "not-found" || p == "not-supported" => Err(missing()),
+        Err(FezError::ChannelNotFound(_)) | Err(FezError::ChannelNotSupported(_)) => Err(missing()),
         other => other,
     }
 }
@@ -232,18 +232,18 @@ mod tests {
         );
         assert!(matches!(mapped, Err(FezError::NotFound(_))));
 
-        // Problem("not-found") maps.
-        let mapped =
-            super::map_absent_service::<()>(Err(FezError::Problem("not-found".into())), || {
-                FezError::NotFound("svc".into())
-            });
+        // ChannelNotFound maps.
+        let mapped = super::map_absent_service::<()>(
+            Err(FezError::ChannelNotFound("not-found".into())),
+            || FezError::NotFound("svc".into()),
+        );
         assert!(matches!(mapped, Err(FezError::NotFound(_))));
 
-        // Problem("not-supported") maps.
-        let mapped =
-            super::map_absent_service::<()>(Err(FezError::Problem("not-supported".into())), || {
-                FezError::NotFound("svc".into())
-            });
+        // ChannelNotSupported maps.
+        let mapped = super::map_absent_service::<()>(
+            Err(FezError::ChannelNotSupported("not-supported".into())),
+            || FezError::NotFound("svc".into()),
+        );
         assert!(matches!(mapped, Err(FezError::NotFound(_))));
 
         // Other Problem passes through.

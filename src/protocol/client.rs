@@ -616,13 +616,20 @@ pub(crate) fn variant_value(v: &Value) -> &Value {
 /// A privileged channel that the bridge could not escalate closes with
 /// `problem: "access-denied"`; surface that as the dedicated [`FezError::AccessDenied`]
 /// (exit 11, with remediation) instead of a generic channel problem (exit 4),
-/// so privilege failures are distinguishable from missing resources. Any other
-/// problem string keeps the generic [`FezError::Problem`] mapping.
+/// so privilege failures are distinguishable from missing resources. Known
+/// problem codes use explicit [`FezError`] variants
+/// ([`ChannelNotFound`](FezError::ChannelNotFound),
+/// [`ChannelAuthFailed`](FezError::ChannelAuthFailed),
+/// [`ChannelNotSupported`](FezError::ChannelNotSupported)); unrecognised codes
+/// fall through to the catch-all [`FezError::Problem`] variant.
 fn close_problem_to_error(problem: Option<String>) -> FezError {
     match problem {
         Some(p) if p == "access-denied" => FezError::AccessDenied {
             remediation: ESCALATION_REMEDIATION.into(),
         },
+        Some(p) if p == "not-found" => FezError::ChannelNotFound(p),
+        Some(p) if p == "authentication-failed" => FezError::ChannelAuthFailed(p),
+        Some(p) if p == "not-supported" => FezError::ChannelNotSupported(p),
         Some(p) => FezError::Problem(p),
         None => FezError::Problem("channel-closed".into()),
     }

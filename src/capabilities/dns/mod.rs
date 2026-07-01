@@ -37,7 +37,7 @@ pub fn dispatch(cli: &Cli, action: &DnsAction) -> i32 {
 fn is_service_absent(e: &FezError) -> bool {
     match e {
         FezError::Dbus { name, .. } => crate::error::is_service_unknown(name),
-        FezError::Problem(p) => p == "not-found" || p == "not-supported",
+        FezError::ChannelNotFound(_) | FezError::ChannelNotSupported(_) => true,
         _ => false,
     }
 }
