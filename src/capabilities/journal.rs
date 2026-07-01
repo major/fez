@@ -8,6 +8,7 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 
 /// Parsed flags for `fez journal`.
+#[derive(Debug)]
 pub struct JournalArgs<'a> {
     /// Filter by systemd units (repeatable `--unit` flags).
     pub units: &'a [String],
@@ -67,7 +68,7 @@ struct BootEntry {
 pub fn run(
     client: &mut BridgeClient,
     host: String,
-    as_json: bool,
+    _as_json: bool,
     args: &JournalArgs,
 ) -> Result<View> {
     if args.list_boots {
@@ -76,7 +77,7 @@ pub fn run(
     if args.list_fields {
         return run_list_fields(client, host);
     }
-    run_entries(client, host, as_json, args)
+    run_entries(client, host, args)
 }
 
 fn run_list_boots(client: &mut BridgeClient, host: String) -> Result<View> {
@@ -128,12 +129,7 @@ fn run_list_fields(client: &mut BridgeClient, host: String) -> Result<View> {
     ))
 }
 
-fn run_entries(
-    client: &mut BridgeClient,
-    host: String,
-    _as_json: bool,
-    args: &JournalArgs,
-) -> Result<View> {
+fn run_entries(client: &mut BridgeClient, host: String, args: &JournalArgs) -> Result<View> {
     // Request one extra entry to detect truncation.
     let fetch_limit = args.lines.saturating_add(1);
     let argv = build_argv(args, fetch_limit);
@@ -268,8 +264,7 @@ fn format_human_line(entry: &JournalEntry, extra_fields: &[String]) -> String {
 fn format_timestamp(us: u64) -> String {
     let secs = (us / 1_000_000) as i64;
     let nanos = ((us % 1_000_000) * 1000) as u32;
-    // Use chrono-free manual formatting to avoid new deps.
-    // Format as seconds since epoch for now; proper formatting below.
+    // Chrono-free UTC formatting via Hinnant civil date algorithm.
 
     time_from_epoch(secs, nanos)
 }
