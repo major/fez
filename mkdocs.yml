@@ -1,0 +1,22 @@
+site_name: fez
+site_description: Agent-native management CLI for Fedora/RHEL
+repo_url: https://github.com/major/fez
+exclude_docs: |
+  agents/
+  superpowers/
+theme:
+  name: material
+  features:
+    - navigation.sections
+    - search.highlight
+    - search.suggest
+strict: true
+nav:
+  - Home: index.md
+  - Getting Started: getting-started.md
+  - Agent Guide:
+      - Overview: agent-guide/index.md
+      - JSON Envelope: agent-guide/json-envelope.md
+      - Safety & Guardrails: agent-guide/safety.md
+      - Remote Hosts: agent-guide/remote-hosts.md
+      - Workflows: agent-guide/workflows.md
