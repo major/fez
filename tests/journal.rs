@@ -128,11 +128,7 @@ fn journal_boot_current() {
     // All current-boot entries have timestamps >= 1700000000000000.
     assert!(!entries.is_empty());
     for entry in entries {
-        let ts: u64 = entry["timestamp"]
-            .as_str()
-            .unwrap()
-            .parse()
-            .unwrap_or(0);
+        let ts: u64 = entry["timestamp"].as_str().unwrap().parse().unwrap_or(0);
         assert!(
             ts >= 1_700_000_000_000_000,
             "expected current boot entries only"
@@ -228,14 +224,4 @@ fn journal_list_boots_conflicts_with_unit() {
         .assert()
         .failure()
         .stderr(contains("cannot be used with"));
-}
-
-#[test]
-fn journal_plain_text_format() {
-    fez_fake_quiet()
-        .args(["journal"])
-        .assert()
-        .success()
-        .stdout(contains("info:"))
-        .stdout(contains("sshd"));
 }

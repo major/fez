@@ -135,6 +135,7 @@ Canned fake: `CanReboot` = `"yes"`, `CanPowerOff` = `"yes"`, `CanSuspend` = `"na
 The subscription capability reads RHEL subscription status from `com.redhat.RHSM1`. RHEL only: absent on Fedora (exit 9).
 
 `system subscription` calls four RHSM interfaces:
+
 - `Consumer.GetUuid("")` for consumer UUID
 - `Entitlement.GetStatus("", "")` for entitlement status
 - `Products.ListInstalledProducts("", {}, "")` for installed products
@@ -179,6 +180,24 @@ Real cockpit-bridge encodes D-Bus `ay` byte arrays as base64 strings; the capabi
 `dns query <hostname>` calls `ResolveHostname(0, name, AF_UNSPEC, 0)`. Returns decoded IPv4/IPv6 addresses. NXDOMAIN maps to exit 4 (`not-found`). Requires systemd-resolved.
 
 Canned fake bridge data: 3 resolve1 links (2 with DNS, 3 and 10 without), global DNS `192.168.1.1` + `fd00::1`, cache stats `(100, 500, 50)`. NM DnsManager fallback: mode `default`, one interface `enp1s0` with `192.168.1.1`. Tests depend on that canned state.
+
+## Journal
+
+The journal capability queries systemd journal entries by spawning `journalctl` on the target host via cockpit-bridge's stream channel. Read-only: no privilege escalation.
+
+`fez journal` accepts journalctl-mirrored flags: `--unit` (repeatable), `--since`, `--until`, `--priority`, `--boot`, `--grep`, `--lines`, `--output-fields`. Default limit is 25 entries.
+
+Discovery: `--list-boots` lists available boot IDs. `--list-fields` lists available journal field names for use with `--output-fields`.
+
+Default fields per entry: `timestamp`, `hostname`, `identifier`, `pid`, `priority`, `message`. `--output-fields` adds fields to this set (never replaces).
+
+Truncation: when more entries exist than `--lines`, the envelope includes `"truncated": true` and a hint suggesting `--since`, `--grep`, `--priority`, or increased `--lines`.
+
+Plain text output uses journalctl-style one-liner format. Extra fields from `--output-fields` appear in brackets after the message.
+
+`--list-boots` returns `JournalBoots`. `--list-fields` returns `JournalFields`. Entry queries return `JournalEntries`. All three use standard `fez/v1` envelopes.
+
+The fake bridge serves canned journal data: 6 entries across 2 units (sshd, chronyd), 3 priorities (info, warning, err), and 2 boots. Fake filtering supports `--unit`, `--priority`, `--boot`, `--grep`, `--since`, and `--lines`. Tests depend on that canned state.
 
 ## Firewall
 
