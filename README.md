@@ -21,13 +21,13 @@ transport); both are pulled in automatically.
 
 ## Agent skill
 
-Agents can install the fez skill directly from this repository:
+Once the skill is merged to the default branch, agents can install it:
 
 ```bash
 npx skills add major/fez --skill fez
 ```
 
-The skill teaches the safe operating loop for `fez`: orient with `fez guide` or `fez system show`, discover capabilities, inspect unfamiliar commands with `fez describe`, prefer `--json`, and treat mutations with dry-run and guardrail awareness.
+The skill teaches safe `fez` workflows: orient, discover, describe, prefer `--json`, dry-run mutations, and respect guardrails.
 
 ## Usage
 

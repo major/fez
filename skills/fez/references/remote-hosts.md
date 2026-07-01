@@ -37,3 +37,15 @@ FEZ_SSH_IDENTITIES_ONLY=1 fez --host web1 system show --json
 ## Target Requirements
 
 The target needs `cockpit-bridge`. Remote transport needs `openssh-clients` locally. Some capabilities need target subsystem packages such as PCP, fwupd, RHSM, firewalld, UDisks2, systemd-resolved, dnf5daemon, or PackageKit. When a dependency is missing, prefer the JSON `hints` remediation over guessing.
+
+### Capability-to-dependency mapping
+
+| Capability | Target dependency |
+| --- | --- |
+| `fez system metrics` | `pcp` (Performance Co-Pilot) |
+| `fez system firmware` | `fwupd` |
+| `fez system subscription` | `subscription-manager` (RHEL) |
+| `fez firewall` | `firewalld` |
+| `fez storage` | `udisks2` |
+| `fez dns status` | `systemd-resolved` (preferred) or NetworkManager |
+| `fez packages` | `dnf5daemon` (preferred) or `packagekit` |

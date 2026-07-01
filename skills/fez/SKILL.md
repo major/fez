@@ -1,6 +1,6 @@
 ---
 name: fez
-description: Use when inspecting, troubleshooting, or managing Fedora/RHEL hosts with fez, cockpit-bridge, systemd services, packages, firewall, DNS, storage, network, or remote SSH targets
+description: Agent-native Fedora/RHEL management with fez — systemd services, packages, firewall, DNS, storage, network, remote hosts
 ---
 
 # Fez

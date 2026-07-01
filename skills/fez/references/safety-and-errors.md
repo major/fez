@@ -55,6 +55,13 @@ Mutation workflow:
 - a dry-run or read-only check confirms the target resource;
 - you can explain the guardrail being bypassed.
 
+Concrete guardrail examples (patterns, not exhaustive):
+
+- **Protected services**: operations on sshd.service, sshd.socket, ssh.service, ssh.socket, cockpit*, and fez* require `--force`.
+- **Dangerous packages**: removing kernel*, systemd*, glibc, dnf*, rpm*, sudo, openssh-server, cockpit*, dbus*, or transactions with large cascading removals trigger guardrails.
+- **Firewall lockout risks**: removing the current SSH service/port, changing the default zone, enabling panic mode, reloading with drift, or disabling masquerade require `--force`.
+- **System power actions**: reboot, poweroff, and halt require `--force`.
+
 ## Privilege Escalation
 
 Privileged operations escalate through cockpit. `fez` does not handle sudo passwords. `access-denied` often means the target lacks a usable cockpit escalation mechanism or policy allows discovery but denies mutation.

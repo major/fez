@@ -17,7 +17,7 @@ fez system firmware security --json
 fez system firmware upgrades --json
 ```
 
-Power actions are protected mutations. Inspect descriptors and user intent first:
+Protected mutations; inspect descriptors first:
 
 ```bash
 fez describe system.reboot --json
@@ -33,7 +33,7 @@ fez services status sshd.service --json
 fez services logs sshd.service --lines 100 --json
 ```
 
-Mutations include `start`, `stop`, `restart`, `reload`, `enable`, and `disable`:
+Common mutation pattern:
 
 ```bash
 fez describe services.restart --json
@@ -51,7 +51,7 @@ fez packages check-update --json
 fez packages repolist --json
 ```
 
-Mutations include `install`, `remove`, and `upgrade`:
+Common mutation pattern:
 
 ```bash
 fez describe packages.install --json
@@ -69,7 +69,7 @@ fez network list --all --json
 fez network show enp1s0 --json
 ```
 
-Network commands are read-only. Use them for interface state, IP configuration, active connections, and DHCP details.
+Read-only: interface state, IP configuration, active connections, and DHCP details.
 
 ## Firewall
 
@@ -80,7 +80,7 @@ fez firewall show public --json
 fez firewall services --json
 ```
 
-Runtime mutations include adding and removing services or ports, setting the default zone, reload, confirm, panic mode, and masquerade:
+Runtime mutation pattern:
 
 ```bash
 fez describe firewall.add-service --json
@@ -88,6 +88,8 @@ fez firewall add-service public https --dry-run --json
 fez firewall add-service public https --json
 fez firewall confirm --json
 ```
+
+Firewall mutations change runtime state by default. `fez firewall confirm` persists runtime changes to permanent config.
 
 Firewall guardrails protect lockout-prone operations. Use `--force` only with explicit user intent and descriptor-confirmed risk.
 
@@ -110,4 +112,4 @@ fez dns query example.com --json
 fez dns flush --json
 ```
 
-`dns status` can use systemd-resolved or NetworkManager fallback. If the fallback lacks a feature, expect `dependency-missing` with remediation hints.
+`dns status` uses systemd-resolved or NetworkManager fallback; check hints on `dependency-missing`.
