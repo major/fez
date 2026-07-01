@@ -387,3 +387,6 @@ pub mod storage;
 
 /// DNS resolver capability (systemd-resolved).
 pub mod dns;
+
+/// systemd journal query capability.
+pub mod journal;
