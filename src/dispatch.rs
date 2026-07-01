@@ -82,7 +82,10 @@ pub fn run(cli: Cli) -> i32 {
             match crate::capabilities::connect(&cli) {
                 Ok(mut client) => {
                     let result = crate::capabilities::journal::run(
-                        &mut client, host.clone(), cli.json, &args,
+                        &mut client,
+                        host.clone(),
+                        cli.json,
+                        &args,
                     );
                     crate::capabilities::render(&cli, result)
                 }

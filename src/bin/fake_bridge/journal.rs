@@ -123,6 +123,21 @@ fn handle_list_fields(stdout: &mut impl Write, channel: &str) -> std::io::Result
     Ok(())
 }
 
+/// Convert named priority to numeric (e.g., "err" -> 3).
+fn priority_to_num(s: &str) -> Option<u32> {
+    match s {
+        "emerg" => Some(0),
+        "alert" => Some(1),
+        "crit" => Some(2),
+        "err" => Some(3),
+        "warning" => Some(4),
+        "notice" => Some(5),
+        "info" => Some(6),
+        "debug" => Some(7),
+        _ => s.parse::<u32>().ok(),
+    }
+}
+
 fn handle_entries(stdout: &mut impl Write, channel: &str, argv: &[String]) -> std::io::Result<()> {
     let mut entries = canned_entries();
 
@@ -143,7 +158,7 @@ fn handle_entries(stdout: &mut impl Write, channel: &str, argv: &[String]) -> st
     // --priority filtering
     if let Some(pos) = argv.iter().position(|a| a == "--priority") {
         if let Some(p_str) = argv.get(pos + 1) {
-            if let Ok(max_pri) = p_str.parse::<u32>() {
+            if let Some(max_pri) = priority_to_num(p_str) {
                 entries.retain(|e| {
                     e["PRIORITY"]
                         .as_str()
