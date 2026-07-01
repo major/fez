@@ -19,6 +19,16 @@ sudo dnf install fez
 Requires `cockpit-bridge` (the substrate) and `openssh-clients` (remote
 transport); both are pulled in automatically.
 
+## Agent skill
+
+Agents can install the fez skill directly from this repository:
+
+```bash
+npx skills add major/fez --skill fez
+```
+
+The skill teaches the safe operating loop for `fez`: orient with `fez guide` or `fez system show`, discover capabilities, inspect unfamiliar commands with `fez describe`, prefer `--json`, and treat mutations with dry-run and guardrail awareness.
+
 ## Usage
 
 ```bash
