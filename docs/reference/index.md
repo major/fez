@@ -23,9 +23,32 @@ Every command accepts these flags anywhere on the command line:
 |------|---------|
 | `--host <h>` | Target host (defaults to localhost) |
 | `--json` | Emit a `fez/v1` JSON envelope |
-| `--dry-run` | Preview mutations without applying (no-op for reads) |
+| `--dry-run` | Preview mutations without applying (no-op for reads) — [see dry-run page](dry-run.md) |
 | `--force` | Bypass safety guardrails |
 | `--ssh-identities-only` | Restrict SSH to configured identities |
+
+## Environment Variables
+
+| Variable | Purpose |
+|----------|---------|
+| `FEZ_BRIDGE` | Override the cockpit-bridge binary path |
+| `FEZ_AUDIT` | Path to the audit log sink (JSON-lines) |
+| `FEZ_SSH_CONFIG` | Path to an SSH config file (defaults to `~/.ssh/config`) |
+| `FEZ_SSH_IDENTITIES_ONLY` | If set to `1`, equivalent to `--ssh-identities-only` |
+| `FEZ_ESCALATION` | Disable (`off`) or force a specific escalation mechanism |
+| `FEZ_ACTOR` | Actor identity recorded in audit entries |
+| `FEZ_CORRELATION_ID` | Correlation id recorded in audit entries |
+| `FEZ_TARGET_HOST` | Override the target host label in audit records |
+| `FEZ_OPERATION` | Operation label recorded in audit entries |
+| `FEZ_UNIT` | Unit label recorded in audit entries |
+
+The audit env vars (`FEZ_ACTOR`, `FEZ_CORRELATION_ID`, etc.) are metadata
+attached to audit log records. They do not affect command behavior.
+
+## Packaging Commands
+
+`fez man` emits a roff man page on stdout. It is hidden from `fez --help`
+because it is only used by packaging scripts (e.g. RPM `%build`).
 
 ## Target Dependencies
 
