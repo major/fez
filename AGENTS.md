@@ -68,3 +68,6 @@ Test-only fake-bridge knobs live in `docs/agents/testing.md`.
 - Keep async/IO thin; put pure logic in sync helpers. Unit tests inline in `#[cfg(test)] mod tests`.
 - CLI serialization and bridge request bodies have different `None`/default semantics; test them separately.
 - README links a missing design spec at `docs/superpowers/specs/2026-06-09-agentic-os-design.md`; do not trust that link until it exists.
+- When a feature changes the CLI surface, output format, safety behavior, or
+  agent workflow, update the corresponding page in `docs/` and the skill
+  references in `skills/fez/references/` in the same commit.
