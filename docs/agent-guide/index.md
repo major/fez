@@ -62,10 +62,12 @@ then inspect `data` or `error` + `hints`.
 
 | Topic | Page |
 |-------|------|
+| Discovery loop: `fez capabilities`, `fez describe`, `fez guide` | [Discovery & Describe](discovery.md) |
 | Envelope format, exit codes, hints | [JSON Envelope](json-envelope.md) |
 | Guardrails, `--dry-run`, `--force` | [Safety & Guardrails](safety.md) |
 | SSH transport, `--host`, identities | [Remote Hosts](remote-hosts.md) |
 | End-to-end workflow examples | [Workflows](workflows.md) |
+| Every command fez can run | [Capability Reference](../reference/index.md) |
 
 ## Red Flags
 
