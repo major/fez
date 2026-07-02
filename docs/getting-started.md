@@ -88,5 +88,7 @@ Only use `--force` when you understand the risk and the user has confirmed.
 ## Next steps
 
 - [Agent Guide](agent-guide/index.md) — the full operating loop for LLM agents
+- [Discovery & Describe](agent-guide/discovery.md) — `fez capabilities`, `fez describe`, `fez guide`
+- [Capability Reference](reference/index.md) — every command fez can run
 - [JSON Envelope](agent-guide/json-envelope.md) — deep dive on parsing responses
 - [Safety & Guardrails](agent-guide/safety.md) — when and how to use `--force`
