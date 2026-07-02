@@ -17,19 +17,28 @@ The security model is intentionally simple:
 ## Trust Boundaries
 
 ```text
-+----------------------+        +-------------------------+
-| Operator workstation |        | Managed Fedora/RHEL host |
-|                      |        |                         |
-|  fez CLI             |        |  cockpit-bridge          |
-|  OpenSSH client      | -----> |  system D-Bus services   |
-|  user SSH identity   |  SSH   |  sudo / polkit policy    |
-+----------------------+        +-------------------------+
-        |                                  |
-        | local CLI process                | host authorization boundary
-        v                                  v
-  No fez daemon,                    Subsystems own state:
-  no stored host state,             systemd, firewalld, dnf,
-  no stored passwords               PackageKit, NetworkManager, ...
+Operator workstation
+  - fez CLI
+  - OpenSSH client
+  - user SSH identity
+        |
+        | SSH transport for remote hosts
+        v
+Managed Fedora/RHEL host
+  - cockpit-bridge
+  - system D-Bus services
+  - sudo / polkit policy
+        |
+        | host authorization boundary
+        v
+Host subsystems own state
+  - systemd, firewalld, dnf
+  - PackageKit, NetworkManager, ...
+
+fez local process boundary
+  - no fez daemon
+  - no stored host state
+  - no stored passwords
 ```
 
 Fez is a client. The managed host remains the source of truth for users,
