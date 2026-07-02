@@ -41,3 +41,5 @@ nav:
       - Storage: reference/storage.md
       - DNS: reference/dns.md
       - Journal: reference/journal.md
+      - Output Kinds: reference/output-kinds.md
+      - Dry-Run: reference/dry-run.md
