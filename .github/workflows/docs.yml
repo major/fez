@@ -12,11 +12,20 @@ on:
       - ".github/workflows/docs.yml"
 
 permissions:
-  contents: write
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: "pages"
+  cancel-in-progress: false
 
 jobs:
   deploy:
     name: deploy
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
@@ -34,14 +43,21 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
+      - name: Configure Pages
+        # v5.0.0
+        uses: actions/configure-pages@983d7736d9b0ae728b81ab479565c72886d7745b
+
       - name: Build docs
         run: mkdocs build --strict
 
-      - name: Deploy to GitHub Pages
-        # v4.0.0
+      - name: Upload artifact
+        # v3.0.0
         # yamllint disable-line rule:line-length
-        uses: peaceiris/actions-gh-pages@47f197a2200bb9de68ba5f48fad1c088eb1c4a32
+        uses: actions/upload-pages-artifact@56afc609e74202658d3ffba0e8f6dda462b719fa
         with:
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-          publish_dir: ./site
-          force_orphan: true
+          path: ./site
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        # v5.0.0
+        uses: actions/deploy-pages@cd2ce8fcbc39b97be8ca5e6e763baed58fa128
