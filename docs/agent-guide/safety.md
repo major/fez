@@ -1,7 +1,9 @@
 # Safety & Guardrails
 
 Fez protects against dangerous operations with a layered safety model. This
-page covers the mutation workflow, guardrails, and when to use `--force`.
+page covers the mutation workflow, guardrails, and when to use `--force`. For
+trust boundaries, remote access, and host-side authorization, see the
+[Security Model](security-model.md).
 
 ## Mutation Workflow
 

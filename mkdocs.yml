@@ -26,6 +26,7 @@ nav:
   - Agent Guide:
       - Overview: agent-guide/index.md
       - JSON Envelope: agent-guide/json-envelope.md
+      - Security Model: agent-guide/security-model.md
       - Safety & Guardrails: agent-guide/safety.md
       - Remote Hosts: agent-guide/remote-hosts.md
       - Workflows: agent-guide/workflows.md
