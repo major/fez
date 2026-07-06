@@ -331,17 +331,17 @@ fn list(ctx: &mut CapabilityContext<'_>, session: &str, filters: ListFilters<'_>
     data["limit"] = json!(filters.limit);
     data["offset"] = json!(filters.offset);
     data["next_offset"] = json!((end < total).then_some(end));
-    data["backend"] = json!("dnf5daemon");
+    domain::stamp_backend(&mut data, domain::DNF5_BACKEND);
     let mut hints = Vec::new();
-    if filters.limit.is_none() && total > 1000 {
-        hints.push(format!(
-            "This response has {total} rows. Prefer packages search <pattern>, use --name, or use --limit."
-        ));
+    if filters.limit.is_none() {
+        if let Some(hint) = domain::large_result_hint(total) {
+            hints.push(hint);
+        }
     }
     if let Some(hint) = malformed_records_hint("package", parsed.dropped) {
         hints.push(hint);
     }
-    let hints = (!hints.is_empty()).then(|| json!(hints));
+    let hints = domain::hints_array(hints);
     Ok(View::new("PackageList", ctx.host, data, human).with_hints_opt(hints))
 }
 
@@ -352,7 +352,7 @@ fn info(ctx: &mut CapabilityContext<'_>, session: &str, spec: &str) -> Result<Vi
         .first()
         .ok_or_else(|| FezError::NotFound(spec.to_string()))?;
     let mut pkg = first.object();
-    pkg["backend"] = json!("dnf5daemon");
+    domain::stamp_backend(&mut pkg, domain::DNF5_BACKEND);
     let human = format!(
         "Name        : {}\nVersion     : {}\nArch        : {}\nRepo        : {}\nInstall size: {}\nSummary     : {}\n",
         first.name,
@@ -380,7 +380,7 @@ fn search(ctx: &mut CapabilityContext<'_>, session: &str, pattern: &str) -> Resu
     let rows: Vec<Value> = packages.iter().map(PackageRecord::row).collect();
     let mut data = domain::package_table(rows);
     data["pattern"] = json!(pattern);
-    data["backend"] = json!("dnf5daemon");
+    domain::stamp_backend(&mut data, domain::DNF5_BACKEND);
     Ok(
         View::new("PackageSearch", ctx.host, data, human).with_hints_opt(
             malformed_records_hint("package", parsed.dropped).map(|hint| json!([hint])),
@@ -397,7 +397,7 @@ fn check_update(ctx: &mut CapabilityContext<'_>, session: &str) -> Result<View> 
     }
     let rows: Vec<Value> = packages.iter().map(PackageRecord::row).collect();
     let mut data = domain::package_table(rows);
-    data["backend"] = json!("dnf5daemon");
+    domain::stamp_backend(&mut data, domain::DNF5_BACKEND);
     Ok(
         View::new("PackageUpdates", ctx.host, data, human).with_hints_opt(
             malformed_records_hint("package", parsed.dropped).map(|hint| json!([hint])),
@@ -457,7 +457,7 @@ fn repolist(ctx: &mut CapabilityContext<'_>, session: &str, filter: RepoFilter) 
         rows.push(r.row());
     }
     let mut data = domain::repo_table(rows);
-    data["backend"] = json!("dnf5daemon");
+    domain::stamp_backend(&mut data, domain::DNF5_BACKEND);
     Ok(View::new("RepoList", ctx.host, data, human)
         .with_hints_opt(malformed_records_hint("repo", parsed.dropped).map(|hint| json!([hint]))))
 }
@@ -544,19 +544,13 @@ impl TransactionItem {
 impl ResolvedPlan {
     /// The plan rendered as the `fez/v1` data payload.
     fn data(&self) -> Value {
-        json!({
-            "install": self.install,
-            "remove": self.remove,
-            "upgrade": self.upgrade,
-            "downgrade": self.downgrade,
-            "install_size_total": self.install_size_total,
-            "counts": {
-                "install": self.install.len(),
-                "remove": self.remove.len(),
-                "upgrade": self.upgrade.len(),
-                "downgrade": self.downgrade.len(),
-            },
-        })
+        domain::plan_data(
+            &self.install,
+            &self.remove,
+            &self.upgrade,
+            &self.downgrade,
+            json!(self.install_size_total),
+        )
     }
 }
 
@@ -680,8 +674,8 @@ fn plan_view(
         map.insert("operation".into(), json!(m.verb()));
         map.insert("specs".into(), json!(specs));
         map.insert("dry_run".into(), json!(dry_run));
-        map.insert("backend".into(), json!("dnf5daemon"));
     }
+    domain::stamp_backend(&mut data, domain::DNF5_BACKEND);
     let counts = (
         plan.install.len(),
         plan.remove.len(),

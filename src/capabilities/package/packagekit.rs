@@ -246,7 +246,7 @@ fn new_tx(client: &mut BridgeClient, channel: &str) -> Result<String> {
 /// schema (no sizes) and the active backend.
 fn pk_hints() -> Option<Value> {
     Some(json!({
-        "backend": "packagekit",
+        "backend": domain::PACKAGEKIT_BACKEND,
         "note": "Running via the PackageKit fallback backend; install/download sizes are unavailable on this backend.",
     }))
 }
@@ -315,18 +315,17 @@ pub fn list(
     data["limit"] = json!(limit);
     data["offset"] = json!(offset);
     data["next_offset"] = json!((end < total).then_some(end));
-    data["backend"] = json!("packagekit");
+    domain::stamp_backend(&mut data, domain::PACKAGEKIT_BACKEND);
     let human = human_table(page);
-    let hints = if limit.is_none() && total > 1000 {
-        Some(json!([
-            pk_hints().expect("PackageKit hint is always present"),
-            format!(
-                "This response has {total} rows. Prefer packages search <pattern>, use --name, or use --limit."
-            )
-        ]))
-    } else {
-        pk_hints()
-    };
+    let hints =
+        if let (true, Some(large_hint)) = (limit.is_none(), domain::large_result_hint(total)) {
+            Some(json!([
+                pk_hints().expect("PackageKit hint is always present"),
+                large_hint
+            ]))
+        } else {
+            pk_hints()
+        };
     Ok(PkView {
         kind: "PackageList",
         data,
@@ -357,7 +356,7 @@ pub fn info(client: &mut BridgeClient, spec: &str) -> Result<PkView> {
         .first()
         .ok_or_else(|| FezError::NotFound(spec.to_string()))?;
     let mut data = p.object();
-    data["backend"] = json!("packagekit");
+    domain::stamp_backend(&mut data, domain::PACKAGEKIT_BACKEND);
     let human = format!(
         "Name        : {}\nVersion     : {}\nArch        : {}\nRepo        : {}\nInstall size: (unavailable)\nSummary     : {}\n",
         p.name,
@@ -395,7 +394,7 @@ pub fn search(client: &mut BridgeClient, pattern: &str) -> Result<PkView> {
     let rows: Vec<Value> = refs.iter().map(|p| p.row()).collect();
     let mut data = domain::package_table(rows);
     data["pattern"] = json!(pattern);
-    data["backend"] = json!("packagekit");
+    domain::stamp_backend(&mut data, domain::PACKAGEKIT_BACKEND);
     let mut human = String::new();
     for p in &refs {
         human.push_str(&format!("{} - {}\n", p.name, p.summary));
@@ -423,7 +422,7 @@ pub fn check_update(client: &mut BridgeClient) -> Result<PkView> {
     let refs: Vec<&PkPackage> = pkgs.iter().collect();
     let rows: Vec<Value> = refs.iter().map(|p| p.row()).collect();
     let mut data = domain::package_table(rows);
-    data["backend"] = json!("packagekit");
+    domain::stamp_backend(&mut data, domain::PACKAGEKIT_BACKEND);
     let mut human = format!("{:<24} {:<20} {}\n", "NAME", "VERSION", "REPO");
     for p in &refs {
         human.push_str(&format!("{:<24} {:<20} {}\n", p.name, p.version, p.repo()));
@@ -468,7 +467,7 @@ pub fn repolist(client: &mut BridgeClient, accepts: impl Fn(bool) -> bool) -> Re
         rows.push(repo.row());
     }
     let mut data = domain::repo_table(rows);
-    data["backend"] = json!("packagekit");
+    domain::stamp_backend(&mut data, domain::PACKAGEKIT_BACKEND);
     Ok(PkView {
         kind: "RepoList",
         data,
@@ -671,23 +670,17 @@ fn plan_view(
         plan.upgrade.len(),
         plan.downgrade.len(),
     );
-    let data = json!({
-        "operation": verb,
-        "specs": specs,
-        "dry_run": dry_run,
-        "backend": "packagekit",
-        "install": plan.install,
-        "remove": plan.remove,
-        "upgrade": plan.upgrade,
-        "downgrade": plan.downgrade,
-        "install_size_total": Value::Null,
-        "counts": {
-            "install": counts.0,
-            "remove": counts.1,
-            "upgrade": counts.2,
-            "downgrade": counts.3,
-        },
-    });
+    let mut data = domain::plan_data(
+        &plan.install,
+        &plan.remove,
+        &plan.upgrade,
+        &plan.downgrade,
+        Value::Null,
+    );
+    data["operation"] = json!(verb);
+    data["specs"] = json!(specs);
+    data["dry_run"] = json!(dry_run);
+    domain::stamp_backend(&mut data, domain::PACKAGEKIT_BACKEND);
     PkView {
         kind: plan_kind(dry_run),
         data,

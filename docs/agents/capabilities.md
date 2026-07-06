@@ -69,7 +69,7 @@ dnf5daemon details:
 
 PackageKit fallback details:
 
-- Implemented in `src/capabilities/packages_pk.rs` over `org.freedesktop.PackageKit`.
+- Implemented in `src/capabilities/package/packagekit.rs` over `org.freedesktop.PackageKit`.
 - Automatic and self-configuring; there is no `--backend` flag or env knob.
 - Signal-driven flow: `CreateTransaction` returns a transaction object path, then transaction methods emit `Package`, `RepoDetail`, `ErrorCode`, and terminating `Finished` signals collected by `BridgeClient::dbus_call_collect`.
 - Reads (`list`, `info`, `search`, `check-update`, `repolist`) run unprivileged.
