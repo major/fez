@@ -238,6 +238,50 @@ pub(super) fn hints_array(hints: Vec<String>) -> Option<Value> {
     (!hints.is_empty()).then(|| json!(hints))
 }
 
+/// Backend-neutral view of a resolved mutation plan's package buckets.
+pub(super) trait MutationPlanBuckets {
+    /// Packages to install.
+    fn install(&self) -> &[String];
+    /// Packages to remove.
+    fn remove(&self) -> &[String];
+    /// Packages to upgrade.
+    fn upgrade(&self) -> &[String];
+    /// Packages to downgrade.
+    fn downgrade(&self) -> &[String];
+}
+
+/// Counts tuple consumed by the shared human plan renderer.
+pub(super) fn plan_counts(plan: &impl MutationPlanBuckets) -> (usize, usize, usize, usize) {
+    (
+        plan.install().len(),
+        plan.remove().len(),
+        plan.upgrade().len(),
+        plan.downgrade().len(),
+    )
+}
+
+/// Build the shared mutation-plan payload view data from a bucketed plan.
+pub(super) fn mutation_plan_data_from_buckets(
+    operation: &str,
+    specs: &[String],
+    dry_run: bool,
+    backend: &str,
+    plan: &impl MutationPlanBuckets,
+    install_size_total: Value,
+) -> Value {
+    mutation_plan_data(
+        operation,
+        specs,
+        dry_run,
+        backend,
+        plan.install(),
+        plan.remove(),
+        plan.upgrade(),
+        plan.downgrade(),
+        install_size_total,
+    )
+}
+
 /// Build the shared mutation-plan payload body.
 pub(super) fn plan_data(
     install: &[String],
@@ -319,6 +363,28 @@ mod tests {
         }
         fn enabled(&self) -> bool {
             true
+        }
+    }
+
+    struct TestPlan {
+        install: Vec<String>,
+        remove: Vec<String>,
+        upgrade: Vec<String>,
+        downgrade: Vec<String>,
+    }
+
+    impl MutationPlanBuckets for TestPlan {
+        fn install(&self) -> &[String] {
+            &self.install
+        }
+        fn remove(&self) -> &[String] {
+            &self.remove
+        }
+        fn upgrade(&self) -> &[String] {
+            &self.upgrade
+        }
+        fn downgrade(&self) -> &[String] {
+            &self.downgrade
         }
     }
 
@@ -457,5 +523,34 @@ mod tests {
         assert_eq!(data["dry_run"], json!(true));
         assert_eq!(data["backend"], json!(DNF5_BACKEND));
         assert_eq!(data["counts"]["install"], json!(1));
+    }
+
+    #[test]
+    fn mutation_plan_bucket_helpers_preserve_counts_and_payload_shape() {
+        let specs = vec!["bash".to_string()];
+        let plan = TestPlan {
+            install: vec!["bash-1.x86_64".into()],
+            remove: vec!["old".into()],
+            upgrade: vec!["kernel".into()],
+            downgrade: vec![],
+        };
+
+        assert_eq!(plan_counts(&plan), (1, 1, 1, 0));
+        let data = mutation_plan_data_from_buckets(
+            "install",
+            &specs,
+            false,
+            PACKAGEKIT_BACKEND,
+            &plan,
+            Value::Null,
+        );
+
+        assert_eq!(data["install"], json!(["bash-1.x86_64"]));
+        assert_eq!(data["remove"], json!(["old"]));
+        assert_eq!(data["upgrade"], json!(["kernel"]));
+        assert_eq!(data["downgrade"], json!([]));
+        assert_eq!(data["install_size_total"], Value::Null);
+        assert_eq!(data["counts"]["downgrade"], json!(0));
+        assert_eq!(data["backend"], json!(PACKAGEKIT_BACKEND));
     }
 }

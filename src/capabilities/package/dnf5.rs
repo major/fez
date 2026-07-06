@@ -488,6 +488,21 @@ struct ResolvedPlan {
     remove_names: Vec<String>,
 }
 
+impl domain::MutationPlanBuckets for ResolvedPlan {
+    fn install(&self) -> &[String] {
+        &self.install
+    }
+    fn remove(&self) -> &[String] {
+        &self.remove
+    }
+    fn upgrade(&self) -> &[String] {
+        &self.upgrade
+    }
+    fn downgrade(&self) -> &[String] {
+        &self.downgrade
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum TransactionAction {
     Install,
@@ -559,15 +574,12 @@ impl TransactionItem {
 impl ResolvedPlan {
     /// The plan rendered as the `fez/v1` data payload.
     fn data(&self, operation: &str, specs: &[String], dry_run: bool) -> Value {
-        domain::mutation_plan_data(
+        domain::mutation_plan_data_from_buckets(
             operation,
             specs,
             dry_run,
             domain::DNF5_BACKEND,
-            &self.install,
-            &self.remove,
-            &self.upgrade,
-            &self.downgrade,
+            self,
             json!(self.install_size_total),
         )
     }
@@ -689,12 +701,7 @@ fn plan_view(
     dry_run: bool,
 ) -> View {
     let data = plan.data(m.verb(), specs, dry_run);
-    let counts = (
-        plan.install.len(),
-        plan.remove.len(),
-        plan.upgrade.len(),
-        plan.downgrade.len(),
-    );
+    let counts = domain::plan_counts(plan);
     let human = plan_human(m.verb(), specs, host, counts, dry_run);
     View::new(plan_kind(dry_run), host.to_string(), data, human)
 }

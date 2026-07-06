@@ -501,6 +501,21 @@ struct PkPlan {
     remove_names: Vec<String>,
 }
 
+impl domain::MutationPlanBuckets for PkPlan {
+    fn install(&self) -> &[String] {
+        &self.install
+    }
+    fn remove(&self) -> &[String] {
+        &self.remove
+    }
+    fn upgrade(&self) -> &[String] {
+        &self.upgrade
+    }
+    fn downgrade(&self) -> &[String] {
+        &self.downgrade
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum PkPlanAction {
     Install,
@@ -679,21 +694,13 @@ fn plan_view(
 ) -> PkView {
     use super::{plan_human, plan_kind};
     let verb = mutation.verb();
-    let counts = (
-        plan.install.len(),
-        plan.remove.len(),
-        plan.upgrade.len(),
-        plan.downgrade.len(),
-    );
-    let data = domain::mutation_plan_data(
+    let counts = domain::plan_counts(plan);
+    let data = domain::mutation_plan_data_from_buckets(
         verb,
         specs,
         dry_run,
         domain::PACKAGEKIT_BACKEND,
-        &plan.install,
-        &plan.remove,
-        &plan.upgrade,
-        &plan.downgrade,
+        plan,
         Value::Null,
     );
     PkView {
