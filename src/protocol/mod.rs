@@ -2,6 +2,8 @@
 
 /// Bridge client that drives D-Bus and stream channels.
 pub mod client;
+/// Internal bridge process lifecycle and framed I/O.
+mod connection;
 /// Length-prefixed frame encoding and decoding.
 pub mod frame;
 /// Control and D-Bus message types.
