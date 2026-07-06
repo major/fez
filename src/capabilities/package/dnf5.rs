@@ -170,6 +170,28 @@ struct PackageRecord {
     summary: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ParsedRecords<T> {
+    records: Vec<T>,
+    dropped: usize,
+}
+
+fn collect_records<T>(items: &[Value], parse: impl Fn(&Value) -> Option<T>) -> ParsedRecords<T> {
+    let mut records = Vec::new();
+    let mut dropped = 0;
+    for item in items {
+        match parse(item) {
+            Some(record) => records.push(record),
+            None => dropped += 1,
+        }
+    }
+    ParsedRecords { records, dropped }
+}
+
+fn malformed_records_hint(kind: &str, dropped: usize) -> Option<String> {
+    (dropped > 0).then(|| format!("Dropped {dropped} malformed dnf5daemon {kind} record(s)."))
+}
+
 impl PackageRecord {
     fn from_value(v: &Value) -> Option<Self> {
         // Required NEVRA fields must be present with the expected JSON value
@@ -239,15 +261,13 @@ pub(super) fn run_read(
     result
 }
 
-/// Call `Rpm.list` on the session with the given scope/patterns and return the
-/// parsed package array.
-fn rpm_list(
+fn rpm_list_records(
     client: &mut BridgeClient,
     channel: &str,
     session: &str,
     scope: &str,
     patterns: &[String],
-) -> Result<Vec<PackageRecord>> {
+) -> Result<ParsedRecords<PackageRecord>> {
     let out = client.dbus_call(
         channel,
         session,
@@ -262,8 +282,11 @@ fn rpm_list(
     Ok(out
         .get(0)
         .and_then(Value::as_array)
-        .map(|items| items.iter().filter_map(PackageRecord::from_value).collect())
-        .unwrap_or_default())
+        .map(|items| collect_records(items, PackageRecord::from_value))
+        .unwrap_or_else(|| ParsedRecords {
+            records: Vec::new(),
+            dropped: 0,
+        }))
 }
 
 fn list(ctx: &mut CapabilityContext<'_>, session: &str, filters: ListFilters<'_>) -> Result<View> {
@@ -272,7 +295,8 @@ fn list(ctx: &mut CapabilityContext<'_>, session: &str, filters: ListFilters<'_>
     } else {
         "installed"
     };
-    let packages = rpm_list(ctx.client, ctx.channel, session, scope, &[])?;
+    let parsed = rpm_list_records(ctx.client, ctx.channel, session, scope, &[])?;
+    let packages = parsed.records;
     // dnf5daemon's Rpm.list has no server-side repo filter (only install/upgrade
     // accept `repo_ids`, for resolution), so we filter client-side on the exact
     // `repo_id`. Multiple --repo flags union: a row is kept if its repo id is in
@@ -311,18 +335,22 @@ fn list(ctx: &mut CapabilityContext<'_>, session: &str, filters: ListFilters<'_>
     data["offset"] = json!(filters.offset);
     data["next_offset"] = json!((end < total).then_some(end));
     data["backend"] = json!("dnf5daemon");
-    let hints = if filters.limit.is_none() && total > 1000 {
-        Some(json!([format!(
+    let mut hints = Vec::new();
+    if filters.limit.is_none() && total > 1000 {
+        hints.push(format!(
             "This response has {total} rows. Prefer packages search <pattern>, use --name, or use --limit."
-        )]))
-    } else {
-        None
-    };
+        ));
+    }
+    if let Some(hint) = malformed_records_hint("package", parsed.dropped) {
+        hints.push(hint);
+    }
+    let hints = (!hints.is_empty()).then(|| json!(hints));
     Ok(View::new("PackageList", ctx.host, data, human).with_hints_opt(hints))
 }
 
 fn info(ctx: &mut CapabilityContext<'_>, session: &str, spec: &str) -> Result<View> {
-    let packages = rpm_list(ctx.client, ctx.channel, session, "all", &[spec.to_string()])?;
+    let parsed = rpm_list_records(ctx.client, ctx.channel, session, "all", &[spec.to_string()])?;
+    let packages = parsed.records;
     let first = packages
         .first()
         .ok_or_else(|| FezError::NotFound(spec.to_string()))?;
@@ -337,12 +365,17 @@ fn info(ctx: &mut CapabilityContext<'_>, session: &str, spec: &str) -> Result<Vi
         first.install_size,
         first.summary,
     );
-    Ok(View::new("PackageInfo", ctx.host, pkg, human))
+    Ok(
+        View::new("PackageInfo", ctx.host, pkg, human).with_hints_opt(
+            malformed_records_hint("package", parsed.dropped).map(|hint| json!([hint])),
+        ),
+    )
 }
 
 fn search(ctx: &mut CapabilityContext<'_>, session: &str, pattern: &str) -> Result<View> {
     let glob = format!("*{pattern}*");
-    let packages = rpm_list(ctx.client, ctx.channel, session, "available", &[glob])?;
+    let parsed = rpm_list_records(ctx.client, ctx.channel, session, "available", &[glob])?;
+    let packages = parsed.records;
     let mut human = String::new();
     for p in &packages {
         human.push_str(&format!("{} - {}\n", p.name, p.summary));
@@ -351,11 +384,16 @@ fn search(ctx: &mut CapabilityContext<'_>, session: &str, pattern: &str) -> Resu
     let mut data = crate::envelope::table_data(PKG_COLUMNS, rows);
     data["pattern"] = json!(pattern);
     data["backend"] = json!("dnf5daemon");
-    Ok(View::new("PackageSearch", ctx.host, data, human))
+    Ok(
+        View::new("PackageSearch", ctx.host, data, human).with_hints_opt(
+            malformed_records_hint("package", parsed.dropped).map(|hint| json!([hint])),
+        ),
+    )
 }
 
 fn check_update(ctx: &mut CapabilityContext<'_>, session: &str) -> Result<View> {
-    let packages = rpm_list(ctx.client, ctx.channel, session, "upgrades", &[])?;
+    let parsed = rpm_list_records(ctx.client, ctx.channel, session, "upgrades", &[])?;
+    let packages = parsed.records;
     let mut human = format!("{:<24} {:<20} {}\n", "NAME", "VERSION", "REPO");
     for p in &packages {
         human.push_str(&format!("{:<24} {:<20} {}\n", p.name, p.evr, p.repo_id,));
@@ -363,7 +401,11 @@ fn check_update(ctx: &mut CapabilityContext<'_>, session: &str) -> Result<View> 
     let rows: Vec<Value> = packages.iter().map(PackageRecord::row).collect();
     let mut data = crate::envelope::table_data(PKG_COLUMNS, rows);
     data["backend"] = json!("dnf5daemon");
-    Ok(View::new("PackageUpdates", ctx.host, data, human))
+    Ok(
+        View::new("PackageUpdates", ctx.host, data, human).with_hints_opt(
+            malformed_records_hint("package", parsed.dropped).map(|hint| json!([hint])),
+        ),
+    )
 }
 
 /// Column order for the columnar `RepoList` payload (`enabled` stays a bool).
@@ -403,14 +445,17 @@ fn repolist(ctx: &mut CapabilityContext<'_>, session: &str, filter: RepoFilter) 
             ("repo_attrs", "as", json!(["id", "name", "enabled"])),
         ])]),
     )?;
-    let raw: Vec<RepoRecord> = out
+    let parsed = out
         .get(0)
         .and_then(Value::as_array)
-        .map(|items| items.iter().filter_map(RepoRecord::from_value).collect())
-        .unwrap_or_default();
+        .map(|items| collect_records(items, RepoRecord::from_value))
+        .unwrap_or_else(|| ParsedRecords {
+            records: Vec::new(),
+            dropped: 0,
+        });
     let mut rows = Vec::new();
     let mut human = format!("{:<24} {:<10} {}\n", "REPO ID", "ENABLED", "NAME");
-    for r in &raw {
+    for r in &parsed.records {
         if !filter.accepts(r.enabled) {
             continue;
         }
@@ -419,7 +464,8 @@ fn repolist(ctx: &mut CapabilityContext<'_>, session: &str, filter: RepoFilter) 
     }
     let mut data = crate::envelope::table_data(REPO_COLUMNS, rows);
     data["backend"] = json!("dnf5daemon");
-    Ok(View::new("RepoList", ctx.host, data, human))
+    Ok(View::new("RepoList", ctx.host, data, human)
+        .with_hints_opt(malformed_records_hint("repo", parsed.dropped).map(|hint| json!([hint]))))
 }
 
 /// A resolved dnf5daemon transaction, bucketed by action for rendering and
@@ -827,6 +873,56 @@ mod tests {
     }
 
     #[test]
+    fn package_record_collection_counts_malformed_and_keeps_valid_rows() {
+        let items = vec![
+            json!({
+                "name": "bash",
+                "evr": "5.2.26-3.fc41",
+                "arch": "x86_64",
+                "repo_id": "fedora",
+                "install_size": 12345,
+                "summary": "Shell"
+            }),
+            json!({
+                "name": "broken",
+                "evr": "1-1",
+                "repo_id": "fedora"
+            }),
+        ];
+
+        let parsed = collect_records(&items, PackageRecord::from_value);
+
+        assert_eq!(parsed.dropped, 1);
+        assert_eq!(parsed.records.len(), 1);
+        assert_eq!(
+            parsed.records[0].row(),
+            json!(["bash", "5.2.26-3.fc41", "x86_64", "fedora", 12345, "Shell"])
+        );
+        assert_eq!(
+            malformed_records_hint("package", parsed.dropped),
+            Some("Dropped 1 malformed dnf5daemon package record(s).".into())
+        );
+    }
+
+    #[test]
+    fn package_record_collection_has_no_hint_for_all_valid_records() {
+        let items = vec![json!({
+            "name": "bash",
+            "evr": "5.2.26-3.fc41",
+            "arch": "x86_64",
+            "repo_id": "fedora",
+            "install_size": 12345,
+            "summary": "Shell"
+        })];
+
+        let parsed = collect_records(&items, PackageRecord::from_value);
+
+        assert_eq!(parsed.dropped, 0);
+        assert_eq!(parsed.records.len(), 1);
+        assert_eq!(malformed_records_hint("package", parsed.dropped), None);
+    }
+
+    #[test]
     fn repo_record_parses_variant_wrapped_fields() {
         let raw = json!({
             "id": {"t":"s","v":"fedora"},
@@ -874,6 +970,50 @@ mod tests {
         let repo = RepoRecord::from_value(&raw).expect("valid required fields");
 
         assert_eq!(repo.name, "");
+    }
+
+    #[test]
+    fn repo_record_collection_counts_malformed_and_keeps_valid_rows() {
+        let items = vec![
+            json!({
+                "id": {"t":"s","v":"fedora"},
+                "name": {"t":"s","v":"Fedora Everything"},
+                "enabled": {"t":"b","v":true}
+            }),
+            json!({
+                "id": {"t":"s","v":"broken"},
+                "name": {"t":"s","v":"Broken Repo"},
+                "enabled": {"t":"b","v":"yes"}
+            }),
+        ];
+
+        let parsed = collect_records(&items, RepoRecord::from_value);
+
+        assert_eq!(parsed.dropped, 1);
+        assert_eq!(parsed.records.len(), 1);
+        assert_eq!(
+            parsed.records[0].row(),
+            json!(["fedora", "Fedora Everything", true])
+        );
+        assert_eq!(
+            malformed_records_hint("repo", parsed.dropped),
+            Some("Dropped 1 malformed dnf5daemon repo record(s).".into())
+        );
+    }
+
+    #[test]
+    fn repo_record_collection_has_no_hint_for_all_valid_records() {
+        let items = vec![json!({
+            "id": {"t":"s","v":"fedora"},
+            "name": {"t":"s","v":"Fedora Everything"},
+            "enabled": {"t":"b","v":true}
+        })];
+
+        let parsed = collect_records(&items, RepoRecord::from_value);
+
+        assert_eq!(parsed.dropped, 0);
+        assert_eq!(parsed.records.len(), 1);
+        assert_eq!(malformed_records_hint("repo", parsed.dropped), None);
     }
 
     #[test]
