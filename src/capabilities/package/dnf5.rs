@@ -128,34 +128,35 @@ fn close_session(client: &mut BridgeClient, channel: &str, session: &str) {
     );
 }
 
-/// Deserialization intermediate for dnf5daemon's variant-wrapped package
-/// objects. Fields use [`Variant`] / [`VariantU64`] so the `{"t","v"}`
-/// envelope unwrapping is handled by serde, not per-field helper functions.
-#[derive(Debug, Default, serde::Deserialize)]
-struct PackageProps {
-    #[serde(default)]
-    name: Variant<String>,
-    #[serde(default)]
-    evr: Variant<String>,
-    #[serde(default)]
-    arch: Variant<String>,
-    #[serde(default)]
-    repo_id: Variant<String>,
-    #[serde(default)]
-    install_size: VariantU64,
-    #[serde(default)]
-    summary: Variant<String>,
+fn variant_string_field(v: &Value, field: &str) -> Option<String> {
+    serde_json::from_value::<Variant<String>>(v.get(field)?.clone())
+        .ok()
+        .map(Variant::into_inner)
 }
 
-/// Deserialization intermediate for dnf5daemon repo records.
-#[derive(Debug, Default, serde::Deserialize)]
-struct RepoProps {
-    #[serde(default)]
-    id: Variant<String>,
-    #[serde(default)]
-    name: Variant<String>,
-    #[serde(default)]
-    enabled: Variant<bool>,
+fn required_variant_string_field(v: &Value, field: &str) -> Option<String> {
+    variant_string_field(v, field).filter(|s| !s.is_empty())
+}
+
+fn optional_variant_string_field(v: &Value, field: &str) -> String {
+    // Optional display text: dnf5daemon may omit it on sparse records, and the
+    // established output contract represents absent text as an empty string.
+    variant_string_field(v, field).unwrap_or_default()
+}
+
+fn optional_variant_u64_field(v: &Value, field: &str) -> u64 {
+    // Optional size: not all dnf5daemon records include size; keep the existing
+    // output contract by rendering missing or malformed sizes as zero.
+    v.get(field)
+        .and_then(|value| serde_json::from_value::<VariantU64>(value.clone()).ok())
+        .map(|size| size.0)
+        .unwrap_or_default()
+}
+
+fn required_variant_bool_field(v: &Value, field: &str) -> Option<bool> {
+    serde_json::from_value::<Variant<bool>>(v.get(field)?.clone())
+        .ok()
+        .map(Variant::into_inner)
 }
 
 /// A package record parsed from dnf5daemon's variant-wrapped package object.
@@ -170,16 +171,18 @@ struct PackageRecord {
 }
 
 impl PackageRecord {
-    fn from_value(v: &Value) -> Self {
-        let props: PackageProps = serde_json::from_value(v.clone()).unwrap_or_default();
-        Self {
-            name: props.name.0,
-            evr: props.evr.0,
-            arch: props.arch.0,
-            repo_id: props.repo_id.0,
-            install_size: props.install_size.0,
-            summary: props.summary.0,
-        }
+    fn from_value(v: &Value) -> Option<Self> {
+        // Required NEVRA fields must be present with the expected JSON value
+        // type. `repo_id` is metadata: dnf5daemon can omit it for local or
+        // installed packages, so keep the historical empty-string default.
+        Some(Self {
+            name: required_variant_string_field(v, "name")?,
+            evr: required_variant_string_field(v, "evr")?,
+            arch: required_variant_string_field(v, "arch")?,
+            repo_id: optional_variant_string_field(v, "repo_id"),
+            install_size: optional_variant_u64_field(v, "install_size"),
+            summary: optional_variant_string_field(v, "summary"),
+        })
     }
 
     fn object(&self) -> Value {
@@ -259,7 +262,7 @@ fn rpm_list(
     Ok(out
         .get(0)
         .and_then(Value::as_array)
-        .map(|items| items.iter().map(PackageRecord::from_value).collect())
+        .map(|items| items.iter().filter_map(PackageRecord::from_value).collect())
         .unwrap_or_default())
 }
 
@@ -374,13 +377,14 @@ struct RepoRecord {
 }
 
 impl RepoRecord {
-    fn from_value(v: &Value) -> Self {
-        let props: RepoProps = serde_json::from_value(v.clone()).unwrap_or_default();
-        Self {
-            id: props.id.0,
-            name: props.name.0,
-            enabled: props.enabled.0,
-        }
+    fn from_value(v: &Value) -> Option<Self> {
+        // Required fields drive filtering and identity; optional display name
+        // keeps the established empty-string default when absent or malformed.
+        Some(Self {
+            id: required_variant_string_field(v, "id")?,
+            name: optional_variant_string_field(v, "name"),
+            enabled: required_variant_bool_field(v, "enabled")?,
+        })
     }
 
     fn row(&self) -> Value {
@@ -402,7 +406,7 @@ fn repolist(ctx: &mut CapabilityContext<'_>, session: &str, filter: RepoFilter) 
     let raw: Vec<RepoRecord> = out
         .get(0)
         .and_then(Value::as_array)
-        .map(|items| items.iter().map(RepoRecord::from_value).collect())
+        .map(|items| items.iter().filter_map(RepoRecord::from_value).collect())
         .unwrap_or_default();
     let mut rows = Vec::new();
     let mut human = format!("{:<24} {:<10} {}\n", "REPO ID", "ENABLED", "NAME");
@@ -467,18 +471,11 @@ struct TransactionPackage {
 
 impl TransactionPackage {
     fn from_value(v: &Value) -> Option<Self> {
-        let props: PackageProps = serde_json::from_value(v.clone()).ok()?;
-        let name = props.name.0;
-        let evr = props.evr.0;
-        let arch = props.arch.0;
-        if name.is_empty() || evr.is_empty() || arch.is_empty() {
-            return None;
-        }
         Some(Self {
-            name,
-            evr,
-            arch,
-            install_size: props.install_size.0,
+            name: required_variant_string_field(v, "name")?,
+            evr: required_variant_string_field(v, "evr")?,
+            arch: required_variant_string_field(v, "arch")?,
+            install_size: optional_variant_u64_field(v, "install_size"),
         })
     }
 
@@ -721,7 +718,7 @@ mod tests {
             "summary": {"t":"s","v":"The GNU Bourne Again shell"}
         });
 
-        let record = PackageRecord::from_value(&raw);
+        let record = PackageRecord::from_value(&raw).expect("valid package record");
 
         assert_eq!(record.name, "bash");
         assert_eq!(record.evr, "5.2.26-3.fc41");
@@ -764,10 +761,69 @@ mod tests {
             "summary": "Editor"
         });
 
-        let record = PackageRecord::from_value(&raw);
+        let record = PackageRecord::from_value(&raw).expect("valid package record");
 
         assert_eq!(record.install_size, 456);
         assert_eq!(record.nevra(), "vim-9.1.0-1.fc41.x86_64");
+    }
+
+    #[test]
+    fn package_record_rejects_missing_required_field() {
+        let raw = json!({
+            "name": "vim",
+            "evr": "9.1.0-1.fc41",
+            "repo_id": "updates",
+            "install_size": "456",
+            "summary": "Editor"
+        });
+
+        assert!(PackageRecord::from_value(&raw).is_none());
+    }
+
+    #[test]
+    fn package_record_rejects_wrong_type_required_field() {
+        let raw = json!({
+            "name": "vim",
+            "evr": {"t":"s","v":5},
+            "arch": "x86_64",
+            "repo_id": "updates",
+            "install_size": "456",
+            "summary": "Editor"
+        });
+
+        assert!(PackageRecord::from_value(&raw).is_none());
+    }
+
+    #[test]
+    fn package_record_defaults_missing_repo_id() {
+        let raw = json!({
+            "name": "vim",
+            "evr": "9.1.0-1.fc41",
+            "arch": "x86_64",
+            "install_size": "456",
+            "summary": "Editor"
+        });
+
+        let record = PackageRecord::from_value(&raw).expect("valid package record");
+
+        assert_eq!(record.repo_id, "");
+    }
+
+    #[test]
+    fn package_record_defaults_optional_fields() {
+        let raw = json!({
+            "name": "vim",
+            "evr": "9.1.0-1.fc41",
+            "arch": "x86_64",
+            "repo_id": "updates",
+            "install_size": "not-a-size",
+            "summary": {"t":"s","v":5}
+        });
+
+        let record = PackageRecord::from_value(&raw).expect("valid required fields");
+
+        assert_eq!(record.install_size, 0);
+        assert_eq!(record.summary, "");
     }
 
     #[test]
@@ -778,12 +834,46 @@ mod tests {
             "enabled": {"t":"b","v":true}
         });
 
-        let repo = RepoRecord::from_value(&raw);
+        let repo = RepoRecord::from_value(&raw).expect("valid repo record");
 
         assert_eq!(repo.id, "fedora");
         assert_eq!(repo.name, "Fedora Everything");
         assert!(repo.enabled);
         assert_eq!(repo.row(), json!(["fedora", "Fedora Everything", true]));
+    }
+
+    #[test]
+    fn repo_record_rejects_missing_required_field() {
+        let raw = json!({
+            "name": {"t":"s","v":"Fedora Everything"},
+            "enabled": {"t":"b","v":true}
+        });
+
+        assert!(RepoRecord::from_value(&raw).is_none());
+    }
+
+    #[test]
+    fn repo_record_rejects_malformed_required_field() {
+        let raw = json!({
+            "id": {"t":"s","v":"fedora"},
+            "name": {"t":"s","v":"Fedora Everything"},
+            "enabled": {"t":"b","v":"yes"}
+        });
+
+        assert!(RepoRecord::from_value(&raw).is_none());
+    }
+
+    #[test]
+    fn repo_record_defaults_optional_name() {
+        let raw = json!({
+            "id": {"t":"s","v":"fedora"},
+            "name": {"t":"s","v":5},
+            "enabled": {"t":"b","v":true}
+        });
+
+        let repo = RepoRecord::from_value(&raw).expect("valid required fields");
+
+        assert_eq!(repo.name, "");
     }
 
     #[test]
