@@ -124,6 +124,21 @@ fn inject_at(mut cmd: Command, path: &mut Vec<String>) -> Command {
 mod tests {
     use super::*;
 
+    fn find_path<'a>(cmd: &'a Command, path: &[&str]) -> Option<&'a Command> {
+        let mut current = cmd;
+        for name in path {
+            current = current.get_subcommands().find(|c| c.get_name() == *name)?;
+        }
+        Some(current)
+    }
+
+    fn help_for(args: &[&str]) -> String {
+        let err = crate::cli::command()
+            .try_get_matches_from(args)
+            .expect_err("--help should render help");
+        err.render().to_string()
+    }
+
     #[test]
     fn path_resolves_known_capability() {
         assert_eq!(
@@ -188,5 +203,67 @@ mod tests {
             .unwrap();
         assert!(start.get_long_about().is_some());
         assert!(start.get_after_help().is_some());
+    }
+
+    #[test]
+    fn inject_attaches_descriptor_help_to_every_capability_leaf() {
+        let cmd = inject(crate::cli::raw_command());
+        for descriptor in schema::registry() {
+            let path: Vec<&str> = descriptor.id.split('.').collect();
+            let leaf = find_path(&cmd, &path)
+                .unwrap_or_else(|| panic!("{} has no clap command", descriptor.id));
+
+            let long_about = leaf
+                .get_long_about()
+                .unwrap_or_else(|| panic!("{} missing long_about", descriptor.id))
+                .to_string();
+            assert_eq!(
+                long_about, descriptor.long,
+                "{} long_about drifted",
+                descriptor.id
+            );
+
+            let after_help = leaf
+                .get_after_help()
+                .unwrap_or_else(|| panic!("{} missing examples", descriptor.id))
+                .to_string();
+            assert!(
+                after_help.starts_with("Examples:"),
+                "{} examples block missing heading: {after_help}",
+                descriptor.id
+            );
+            for example in &descriptor.examples {
+                assert!(
+                    after_help.contains(example),
+                    "{} help missing example {example:?}",
+                    descriptor.id
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn read_only_leaf_help_hides_safety_globals_without_rejecting_them() {
+        let help = help_for(&["fez", "services", "list", "--help"]);
+        assert!(
+            !help.contains("--dry-run"),
+            "read-only help exposed --dry-run"
+        );
+        assert!(!help.contains("--force"), "read-only help exposed --force");
+
+        let matches = crate::cli::command()
+            .try_get_matches_from(["fez", "services", "list", "--dry-run", "--force"])
+            .expect("hidden safety globals should remain parseable");
+        let cli = <crate::cli::Cli as clap::FromArgMatches>::from_arg_matches(&matches)
+            .expect("hidden safety globals should construct Cli");
+        assert!(cli.dry_run);
+        assert!(cli.force);
+    }
+
+    #[test]
+    fn mutating_leaf_help_keeps_advertised_safety_globals_visible() {
+        let help = help_for(&["fez", "services", "start", "--help"]);
+        assert!(help.contains("--dry-run"), "mutation help hid --dry-run");
+        assert!(help.contains("--force"), "mutation help hid --force");
     }
 }

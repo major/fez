@@ -334,6 +334,73 @@ pub fn find(id: &str) -> Option<Descriptor> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use clap::Command;
+    use std::collections::BTreeSet;
+
+    fn descriptor_ids() -> BTreeSet<&'static str> {
+        registry().into_iter().map(|d| d.id).collect()
+    }
+
+    fn find_path<'a>(cmd: &'a Command, path: &[&str]) -> Option<&'a Command> {
+        let mut current = cmd;
+        for name in path {
+            current = current.get_subcommands().find(|c| c.get_name() == *name)?;
+        }
+        Some(current)
+    }
+
+    fn collect_leaf_paths(cmd: &Command, path: &mut Vec<String>, out: &mut Vec<Vec<String>>) {
+        let children: Vec<&Command> = cmd.get_subcommands().collect();
+        if !path.is_empty() && children.is_empty() {
+            out.push(path.clone());
+            return;
+        }
+        for child in children {
+            path.push(child.get_name().to_string());
+            collect_leaf_paths(child, path, out);
+            path.pop();
+        }
+    }
+
+    fn clap_leaf_paths() -> Vec<Vec<String>> {
+        let cmd = crate::cli::raw_command();
+        let mut paths = Vec::new();
+        collect_leaf_paths(&cmd, &mut Vec::new(), &mut paths);
+        paths
+    }
+
+    fn is_meta_leaf(path: &[String]) -> bool {
+        matches!(
+            path,
+            [name]
+                if matches!(
+                    name.as_str(),
+                    "capabilities" | "describe" | "guide" | "man"
+                )
+        )
+    }
+
+    fn leaf_argument_ids(leaf: &Command) -> BTreeSet<String> {
+        leaf.get_arguments()
+            .map(|arg| arg.get_id().as_str().to_string())
+            .collect()
+    }
+
+    fn leaf_positional_ids(leaf: &Command) -> BTreeSet<String> {
+        leaf.get_positionals()
+            .map(|arg| arg.get_id().as_str().to_string())
+            .collect()
+    }
+
+    fn accepted_long_flags(root: &Command, leaf: &Command) -> BTreeSet<String> {
+        let mut flags = BTreeSet::new();
+        for arg in root.get_arguments().chain(leaf.get_arguments()) {
+            if let Some(long) = arg.get_long() {
+                flags.insert(format!("--{long}"));
+            }
+        }
+        flags
+    }
 
     #[test]
     fn every_descriptor_has_long_and_examples() {
@@ -369,6 +436,109 @@ mod tests {
         for d in registry() {
             for flag in ALWAYS_ADVERTISED_GLOBAL_FLAGS {
                 assert!(d.flags.contains(&flag), "{} missing {flag}", d.id);
+            }
+        }
+    }
+
+    #[test]
+    fn every_descriptor_id_maps_to_a_clap_leaf() {
+        let cmd = crate::cli::raw_command();
+        for descriptor in registry() {
+            let path: Vec<&str> = descriptor.id.split('.').collect();
+            let leaf = find_path(&cmd, &path)
+                .unwrap_or_else(|| panic!("{} has no matching clap path", descriptor.id));
+            assert!(
+                leaf.get_subcommands().next().is_none(),
+                "{} maps to a non-leaf clap command",
+                descriptor.id
+            );
+        }
+    }
+
+    #[test]
+    fn every_clap_capability_leaf_has_a_descriptor() {
+        let ids = descriptor_ids();
+        for path in clap_leaf_paths() {
+            if is_meta_leaf(&path) {
+                continue;
+            }
+            let id = path.join(".");
+            assert!(ids.contains(id.as_str()), "{id} missing descriptor");
+        }
+    }
+
+    #[test]
+    fn descriptor_inputs_match_clap_arguments() {
+        let cmd = crate::cli::raw_command();
+        for descriptor in registry() {
+            let path: Vec<&str> = descriptor.id.split('.').collect();
+            let leaf = find_path(&cmd, &path).expect("descriptor path exists");
+            let args = leaf_argument_ids(leaf);
+            let positionals = leaf_positional_ids(leaf);
+
+            for input in &descriptor.inputs {
+                assert!(
+                    args.contains(input.name),
+                    "{} input {} is not accepted by clap",
+                    descriptor.id,
+                    input.name
+                );
+                if input.required {
+                    assert!(
+                        positionals.contains(input.name),
+                        "{} required input {} is not a clap positional",
+                        descriptor.id,
+                        input.name
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn descriptor_flags_match_clap_flags() {
+        let cmd = crate::cli::raw_command();
+        for descriptor in registry() {
+            let path: Vec<&str> = descriptor.id.split('.').collect();
+            let leaf = find_path(&cmd, &path).expect("descriptor path exists");
+            let accepted = accepted_long_flags(&cmd, leaf);
+
+            for flag in &descriptor.flags {
+                assert!(
+                    accepted.contains(*flag),
+                    "{} advertises {flag}, but clap does not accept it",
+                    descriptor.id
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn clap_leaf_arguments_are_documented_by_descriptor() {
+        let cmd = crate::cli::raw_command();
+        for descriptor in registry() {
+            let path: Vec<&str> = descriptor.id.split('.').collect();
+            let leaf = find_path(&cmd, &path).expect("descriptor path exists");
+
+            for arg in leaf.get_positionals() {
+                let name = arg.get_id().as_str();
+                assert!(
+                    descriptor.inputs.iter().any(|input| input.name == name),
+                    "{} clap positional {name} is not documented as an input",
+                    descriptor.id
+                );
+            }
+
+            for arg in leaf.get_arguments() {
+                let Some(long) = arg.get_long() else {
+                    continue;
+                };
+                let flag = format!("--{long}");
+                assert!(
+                    descriptor.flags.contains(&flag.as_str()),
+                    "{} clap flag {flag} is not documented by descriptor",
+                    descriptor.id
+                );
             }
         }
     }
