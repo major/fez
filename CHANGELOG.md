@@ -7,6 +7,93 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.0](https://github.com/major/fez/compare/v0.6.0...v0.7.0) - 2026-07-06
+
+### Added
+
+- add GitHub Actions workflow for mkdocs deploy
+- scaffold mkdocs+material config for docs site
+- journal schema descriptor and output schemas
+- wire fez journal into CLI and dispatch
+- add journal capability module
+- *(fake-bridge)* argv-aware journal stream handler
+- add fez agent skill
+- *(system)* add fwupd firmware list, security, upgrades
+- *(system)* add RHSM subscription status
+- *(system)* add reboot, poweroff, suspend power actions
+- *(system)* add sessions, users, inhibitors, boot-entries
+- *(system)* add locale fields to system show
+- *(dev)* add fuzz target for wire frame parser
+- *(dns)* fall back to NM DnsManager when resolved is absent
+- *(dns)* add integration tests and dependency-missing handling
+- *(dns)* add capability descriptors and output schemas
+- *(dns)* implement status, query, and flush capabilities
+- *(dns)* add DnsAction CLI enum and stub dispatch
+- *(fake-bridge)* add canned resolve1 handler
+
+### Fixed
+
+- *(package)* tighten dnf5 record parsing
+- correct SHA pins in docs workflow
+- address final review findings
+- *(ssh)* make IdentitiesOnly opt-in
+- *(firmware)* correct FWUPD_FLAG_UPDATABLE to bit 1 (0x2)
+- *(security)* enforce IdentitiesOnly=yes to prevent agent key lockouts
+- *(firewall)* protect ssh port removals by default
+- *(audit)* stop trusting env for audit identity
+- *(transport)* validate env-selected mechanisms
+- *(transport)* restrict bridge env override
+- *(protocol)* cap frame allocation at 16 MB to prevent OOM
+- *(safety)* prevent systemd path bypass of protected-unit check
+- *(ssh)* prevent argument injection via target host string
+- *(dns)* address CodeRabbit review findings
+- *(dns)* handle base64-encoded byte arrays from real cockpit-bridge
+
+### Other
+
+- *(protocol)* cover bridge connection lifecycle
+- *(protocol)* extract bridge connection lifecycle
+- *(package)* assert backend plan payload shapes
+- *(package)* share backend payload shaping
+- *(package)* fix PackageKit backend path
+- *(package)* share read payload helpers
+- *(schema)* keep coverage-neutral assertions
+- *(schema)* guard CLI descriptor parity
+- add output kind catalog and dry-run semantics
+- add discovery model and capability reference
+- fix security model diagram alignment
+- add security model guide
+- Merge pull request #150 from major/renovate/actions-upload-pages-artifact-5.x
+- *(deps)* update actions/upload-pages-artifact action to v5
+- default material theme to dark mode
+- use tags for first-party GitHub Pages actions
+- switch docs deploy to official GitHub Pages actions
+- gitignore mkdocs build output
+- add reminder to keep docs and skill refs current
+- write agent workflows reference
+- write remote hosts reference
+- write safety and guardrails reference
+- write JSON envelope reference
+- write agent guide overview
+- write getting-started guide
+- write landing page
+- implementation plan for mkdocs + GitHub Pages
+- mkdocs + GitHub Pages narrative docs design spec
+- add journal capability to capabilities.md
+- journal integration tests
+- fake bridge named priority support
+- auto-format fake_bridge journal handlers
+- refine fez skill guidance
+- document fez skill installation
+- *(error)* split Problem catch-all into explicit channel variants
+- *(audit)* replace static AtomicU64 with timestamp-only correlation id
+- add mimalloc global allocator (M-MIMALLOC-APPS)
+- *(capabilities)* extract shared map_absent_service helper
+- add sessions, power, subscription, firmware to agent docs
+- *(cleanup)* remove dead render_with_hints and dedup variant unwrap
+- *(dns)* document dual-backend (resolve1 + NM fallback)
+- *(dns)* add DNS capability to agent docs and architecture map
+
 ## [0.6.0](https://github.com/major/fez/compare/v0.5.0...v0.6.0) - 2026-06-26
 
 ### Added
