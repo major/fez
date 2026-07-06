@@ -217,27 +217,15 @@ mod tests {
                 .get_long_about()
                 .unwrap_or_else(|| panic!("{} missing long_about", descriptor.id))
                 .to_string();
-            assert_eq!(
-                long_about, descriptor.long,
-                "{} long_about drifted",
-                descriptor.id
-            );
+            assert_eq!(long_about, descriptor.long);
 
             let after_help = leaf
                 .get_after_help()
                 .unwrap_or_else(|| panic!("{} missing examples", descriptor.id))
                 .to_string();
-            assert!(
-                after_help.starts_with("Examples:"),
-                "{} examples block missing heading: {after_help}",
-                descriptor.id
-            );
+            assert!(after_help.starts_with("Examples:"));
             for example in &descriptor.examples {
-                assert!(
-                    after_help.contains(example),
-                    "{} help missing example {example:?}",
-                    descriptor.id
-                );
+                assert!(after_help.contains(example));
             }
         }
     }
@@ -245,10 +233,7 @@ mod tests {
     #[test]
     fn read_only_leaf_help_hides_safety_globals_without_rejecting_them() {
         let help = help_for(&["fez", "services", "list", "--help"]);
-        assert!(
-            !help.contains("--dry-run"),
-            "read-only help exposed --dry-run"
-        );
+        assert!(!help.contains("--dry-run"));
         assert!(!help.contains("--force"), "read-only help exposed --force");
 
         let matches = crate::cli::command()
