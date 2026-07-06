@@ -72,3 +72,76 @@ impl Drop for BridgeConnection {
         let _ = self.child.wait();
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::transport::Transport;
+    use std::process::{Command, Stdio};
+
+    struct CommandTransport {
+        program: &'static str,
+        args: &'static [&'static str],
+    }
+
+    impl Transport for CommandTransport {
+        fn command(&self) -> Command {
+            let mut command = Command::new(self.program);
+            command.args(self.args);
+            command
+        }
+
+        fn host_label(&self) -> String {
+            "test-host".to_string()
+        }
+    }
+
+    #[test]
+    fn spawn_failure_preserves_spawn_error() {
+        let transport = CommandTransport {
+            program: "/definitely/not/a/cockpit-bridge",
+            args: &[],
+        };
+
+        match BridgeConnection::spawn(&transport) {
+            Ok(_) => panic!("expected spawn error"),
+            Err(FezError::Spawn { program, .. }) => {
+                assert_eq!(program, "/definitely/not/a/cockpit-bridge");
+            }
+            Err(other) => panic!("expected spawn error, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn recv_reports_bridge_closed_when_stdout_ends() {
+        let transport = CommandTransport {
+            program: "/bin/sh",
+            args: &["-c", "exit 0"],
+        };
+        let connection = BridgeConnection::spawn(&transport).unwrap();
+
+        let error = connection.recv().unwrap_err();
+
+        assert!(matches!(error, FezError::BridgeClosed));
+    }
+
+    #[test]
+    fn drop_kills_child_process() {
+        let transport = CommandTransport {
+            program: "/bin/sleep",
+            args: &["60"],
+        };
+        let connection = BridgeConnection::spawn(&transport).unwrap();
+        let pid = connection.child.id();
+
+        drop(connection);
+
+        let status = Command::new("/bin/kill")
+            .args(["-0", &pid.to_string()])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .unwrap();
+        assert!(!status.success(), "child process {pid} should be gone");
+    }
+}
