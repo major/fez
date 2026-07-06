@@ -1,15 +1,9 @@
 use crate::error::{FezError, Result};
-use crate::protocol::frame::{read_frame, write_frame, Frame};
+use crate::protocol::connection::BridgeConnection;
+use crate::protocol::frame::Frame;
 use crate::protocol::message::{Control, DbusCall, DbusResponse, DbusSignal, IncomingControl};
 use crate::transport::Transport;
 use serde_json::{json, Value};
-use std::io;
-use std::process::{Child, Stdio};
-use std::sync::mpsc::{self, Receiver, RecvTimeoutError};
-use std::thread;
-use std::time::Duration;
-
-const DEFAULT_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Object path of the bridge's superuser controller on the internal bus.
 ///
@@ -59,9 +53,7 @@ pub struct MetricsSnapshot {
 /// A live connection to a spawned bridge process, multiplexing D-Bus and
 /// stream channels over its stdio.
 pub struct BridgeClient {
-    child: Child,
-    stdin: std::process::ChildStdin,
-    rx: Receiver<Frame>,
+    connection: BridgeConnection,
     host: String,
     next_channel: u64,
     /// Whether a root peer has been brought up via `cockpit.Superuser.Start`.
@@ -73,37 +65,8 @@ impl BridgeClient {
     /// Spawn the bridge via `transport`, perform the init handshake, and return
     /// a ready client.
     pub fn connect(transport: &dyn Transport) -> Result<BridgeClient> {
-        let mut cmd = transport.command();
-        let program = cmd.get_program().to_string_lossy().into_owned();
-        cmd.stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped());
-        let mut child = cmd
-            .spawn()
-            .map_err(|source| FezError::Spawn { program, source })?;
-        let stdin = child.stdin.take().expect("piped stdin");
-        let mut stdout = child.stdout.take().expect("piped stdout");
-        let mut stderr = child.stderr.take().expect("piped stderr");
-
-        // Always consume stderr so a noisy bridge or SSH transport cannot block
-        // on a full pipe while the client waits for stdout frames.
-        let _stderr_drain = thread::spawn(move || {
-            let _ = io::copy(&mut stderr, &mut io::sink());
-        });
-
-        let (tx, rx) = mpsc::channel::<Frame>();
-        thread::spawn(move || {
-            while let Ok(Some(frame)) = read_frame(&mut stdout) {
-                if tx.send(frame).is_err() {
-                    break;
-                }
-            }
-        });
-
         let mut client = BridgeClient {
-            child,
-            stdin,
-            rx,
+            connection: BridgeConnection::spawn(transport)?,
             host: transport.host_label(),
             next_channel: 1,
             escalated: false,
@@ -121,15 +84,11 @@ impl BridgeClient {
     }
 
     fn send_control(&mut self, c: &Control) -> Result<()> {
-        write_frame(&mut self.stdin, &Frame::control(&c.to_json())).map_err(FezError::Io)
+        self.connection.send_frame(&Frame::control(&c.to_json()))
     }
 
     fn recv(&self) -> Result<Frame> {
-        match self.rx.recv_timeout(DEFAULT_TIMEOUT) {
-            Ok(f) => Ok(f),
-            Err(RecvTimeoutError::Timeout) => Err(FezError::Timeout),
-            Err(RecvTimeoutError::Disconnected) => Err(FezError::BridgeClosed),
-        }
+        self.connection.recv()
     }
 
     /// Complete the bridge handshake.
@@ -346,7 +305,8 @@ impl BridgeClient {
         args: Value,
     ) -> Result<Value> {
         let call = DbusCall::new(channel, path, iface, method, args);
-        write_frame(&mut self.stdin, &Frame::new(channel, call.to_json())).map_err(FezError::Io)?;
+        self.connection
+            .send_frame(&Frame::new(channel, call.to_json()))?;
         loop {
             let frame = self.recv()?;
             if frame.channel.is_empty() {
@@ -400,7 +360,8 @@ impl BridgeClient {
         args: Value,
     ) -> Result<Vec<(String, Vec<Value>)>> {
         let call = DbusCall::new(channel, path, iface, method, args);
-        write_frame(&mut self.stdin, &Frame::new(channel, call.to_json())).map_err(FezError::Io)?;
+        self.connection
+            .send_frame(&Frame::new(channel, call.to_json()))?;
         let mut collected: Vec<(String, Vec<Value>)> = Vec::new();
         loop {
             let frame = self.recv()?;
@@ -578,13 +539,6 @@ impl BridgeClient {
                 }
             }
         }
-    }
-}
-
-impl Drop for BridgeClient {
-    fn drop(&mut self) {
-        let _ = self.child.kill();
-        let _ = self.child.wait();
     }
 }
 
