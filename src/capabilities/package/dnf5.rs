@@ -319,16 +319,7 @@ fn list(ctx: &mut CapabilityContext<'_>, session: &str, filters: ListFilters<'_>
         None => total,
     };
     let page = &filtered[start..end];
-    let mut human = format!(
-        "{:<24} {:<20} {:<10} {}\n",
-        "NAME", "VERSION", "ARCH", "REPO"
-    );
-    for p in page {
-        human.push_str(&format!(
-            "{:<24} {:<20} {:<10} {}\n",
-            p.name, p.evr, p.arch, p.repo_id,
-        ));
-    }
+    let human = domain::package_list_human_table(page.iter().copied());
     // Echo the requested repo filter so callers can confirm what was applied.
     let data = domain::package_list_data(
         page.iter().copied(),
@@ -396,10 +387,7 @@ fn search(ctx: &mut CapabilityContext<'_>, session: &str, pattern: &str) -> Resu
 fn check_update(ctx: &mut CapabilityContext<'_>, session: &str) -> Result<View> {
     let parsed = rpm_list_records(ctx.client, ctx.channel, session, "upgrades", &[])?;
     let packages = parsed.records;
-    let mut human = format!("{:<24} {:<20} {}\n", "NAME", "VERSION", "REPO");
-    for p in &packages {
-        human.push_str(&format!("{:<24} {:<20} {}\n", p.name, p.evr, p.repo_id,));
-    }
+    let human = domain::package_updates_human_table(packages.iter());
     let data = domain::package_table_data(packages.iter(), domain::DNF5_BACKEND);
     Ok(
         View::new("PackageUpdates", ctx.host, data, human).with_hints_opt(
@@ -464,14 +452,13 @@ fn repolist(ctx: &mut CapabilityContext<'_>, session: &str, filter: RepoFilter) 
             dropped: 0,
         });
     let mut shown = Vec::new();
-    let mut human = format!("{:<24} {:<10} {}\n", "REPO ID", "ENABLED", "NAME");
     for r in &parsed.records {
         if !filter.accepts(r.enabled) {
             continue;
         }
-        human.push_str(&format!("{:<24} {:<10} {}\n", r.id, r.enabled, r.name));
         shown.push(r);
     }
+    let human = domain::repo_human_table(shown.iter().copied());
     let data = domain::repo_table_data(shown, domain::DNF5_BACKEND);
     Ok(View::new("RepoList", ctx.host, data, human)
         .with_hints_opt(malformed_records_hint("repo", parsed.dropped).map(|hint| json!([hint]))))

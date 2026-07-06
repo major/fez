@@ -272,24 +272,6 @@ fn pk_hints() -> Option<Value> {
     }))
 }
 
-/// Human-readable NAME/VERSION/ARCH/REPO table for list output.
-fn human_table(pkgs: &[&PkPackage]) -> String {
-    let mut s = format!(
-        "{:<24} {:<20} {:<10} {}\n",
-        "NAME", "VERSION", "ARCH", "REPO"
-    );
-    for p in pkgs {
-        s.push_str(&format!(
-            "{:<24} {:<20} {:<10} {}\n",
-            p.name,
-            p.version,
-            p.arch,
-            p.repo()
-        ));
-    }
-    s
-}
-
 /// `packages list`: `GetPackages` with the INSTALLED or NEWEST filter.
 ///
 /// # Errors
@@ -336,7 +318,7 @@ pub fn list(
         offset,
         domain::PACKAGEKIT_BACKEND,
     );
-    let human = human_table(page);
+    let human = domain::package_list_human_table(page.iter().copied());
     let hints =
         if let (true, Some(large_hint)) = (limit.is_none(), domain::large_result_hint(total)) {
             Some(json!([
@@ -439,10 +421,7 @@ pub fn check_update(client: &mut BridgeClient) -> Result<PkView> {
     let pkgs = packages_from(&signals);
     let refs: Vec<&PkPackage> = pkgs.iter().collect();
     let data = domain::package_table_data(refs.iter().copied(), domain::PACKAGEKIT_BACKEND);
-    let mut human = format!("{:<24} {:<20} {}\n", "NAME", "VERSION", "REPO");
-    for p in &refs {
-        human.push_str(&format!("{:<24} {:<20} {}\n", p.name, p.version, p.repo()));
-    }
+    let human = domain::package_updates_human_table(refs.iter().copied());
     Ok(PkView {
         kind: "PackageUpdates",
         data,
@@ -471,17 +450,13 @@ pub fn repolist(client: &mut BridgeClient, accepts: impl Fn(bool) -> bool) -> Re
         .filter_map(|(_, args)| PkRepo::from_signal(args))
         .collect();
     let mut shown = Vec::new();
-    let mut human = format!("{:<24} {:<10} {}\n", "REPO ID", "ENABLED", "NAME");
     for repo in &repos {
         if !accepts(repo.enabled) {
             continue;
         }
-        human.push_str(&format!(
-            "{:<24} {:<10} {}\n",
-            repo.id, repo.enabled, repo.name
-        ));
         shown.push(repo);
     }
+    let human = domain::repo_human_table(shown.iter().copied());
     let data = domain::repo_table_data(shown, domain::PACKAGEKIT_BACKEND);
     Ok(PkView {
         kind: "RepoList",

@@ -219,6 +219,61 @@ where
     data
 }
 
+/// Human-readable NAME/VERSION/ARCH/REPO table for package list output.
+pub(super) fn package_list_human_table<T>(items: impl IntoIterator<Item = T>) -> String
+where
+    T: PackageRow,
+{
+    let mut s = format!(
+        "{:<24} {:<20} {:<10} {}\n",
+        "NAME", "VERSION", "ARCH", "REPO"
+    );
+    for item in items {
+        s.push_str(&format!(
+            "{:<24} {:<20} {:<10} {}\n",
+            item.name(),
+            item.evr(),
+            item.arch(),
+            item.repo_id()
+        ));
+    }
+    s
+}
+
+/// Human-readable NAME/VERSION/REPO table for package update output.
+pub(super) fn package_updates_human_table<T>(items: impl IntoIterator<Item = T>) -> String
+where
+    T: PackageRow,
+{
+    let mut s = format!("{:<24} {:<20} {}\n", "NAME", "VERSION", "REPO");
+    for item in items {
+        s.push_str(&format!(
+            "{:<24} {:<20} {}\n",
+            item.name(),
+            item.evr(),
+            item.repo_id()
+        ));
+    }
+    s
+}
+
+/// Human-readable REPO ID/ENABLED/NAME table for repository list output.
+pub(super) fn repo_human_table<T>(items: impl IntoIterator<Item = T>) -> String
+where
+    T: RepoRow,
+{
+    let mut s = format!("{:<24} {:<10} {}\n", "REPO ID", "ENABLED", "NAME");
+    for item in items {
+        s.push_str(&format!(
+            "{:<24} {:<10} {}\n",
+            item.id(),
+            item.enabled(),
+            item.name()
+        ));
+    }
+    s
+}
+
 /// Attach the common package backend marker to a payload.
 pub(super) fn stamp_backend(data: &mut Value, backend: &str) {
     data["backend"] = json!(backend);
@@ -475,6 +530,22 @@ mod tests {
         let repos = repo_table_data([&Repo], DNF5_BACKEND);
         assert_eq!(repos["rows"], json!([["fedora", "Fedora", true]]));
         assert_eq!(repos["backend"], json!(DNF5_BACKEND));
+    }
+
+    #[test]
+    fn human_table_helpers_preserve_existing_text() {
+        assert_eq!(
+            package_list_human_table([&Pkg]),
+            "NAME                     VERSION              ARCH       REPO\nbash                     5.2-1                x86_64     fedora\n"
+        );
+        assert_eq!(
+            package_updates_human_table([&Pkg]),
+            "NAME                     VERSION              REPO\nbash                     5.2-1                fedora\n"
+        );
+        assert_eq!(
+            repo_human_table([&Repo]),
+            "REPO ID                  ENABLED    NAME\nfedora                   true       Fedora\n"
+        );
     }
 
     #[test]
