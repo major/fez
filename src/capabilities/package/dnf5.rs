@@ -207,31 +207,40 @@ impl PackageRecord {
         })
     }
 
+    #[cfg(test)]
     fn object(&self) -> Value {
-        domain::package_object(
-            &self.name,
-            &self.evr,
-            &self.arch,
-            &self.repo_id,
-            json!(self.install_size),
-            &self.summary,
-        )
+        domain::PackageRow::package_object(self)
     }
 
+    #[cfg(test)]
     fn row(&self) -> Value {
-        domain::package_row(
-            &self.name,
-            &self.evr,
-            &self.arch,
-            &self.repo_id,
-            json!(self.install_size),
-            &self.summary,
-        )
+        domain::PackageRow::package_row(self)
     }
 
     #[cfg(test)]
     fn nevra(&self) -> String {
         format!("{}-{}.{}", self.name, self.evr, self.arch)
+    }
+}
+
+impl domain::PackageRow for PackageRecord {
+    fn name(&self) -> &str {
+        &self.name
+    }
+    fn evr(&self) -> &str {
+        &self.evr
+    }
+    fn arch(&self) -> &str {
+        &self.arch
+    }
+    fn repo_id(&self) -> &str {
+        &self.repo_id
+    }
+    fn install_size(&self) -> Value {
+        json!(self.install_size)
+    }
+    fn summary(&self) -> &str {
+        &self.summary
     }
 }
 
@@ -310,28 +319,20 @@ fn list(ctx: &mut CapabilityContext<'_>, session: &str, filters: ListFilters<'_>
         None => total,
     };
     let page = &filtered[start..end];
-    let mut human = format!(
-        "{:<24} {:<20} {:<10} {}\n",
-        "NAME", "VERSION", "ARCH", "REPO"
-    );
-    for p in page {
-        human.push_str(&format!(
-            "{:<24} {:<20} {:<10} {}\n",
-            p.name, p.evr, p.arch, p.repo_id,
-        ));
-    }
-    let rows: Vec<Value> = page.iter().map(|p| p.row()).collect();
-    let mut data = domain::package_table(rows);
-    data["scope"] = json!(scope);
+    let human = domain::package_list_human_table(page.iter().copied());
     // Echo the requested repo filter so callers can confirm what was applied.
-    data["repos"] = json!(filters.repos);
-    data["name"] = json!(filters.name);
-    data["total"] = json!(total);
-    data["returned"] = json!(end - start);
-    data["limit"] = json!(filters.limit);
-    data["offset"] = json!(filters.offset);
-    data["next_offset"] = json!((end < total).then_some(end));
-    domain::stamp_backend(&mut data, domain::DNF5_BACKEND);
+    let data = domain::package_list_data(
+        page.iter().copied(),
+        domain::PackageListMeta {
+            scope,
+            repos: filters.repos,
+            name: filters.name,
+            total,
+            limit: filters.limit,
+            offset: filters.offset,
+            backend: domain::DNF5_BACKEND,
+        },
+    );
     let mut hints = Vec::new();
     if filters.limit.is_none() {
         if let Some(hint) = domain::large_result_hint(total) {
@@ -351,7 +352,7 @@ fn info(ctx: &mut CapabilityContext<'_>, session: &str, spec: &str) -> Result<Vi
     let first = packages
         .first()
         .ok_or_else(|| FezError::NotFound(spec.to_string()))?;
-    let mut pkg = first.object();
+    let mut pkg = domain::PackageRow::package_object(first);
     domain::stamp_backend(&mut pkg, domain::DNF5_BACKEND);
     let human = format!(
         "Name        : {}\nVersion     : {}\nArch        : {}\nRepo        : {}\nInstall size: {}\nSummary     : {}\n",
@@ -373,14 +374,8 @@ fn search(ctx: &mut CapabilityContext<'_>, session: &str, pattern: &str) -> Resu
     let glob = format!("*{pattern}*");
     let parsed = rpm_list_records(ctx.client, ctx.channel, session, "available", &[glob])?;
     let packages = parsed.records;
-    let mut human = String::new();
-    for p in &packages {
-        human.push_str(&format!("{} - {}\n", p.name, p.summary));
-    }
-    let rows: Vec<Value> = packages.iter().map(PackageRecord::row).collect();
-    let mut data = domain::package_table(rows);
-    data["pattern"] = json!(pattern);
-    domain::stamp_backend(&mut data, domain::DNF5_BACKEND);
+    let human = domain::package_search_human(packages.iter());
+    let data = domain::package_search_data(packages.iter(), pattern, domain::DNF5_BACKEND);
     Ok(
         View::new("PackageSearch", ctx.host, data, human).with_hints_opt(
             malformed_records_hint("package", parsed.dropped).map(|hint| json!([hint])),
@@ -391,13 +386,8 @@ fn search(ctx: &mut CapabilityContext<'_>, session: &str, pattern: &str) -> Resu
 fn check_update(ctx: &mut CapabilityContext<'_>, session: &str) -> Result<View> {
     let parsed = rpm_list_records(ctx.client, ctx.channel, session, "upgrades", &[])?;
     let packages = parsed.records;
-    let mut human = format!("{:<24} {:<20} {}\n", "NAME", "VERSION", "REPO");
-    for p in &packages {
-        human.push_str(&format!("{:<24} {:<20} {}\n", p.name, p.evr, p.repo_id,));
-    }
-    let rows: Vec<Value> = packages.iter().map(PackageRecord::row).collect();
-    let mut data = domain::package_table(rows);
-    domain::stamp_backend(&mut data, domain::DNF5_BACKEND);
+    let human = domain::package_updates_human_table(packages.iter());
+    let data = domain::package_table_data(packages.iter(), domain::DNF5_BACKEND);
     Ok(
         View::new("PackageUpdates", ctx.host, data, human).with_hints_opt(
             malformed_records_hint("package", parsed.dropped).map(|hint| json!([hint])),
@@ -423,8 +413,21 @@ impl RepoRecord {
         })
     }
 
+    #[cfg(test)]
     fn row(&self) -> Value {
-        domain::repo_row(&self.id, &self.name, self.enabled)
+        domain::RepoRow::repo_row(self)
+    }
+}
+
+impl domain::RepoRow for RepoRecord {
+    fn id(&self) -> &str {
+        &self.id
+    }
+    fn name(&self) -> &str {
+        &self.name
+    }
+    fn enabled(&self) -> bool {
+        self.enabled
     }
 }
 
@@ -447,17 +450,15 @@ fn repolist(ctx: &mut CapabilityContext<'_>, session: &str, filter: RepoFilter) 
             records: Vec::new(),
             dropped: 0,
         });
-    let mut rows = Vec::new();
-    let mut human = format!("{:<24} {:<10} {}\n", "REPO ID", "ENABLED", "NAME");
+    let mut shown = Vec::new();
     for r in &parsed.records {
         if !filter.accepts(r.enabled) {
             continue;
         }
-        human.push_str(&format!("{:<24} {:<10} {}\n", r.id, r.enabled, r.name));
-        rows.push(r.row());
+        shown.push(r);
     }
-    let mut data = domain::repo_table(rows);
-    domain::stamp_backend(&mut data, domain::DNF5_BACKEND);
+    let human = domain::repo_human_table(shown.iter().copied());
+    let data = domain::repo_table_data(shown, domain::DNF5_BACKEND);
     Ok(View::new("RepoList", ctx.host, data, human)
         .with_hints_opt(malformed_records_hint("repo", parsed.dropped).map(|hint| json!([hint]))))
 }
@@ -471,6 +472,21 @@ struct ResolvedPlan {
     downgrade: Vec<String>,
     install_size_total: u64,
     remove_names: Vec<String>,
+}
+
+impl domain::MutationPlanBuckets for ResolvedPlan {
+    fn install(&self) -> &[String] {
+        &self.install
+    }
+    fn remove(&self) -> &[String] {
+        &self.remove
+    }
+    fn upgrade(&self) -> &[String] {
+        &self.upgrade
+    }
+    fn downgrade(&self) -> &[String] {
+        &self.downgrade
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -543,13 +559,16 @@ impl TransactionItem {
 
 impl ResolvedPlan {
     /// The plan rendered as the `fez/v1` data payload.
-    fn data(&self) -> Value {
-        domain::plan_data(
-            &self.install,
-            &self.remove,
-            &self.upgrade,
-            &self.downgrade,
-            json!(self.install_size_total),
+    fn data(&self, operation: &str, specs: &[String], dry_run: bool) -> Value {
+        domain::mutation_plan_data_from_buckets(
+            domain::MutationPlanMeta {
+                operation,
+                specs,
+                dry_run,
+                backend: domain::DNF5_BACKEND,
+                install_size_total: json!(self.install_size_total),
+            },
+            self,
         )
     }
 }
@@ -669,19 +688,8 @@ fn plan_view(
     plan: &ResolvedPlan,
     dry_run: bool,
 ) -> View {
-    let mut data = plan.data();
-    if let Value::Object(map) = &mut data {
-        map.insert("operation".into(), json!(m.verb()));
-        map.insert("specs".into(), json!(specs));
-        map.insert("dry_run".into(), json!(dry_run));
-    }
-    domain::stamp_backend(&mut data, domain::DNF5_BACKEND);
-    let counts = (
-        plan.install.len(),
-        plan.remove.len(),
-        plan.upgrade.len(),
-        plan.downgrade.len(),
-    );
+    let data = plan.data(m.verb(), specs, dry_run);
+    let counts = domain::plan_counts(plan);
     let human = plan_human(m.verb(), specs, host, counts, dry_run);
     View::new(plan_kind(dry_run), host.to_string(), data, human)
 }

@@ -116,27 +116,35 @@ impl PkPackage {
     }
 
     /// One positional row aligned to the shared package columns; `install_size` is `null`.
+    #[cfg(test)]
     fn row(&self) -> Value {
-        domain::package_row(
-            &self.name,
-            &self.version,
-            &self.arch,
-            self.repo(),
-            Value::Null,
-            &self.summary,
-        )
+        domain::PackageRow::package_row(self)
     }
 
     /// Record-shaped package info payload without the backend marker.
     fn object(&self) -> Value {
-        domain::package_object(
-            &self.name,
-            &self.version,
-            &self.arch,
-            self.repo(),
-            Value::Null,
-            &self.summary,
-        )
+        domain::PackageRow::package_object(self)
+    }
+}
+
+impl domain::PackageRow for PkPackage {
+    fn name(&self) -> &str {
+        &self.name
+    }
+    fn evr(&self) -> &str {
+        &self.version
+    }
+    fn arch(&self) -> &str {
+        &self.arch
+    }
+    fn repo_id(&self) -> &str {
+        self.repo()
+    }
+    fn install_size(&self) -> Value {
+        Value::Null
+    }
+    fn summary(&self) -> &str {
+        &self.summary
     }
 }
 
@@ -158,8 +166,21 @@ impl PkRepo {
     }
 
     /// One positional row aligned to the shared repo columns.
+    #[cfg(test)]
     fn row(&self) -> Value {
-        domain::repo_row(&self.id, &self.name, self.enabled)
+        domain::RepoRow::repo_row(self)
+    }
+}
+
+impl domain::RepoRow for PkRepo {
+    fn id(&self) -> &str {
+        &self.id
+    }
+    fn name(&self) -> &str {
+        &self.name
+    }
+    fn enabled(&self) -> bool {
+        self.enabled
     }
 }
 
@@ -251,24 +272,6 @@ fn pk_hints() -> Option<Value> {
     }))
 }
 
-/// Human-readable NAME/VERSION/ARCH/REPO table for list output.
-fn human_table(pkgs: &[&PkPackage]) -> String {
-    let mut s = format!(
-        "{:<24} {:<20} {:<10} {}\n",
-        "NAME", "VERSION", "ARCH", "REPO"
-    );
-    for p in pkgs {
-        s.push_str(&format!(
-            "{:<24} {:<20} {:<10} {}\n",
-            p.name,
-            p.version,
-            p.arch,
-            p.repo()
-        ));
-    }
-    s
-}
-
 /// `packages list`: `GetPackages` with the INSTALLED or NEWEST filter.
 ///
 /// # Errors
@@ -305,18 +308,19 @@ pub fn list(
         None => total,
     };
     let page = &filtered[start..end];
-    let rows: Vec<Value> = page.iter().map(|p| p.row()).collect();
-    let mut data = domain::package_table(rows);
-    data["scope"] = json!(if available { "available" } else { "installed" });
-    data["repos"] = json!(repos);
-    data["name"] = json!(name);
-    data["total"] = json!(total);
-    data["returned"] = json!(end - start);
-    data["limit"] = json!(limit);
-    data["offset"] = json!(offset);
-    data["next_offset"] = json!((end < total).then_some(end));
-    domain::stamp_backend(&mut data, domain::PACKAGEKIT_BACKEND);
-    let human = human_table(page);
+    let data = domain::package_list_data(
+        page.iter().copied(),
+        domain::PackageListMeta {
+            scope: if available { "available" } else { "installed" },
+            repos,
+            name,
+            total,
+            limit,
+            offset,
+            backend: domain::PACKAGEKIT_BACKEND,
+        },
+    );
+    let human = domain::package_list_human_table(page.iter().copied());
     let hints =
         if let (true, Some(large_hint)) = (limit.is_none(), domain::large_result_hint(total)) {
             Some(json!([
@@ -390,15 +394,8 @@ pub fn search(client: &mut BridgeClient, pattern: &str) -> Result<PkView> {
     )?;
     check_stream(&signals)?;
     let pkgs = packages_from(&signals);
-    let refs: Vec<&PkPackage> = pkgs.iter().collect();
-    let rows: Vec<Value> = refs.iter().map(|p| p.row()).collect();
-    let mut data = domain::package_table(rows);
-    data["pattern"] = json!(pattern);
-    domain::stamp_backend(&mut data, domain::PACKAGEKIT_BACKEND);
-    let mut human = String::new();
-    for p in &refs {
-        human.push_str(&format!("{} - {}\n", p.name, p.summary));
-    }
+    let data = domain::package_search_data(pkgs.iter(), pattern, domain::PACKAGEKIT_BACKEND);
+    let human = domain::package_search_human(pkgs.iter());
     Ok(PkView {
         kind: "PackageSearch",
         data,
@@ -419,14 +416,8 @@ pub fn check_update(client: &mut BridgeClient) -> Result<PkView> {
         client.dbus_call_collect(&channel, &tx, TX_IFACE, "GetUpdates", json!([FILTER_NONE]))?;
     check_stream(&signals)?;
     let pkgs = packages_from(&signals);
-    let refs: Vec<&PkPackage> = pkgs.iter().collect();
-    let rows: Vec<Value> = refs.iter().map(|p| p.row()).collect();
-    let mut data = domain::package_table(rows);
-    domain::stamp_backend(&mut data, domain::PACKAGEKIT_BACKEND);
-    let mut human = format!("{:<24} {:<20} {}\n", "NAME", "VERSION", "REPO");
-    for p in &refs {
-        human.push_str(&format!("{:<24} {:<20} {}\n", p.name, p.version, p.repo()));
-    }
+    let data = domain::package_table_data(pkgs.iter(), domain::PACKAGEKIT_BACKEND);
+    let human = domain::package_updates_human_table(pkgs.iter());
     Ok(PkView {
         kind: "PackageUpdates",
         data,
@@ -454,20 +445,15 @@ pub fn repolist(client: &mut BridgeClient, accepts: impl Fn(bool) -> bool) -> Re
         .filter(|(member, _)| member == "RepoDetail")
         .filter_map(|(_, args)| PkRepo::from_signal(args))
         .collect();
-    let mut rows = Vec::new();
-    let mut human = format!("{:<24} {:<10} {}\n", "REPO ID", "ENABLED", "NAME");
+    let mut shown = Vec::new();
     for repo in &repos {
         if !accepts(repo.enabled) {
             continue;
         }
-        human.push_str(&format!(
-            "{:<24} {:<10} {}\n",
-            repo.id, repo.enabled, repo.name
-        ));
-        rows.push(repo.row());
+        shown.push(repo);
     }
-    let mut data = domain::repo_table(rows);
-    domain::stamp_backend(&mut data, domain::PACKAGEKIT_BACKEND);
+    let human = domain::repo_human_table(shown.iter().copied());
+    let data = domain::repo_table_data(shown, domain::PACKAGEKIT_BACKEND);
     Ok(PkView {
         kind: "RepoList",
         data,
@@ -484,6 +470,21 @@ struct PkPlan {
     upgrade: Vec<String>,
     downgrade: Vec<String>,
     remove_names: Vec<String>,
+}
+
+impl domain::MutationPlanBuckets for PkPlan {
+    fn install(&self) -> &[String] {
+        &self.install
+    }
+    fn remove(&self) -> &[String] {
+        &self.remove
+    }
+    fn upgrade(&self) -> &[String] {
+        &self.upgrade
+    }
+    fn downgrade(&self) -> &[String] {
+        &self.downgrade
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -664,23 +665,17 @@ fn plan_view(
 ) -> PkView {
     use super::{plan_human, plan_kind};
     let verb = mutation.verb();
-    let counts = (
-        plan.install.len(),
-        plan.remove.len(),
-        plan.upgrade.len(),
-        plan.downgrade.len(),
+    let counts = domain::plan_counts(plan);
+    let data = domain::mutation_plan_data_from_buckets(
+        domain::MutationPlanMeta {
+            operation: verb,
+            specs,
+            dry_run,
+            backend: domain::PACKAGEKIT_BACKEND,
+            install_size_total: Value::Null,
+        },
+        plan,
     );
-    let mut data = domain::plan_data(
-        &plan.install,
-        &plan.remove,
-        &plan.upgrade,
-        &plan.downgrade,
-        Value::Null,
-    );
-    data["operation"] = json!(verb);
-    data["specs"] = json!(specs);
-    data["dry_run"] = json!(dry_run);
-    domain::stamp_backend(&mut data, domain::PACKAGEKIT_BACKEND);
     PkView {
         kind: plan_kind(dry_run),
         data,
