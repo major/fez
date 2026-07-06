@@ -15,7 +15,7 @@ const REPO_IFACE: &str = "org.rpm.dnf.v0.rpm.Repo";
 const GOAL_IFACE: &str = "org.rpm.dnf.v0.Goal";
 
 /// Package attributes requested from dnf5daemon's `Rpm.list`.
-const PKG_ATTRS: &[&str] = domain::PACKAGE_COLUMNS;
+const PKG_ATTRS: &[&str] = &["name", "evr", "arch", "repo_id", "install_size", "summary"];
 
 /// The [`FezError::DependencyMissing`] returned when dnf5daemon is absent.
 fn dependency_missing() -> FezError {
@@ -323,13 +323,15 @@ fn list(ctx: &mut CapabilityContext<'_>, session: &str, filters: ListFilters<'_>
     // Echo the requested repo filter so callers can confirm what was applied.
     let data = domain::package_list_data(
         page.iter().copied(),
-        scope,
-        filters.repos,
-        filters.name,
-        total,
-        filters.limit,
-        filters.offset,
-        domain::DNF5_BACKEND,
+        domain::PackageListMeta {
+            scope,
+            repos: filters.repos,
+            name: filters.name,
+            total,
+            limit: filters.limit,
+            offset: filters.offset,
+            backend: domain::DNF5_BACKEND,
+        },
     );
     let mut hints = Vec::new();
     if filters.limit.is_none() {
@@ -372,10 +374,7 @@ fn search(ctx: &mut CapabilityContext<'_>, session: &str, pattern: &str) -> Resu
     let glob = format!("*{pattern}*");
     let parsed = rpm_list_records(ctx.client, ctx.channel, session, "available", &[glob])?;
     let packages = parsed.records;
-    let mut human = String::new();
-    for p in &packages {
-        human.push_str(&format!("{} - {}\n", p.name, p.summary));
-    }
+    let human = domain::package_search_human(packages.iter());
     let data = domain::package_search_data(packages.iter(), pattern, domain::DNF5_BACKEND);
     Ok(
         View::new("PackageSearch", ctx.host, data, human).with_hints_opt(
@@ -562,12 +561,14 @@ impl ResolvedPlan {
     /// The plan rendered as the `fez/v1` data payload.
     fn data(&self, operation: &str, specs: &[String], dry_run: bool) -> Value {
         domain::mutation_plan_data_from_buckets(
-            operation,
-            specs,
-            dry_run,
-            domain::DNF5_BACKEND,
+            domain::MutationPlanMeta {
+                operation,
+                specs,
+                dry_run,
+                backend: domain::DNF5_BACKEND,
+                install_size_total: json!(self.install_size_total),
+            },
             self,
-            json!(self.install_size_total),
         )
     }
 }

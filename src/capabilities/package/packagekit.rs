@@ -310,13 +310,15 @@ pub fn list(
     let page = &filtered[start..end];
     let data = domain::package_list_data(
         page.iter().copied(),
-        if available { "available" } else { "installed" },
-        repos,
-        name,
-        total,
-        limit,
-        offset,
-        domain::PACKAGEKIT_BACKEND,
+        domain::PackageListMeta {
+            scope: if available { "available" } else { "installed" },
+            repos,
+            name,
+            total,
+            limit,
+            offset,
+            backend: domain::PACKAGEKIT_BACKEND,
+        },
     );
     let human = domain::package_list_human_table(page.iter().copied());
     let hints =
@@ -392,13 +394,8 @@ pub fn search(client: &mut BridgeClient, pattern: &str) -> Result<PkView> {
     )?;
     check_stream(&signals)?;
     let pkgs = packages_from(&signals);
-    let refs: Vec<&PkPackage> = pkgs.iter().collect();
-    let data =
-        domain::package_search_data(refs.iter().copied(), pattern, domain::PACKAGEKIT_BACKEND);
-    let mut human = String::new();
-    for p in &refs {
-        human.push_str(&format!("{} - {}\n", p.name, p.summary));
-    }
+    let data = domain::package_search_data(pkgs.iter(), pattern, domain::PACKAGEKIT_BACKEND);
+    let human = domain::package_search_human(pkgs.iter());
     Ok(PkView {
         kind: "PackageSearch",
         data,
@@ -419,9 +416,8 @@ pub fn check_update(client: &mut BridgeClient) -> Result<PkView> {
         client.dbus_call_collect(&channel, &tx, TX_IFACE, "GetUpdates", json!([FILTER_NONE]))?;
     check_stream(&signals)?;
     let pkgs = packages_from(&signals);
-    let refs: Vec<&PkPackage> = pkgs.iter().collect();
-    let data = domain::package_table_data(refs.iter().copied(), domain::PACKAGEKIT_BACKEND);
-    let human = domain::package_updates_human_table(refs.iter().copied());
+    let data = domain::package_table_data(pkgs.iter(), domain::PACKAGEKIT_BACKEND);
+    let human = domain::package_updates_human_table(pkgs.iter());
     Ok(PkView {
         kind: "PackageUpdates",
         data,
@@ -671,12 +667,14 @@ fn plan_view(
     let verb = mutation.verb();
     let counts = domain::plan_counts(plan);
     let data = domain::mutation_plan_data_from_buckets(
-        verb,
-        specs,
-        dry_run,
-        domain::PACKAGEKIT_BACKEND,
+        domain::MutationPlanMeta {
+            operation: verb,
+            specs,
+            dry_run,
+            backend: domain::PACKAGEKIT_BACKEND,
+            install_size_total: Value::Null,
+        },
         plan,
-        Value::Null,
     );
     PkView {
         kind: plan_kind(dry_run),

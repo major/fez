@@ -161,15 +161,27 @@ where
 }
 
 /// Build a stamped package list payload with shared pagination/filter fields.
+pub(super) struct PackageListMeta<'a> {
+    /// Requested package scope (`installed` or `available`).
+    pub(super) scope: &'a str,
+    /// Repository filters echoed into the response.
+    pub(super) repos: &'a [String],
+    /// Optional name filter echoed into the response.
+    pub(super) name: Option<&'a str>,
+    /// Total rows after filtering and before pagination.
+    pub(super) total: usize,
+    /// Optional page size requested by the caller.
+    pub(super) limit: Option<usize>,
+    /// Requested pagination offset.
+    pub(super) offset: usize,
+    /// Backend marker to stamp onto the payload.
+    pub(super) backend: &'a str,
+}
+
+/// Build a stamped package list payload with shared pagination/filter fields.
 pub(super) fn package_list_data<T>(
     page: impl IntoIterator<Item = T>,
-    scope: &str,
-    repos: &[String],
-    name: Option<&str>,
-    total: usize,
-    limit: Option<usize>,
-    offset: usize,
-    backend: &str,
+    meta: PackageListMeta<'_>,
 ) -> Value
 where
     T: PackageRow,
@@ -179,18 +191,18 @@ where
         .map(|item| item.package_row())
         .collect::<Vec<_>>();
     let returned = rows.len();
-    let start = offset.min(total);
-    let next_offset = (start + returned < total).then_some(start + returned);
+    let start = meta.offset.min(meta.total);
+    let next_offset = (start + returned < meta.total).then_some(start + returned);
     let mut data = package_table(rows);
-    data["scope"] = json!(scope);
-    data["repos"] = json!(repos);
-    data["name"] = json!(name);
-    data["total"] = json!(total);
+    data["scope"] = json!(meta.scope);
+    data["repos"] = json!(meta.repos);
+    data["name"] = json!(meta.name);
+    data["total"] = json!(meta.total);
     data["returned"] = json!(returned);
-    data["limit"] = json!(limit);
-    data["offset"] = json!(offset);
+    data["limit"] = json!(meta.limit);
+    data["offset"] = json!(meta.offset);
     data["next_offset"] = json!(next_offset);
-    stamp_backend(&mut data, backend);
+    stamp_backend(&mut data, meta.backend);
     data
 }
 
@@ -257,6 +269,18 @@ where
     s
 }
 
+/// Human-readable search result lines in `name - summary` form.
+pub(super) fn package_search_human<T>(items: impl IntoIterator<Item = T>) -> String
+where
+    T: PackageRow,
+{
+    let mut s = String::new();
+    for item in items {
+        s.push_str(&format!("{} - {}\n", item.name(), item.summary()));
+    }
+    s
+}
+
 /// Human-readable REPO ID/ENABLED/NAME table for repository list output.
 pub(super) fn repo_human_table<T>(items: impl IntoIterator<Item = T>) -> String
 where
@@ -316,24 +340,30 @@ pub(super) fn plan_counts(plan: &impl MutationPlanBuckets) -> (usize, usize, usi
 }
 
 /// Build the shared mutation-plan payload view data from a bucketed plan.
+pub(super) struct MutationPlanMeta<'a> {
+    /// User-facing operation verb.
+    pub(super) operation: &'a str,
+    /// Package specs requested by the user.
+    pub(super) specs: &'a [String],
+    /// Whether this is a dry-run preview.
+    pub(super) dry_run: bool,
+    /// Backend marker to stamp onto the payload.
+    pub(super) backend: &'a str,
+    /// Total install/download size; PackageKit uses `null`.
+    pub(super) install_size_total: Value,
+}
+
+/// Build the shared mutation-plan payload view data from a bucketed plan.
 pub(super) fn mutation_plan_data_from_buckets(
-    operation: &str,
-    specs: &[String],
-    dry_run: bool,
-    backend: &str,
+    meta: MutationPlanMeta<'_>,
     plan: &impl MutationPlanBuckets,
-    install_size_total: Value,
 ) -> Value {
     mutation_plan_data(
-        operation,
-        specs,
-        dry_run,
-        backend,
+        meta,
         plan.install(),
         plan.remove(),
         plan.upgrade(),
         plan.downgrade(),
-        install_size_total,
     )
 }
 
@@ -361,22 +391,18 @@ pub(super) fn plan_data(
 }
 
 /// Build the shared mutation-plan payload view data, including operation metadata.
-pub(super) fn mutation_plan_data(
-    operation: &str,
-    specs: &[String],
-    dry_run: bool,
-    backend: &str,
+fn mutation_plan_data(
+    meta: MutationPlanMeta<'_>,
     install: &[String],
     remove: &[String],
     upgrade: &[String],
     downgrade: &[String],
-    install_size_total: Value,
 ) -> Value {
-    let mut data = plan_data(install, remove, upgrade, downgrade, install_size_total);
-    data["operation"] = json!(operation);
-    data["specs"] = json!(specs);
-    data["dry_run"] = json!(dry_run);
-    stamp_backend(&mut data, backend);
+    let mut data = plan_data(install, remove, upgrade, downgrade, meta.install_size_total);
+    data["operation"] = json!(meta.operation);
+    data["specs"] = json!(meta.specs);
+    data["dry_run"] = json!(meta.dry_run);
+    stamp_backend(&mut data, meta.backend);
     data
 }
 
@@ -495,15 +521,18 @@ mod tests {
 
     #[test]
     fn package_list_builder_preserves_shared_pagination_contract() {
+        let repos = ["fedora".to_string()];
         let data = package_list_data(
             [&Pkg],
-            "available",
-            &["fedora".into()],
-            Some("ba"),
-            3,
-            Some(1),
-            1,
-            DNF5_BACKEND,
+            PackageListMeta {
+                scope: "available",
+                repos: &repos,
+                name: Some("ba"),
+                total: 3,
+                limit: Some(1),
+                offset: 1,
+                backend: DNF5_BACKEND,
+            },
         );
 
         assert_eq!(
@@ -542,6 +571,7 @@ mod tests {
             package_updates_human_table([&Pkg]),
             "NAME                     VERSION              REPO\nbash                     5.2-1                fedora\n"
         );
+        assert_eq!(package_search_human([&Pkg]), "bash - Shell\n");
         assert_eq!(
             repo_human_table([&Repo]),
             "REPO ID                  ENABLED    NAME\nfedora                   true       Fedora\n"
@@ -578,15 +608,17 @@ mod tests {
     fn mutation_plan_data_adds_operation_metadata_and_backend() {
         let specs = vec!["bash".to_string()];
         let data = mutation_plan_data(
-            "install",
-            &specs,
-            true,
-            DNF5_BACKEND,
+            MutationPlanMeta {
+                operation: "install",
+                specs: &specs,
+                dry_run: true,
+                backend: DNF5_BACKEND,
+                install_size_total: json!(42),
+            },
             &["bash-1.x86_64".into()],
             &[],
             &[],
             &[],
-            json!(42),
         );
 
         assert_eq!(data["operation"], json!("install"));
@@ -608,12 +640,14 @@ mod tests {
 
         assert_eq!(plan_counts(&plan), (1, 1, 1, 0));
         let data = mutation_plan_data_from_buckets(
-            "install",
-            &specs,
-            false,
-            PACKAGEKIT_BACKEND,
+            MutationPlanMeta {
+                operation: "install",
+                specs: &specs,
+                dry_run: false,
+                backend: PACKAGEKIT_BACKEND,
+                install_size_total: Value::Null,
+            },
             &plan,
-            Value::Null,
         );
 
         assert_eq!(data["install"], json!(["bash-1.x86_64"]));
