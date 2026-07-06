@@ -103,13 +103,22 @@ mod tests {
             args: &[],
         };
 
-        match BridgeConnection::spawn(&transport) {
-            Ok(_) => panic!("expected spawn error"),
-            Err(FezError::Spawn { program, .. }) => {
-                assert_eq!(program, "/definitely/not/a/cockpit-bridge");
-            }
-            Err(other) => panic!("expected spawn error, got {other:?}"),
+        let result = BridgeConnection::spawn(&transport);
+
+        assert!(matches!(result, Err(FezError::Spawn { .. })));
+        if let Err(FezError::Spawn { program, .. }) = result {
+            assert_eq!(program, "/definitely/not/a/cockpit-bridge");
         }
+    }
+
+    #[test]
+    fn command_transport_reports_test_host() {
+        let transport = CommandTransport {
+            program: "/bin/true",
+            args: &[],
+        };
+
+        assert_eq!(transport.host_label(), "test-host");
     }
 
     #[test]
