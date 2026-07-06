@@ -447,11 +447,7 @@ mod tests {
             let path: Vec<&str> = descriptor.id.split('.').collect();
             let leaf = find_path(&cmd, &path)
                 .unwrap_or_else(|| panic!("{} has no matching clap path", descriptor.id));
-            assert!(
-                leaf.get_subcommands().next().is_none(),
-                "{} maps to a non-leaf clap command",
-                descriptor.id
-            );
+            assert!(leaf.get_subcommands().next().is_none());
         }
     }
 
@@ -477,19 +473,9 @@ mod tests {
             let positionals = leaf_positional_ids(leaf);
 
             for input in &descriptor.inputs {
-                assert!(
-                    args.contains(input.name),
-                    "{} input {} is not accepted by clap",
-                    descriptor.id,
-                    input.name
-                );
+                assert!(args.contains(input.name));
                 if input.required {
-                    assert!(
-                        positionals.contains(input.name),
-                        "{} required input {} is not a clap positional",
-                        descriptor.id,
-                        input.name
-                    );
+                    assert!(positionals.contains(input.name));
                 }
             }
         }
@@ -504,11 +490,7 @@ mod tests {
             let accepted = accepted_long_flags(&cmd, leaf);
 
             for flag in &descriptor.flags {
-                assert!(
-                    accepted.contains(*flag),
-                    "{} advertises {flag}, but clap does not accept it",
-                    descriptor.id
-                );
+                assert!(accepted.contains(*flag));
             }
         }
     }
@@ -522,11 +504,7 @@ mod tests {
 
             for arg in leaf.get_positionals() {
                 let name = arg.get_id().as_str();
-                assert!(
-                    descriptor.inputs.iter().any(|input| input.name == name),
-                    "{} clap positional {name} is not documented as an input",
-                    descriptor.id
-                );
+                assert!(descriptor.inputs.iter().any(|input| input.name == name));
             }
 
             for arg in leaf.get_arguments() {
@@ -534,11 +512,7 @@ mod tests {
                     continue;
                 };
                 let flag = format!("--{long}");
-                assert!(
-                    descriptor.flags.contains(&flag.as_str()),
-                    "{} clap flag {flag} is not documented by descriptor",
-                    descriptor.id
-                );
+                assert!(descriptor.flags.contains(&flag.as_str()));
             }
         }
     }
