@@ -1,5 +1,5 @@
 //! dnf5daemon backend (`org.rpm.dnf.v0`).
-use super::{plan_human, plan_kind, ListFilters, Mutation, ReadAction, RepoFilter};
+use super::{domain, plan_human, plan_kind, ListFilters, Mutation, ReadAction, RepoFilter};
 use crate::capabilities::{CapabilityContext, View};
 use crate::cli::Cli;
 use crate::error::{FezError, Result};
@@ -208,25 +208,25 @@ impl PackageRecord {
     }
 
     fn object(&self) -> Value {
-        json!({
-            "name": self.name,
-            "evr": self.evr,
-            "arch": self.arch,
-            "repo_id": self.repo_id,
-            "install_size": self.install_size,
-            "summary": self.summary,
-        })
+        domain::package_object(
+            &self.name,
+            &self.evr,
+            &self.arch,
+            &self.repo_id,
+            json!(self.install_size),
+            &self.summary,
+        )
     }
 
     fn row(&self) -> Value {
-        json!([
-            self.name,
-            self.evr,
-            self.arch,
-            self.repo_id,
-            self.install_size,
-            self.summary,
-        ])
+        domain::package_row(
+            &self.name,
+            &self.evr,
+            &self.arch,
+            &self.repo_id,
+            json!(self.install_size),
+            &self.summary,
+        )
     }
 
     #[cfg(test)]
@@ -234,9 +234,6 @@ impl PackageRecord {
         format!("{}-{}.{}", self.name, self.evr, self.arch)
     }
 }
-
-/// Column order for the columnar `PackageList`/`PackageSearch` payloads.
-const PKG_COLUMNS: &[&str] = &["name", "evr", "arch", "repo_id", "install_size", "summary"];
 
 /// Connect, open an unprivileged session, dispatch the read, and always close.
 pub(super) fn run_read(
@@ -324,7 +321,7 @@ fn list(ctx: &mut CapabilityContext<'_>, session: &str, filters: ListFilters<'_>
         ));
     }
     let rows: Vec<Value> = page.iter().map(|p| p.row()).collect();
-    let mut data = crate::envelope::table_data(PKG_COLUMNS, rows);
+    let mut data = domain::package_table(rows);
     data["scope"] = json!(scope);
     // Echo the requested repo filter so callers can confirm what was applied.
     data["repos"] = json!(filters.repos);
@@ -381,7 +378,7 @@ fn search(ctx: &mut CapabilityContext<'_>, session: &str, pattern: &str) -> Resu
         human.push_str(&format!("{} - {}\n", p.name, p.summary));
     }
     let rows: Vec<Value> = packages.iter().map(PackageRecord::row).collect();
-    let mut data = crate::envelope::table_data(PKG_COLUMNS, rows);
+    let mut data = domain::package_table(rows);
     data["pattern"] = json!(pattern);
     data["backend"] = json!("dnf5daemon");
     Ok(
@@ -399,7 +396,7 @@ fn check_update(ctx: &mut CapabilityContext<'_>, session: &str) -> Result<View> 
         human.push_str(&format!("{:<24} {:<20} {}\n", p.name, p.evr, p.repo_id,));
     }
     let rows: Vec<Value> = packages.iter().map(PackageRecord::row).collect();
-    let mut data = crate::envelope::table_data(PKG_COLUMNS, rows);
+    let mut data = domain::package_table(rows);
     data["backend"] = json!("dnf5daemon");
     Ok(
         View::new("PackageUpdates", ctx.host, data, human).with_hints_opt(
@@ -407,9 +404,6 @@ fn check_update(ctx: &mut CapabilityContext<'_>, session: &str) -> Result<View> 
         ),
     )
 }
-
-/// Column order for the columnar `RepoList` payload (`enabled` stays a bool).
-const REPO_COLUMNS: &[&str] = &["id", "name", "enabled"];
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct RepoRecord {
@@ -430,7 +424,7 @@ impl RepoRecord {
     }
 
     fn row(&self) -> Value {
-        json!([self.id, self.name, self.enabled])
+        domain::repo_row(&self.id, &self.name, self.enabled)
     }
 }
 
@@ -462,7 +456,7 @@ fn repolist(ctx: &mut CapabilityContext<'_>, session: &str, filter: RepoFilter) 
         human.push_str(&format!("{:<24} {:<10} {}\n", r.id, r.enabled, r.name));
         rows.push(r.row());
     }
-    let mut data = crate::envelope::table_data(REPO_COLUMNS, rows);
+    let mut data = domain::repo_table(rows);
     data["backend"] = json!("dnf5daemon");
     Ok(View::new("RepoList", ctx.host, data, human)
         .with_hints_opt(malformed_records_hint("repo", parsed.dropped).map(|hint| json!([hint]))))
