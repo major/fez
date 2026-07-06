@@ -6,6 +6,7 @@
 //! guardrail / escalation exit codes.
 use predicates::prelude::PredicateBooleanExt;
 use predicates::str::contains;
+use serde_json::{json, Value};
 
 mod common;
 use common::fez_fake_pk;
@@ -103,14 +104,28 @@ fn repolist_filters_to_enabled_by_default() {
 
 #[test]
 fn install_dry_run_via_packagekit() {
-    fez_fake_pk()
+    let output = fez_fake_pk()
         .args(["packages", "install", "nginx", "--dry-run", "--json"])
-        .assert()
-        .success()
-        .stdout(contains("\"kind\":\"PackagePlan\""))
-        .stdout(contains("\"backend\":\"packagekit\""))
-        .stdout(contains("\"dry_run\":true"))
-        .stdout(contains("\"install_size_total\":null"));
+        .output()
+        .expect("run fez");
+    assert!(output.status.success());
+    let envelope: Value = serde_json::from_slice(&output.stdout).expect("valid JSON envelope");
+    let data = &envelope["data"];
+
+    assert_eq!(envelope["kind"], "PackagePlan");
+    assert_eq!(data["backend"], "packagekit");
+    assert_eq!(data["dry_run"], true);
+    assert_eq!(data["operation"], "install");
+    assert_eq!(data["install_size_total"], Value::Null);
+    assert_eq!(
+        data["counts"],
+        json!({
+            "install": 2,
+            "remove": 0,
+            "upgrade": 0,
+            "downgrade": 0,
+        })
+    );
 }
 
 #[test]

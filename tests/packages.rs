@@ -215,15 +215,23 @@ fn packages_repolist_shows_enabled_state() {
 
 #[test]
 fn packages_install_dry_run_emits_plan() {
-    fez_fake()
+    let output = fez_fake()
         .env("FEZ_FAKE_PLAN", "install")
         .env("FEZ_AUDIT", "off")
         .args(["packages", "install", "htop", "--dry-run", "--json"])
-        .assert()
-        .success()
-        .stdout(contains("\"kind\":\"PackagePlan\""))
-        .stdout(contains("\"dry_run\":true"))
-        .stdout(contains("\"operation\":\"install\""));
+        .output()
+        .expect("run fez");
+    assert!(output.status.success());
+    let envelope: Value = serde_json::from_slice(&output.stdout).expect("valid JSON envelope");
+    let data = &envelope["data"];
+
+    assert_eq!(envelope["kind"], "PackagePlan");
+    assert_eq!(data["backend"], "dnf5daemon");
+    assert_eq!(data["dry_run"], true);
+    assert_eq!(data["operation"], "install");
+    assert_eq!(data["install_size_total"], 1024);
+    assert_eq!(data["counts"]["install"], 1);
+    assert_eq!(data["counts"]["remove"], 0);
 }
 
 #[test]
