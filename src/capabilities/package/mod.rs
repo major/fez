@@ -4,6 +4,7 @@
 //! the primary backend; PackageKit is the degraded fallback when dnf5daemon is
 //! absent.
 mod dnf5;
+mod domain;
 mod packagekit;
 
 use crate::capabilities::{render, View};

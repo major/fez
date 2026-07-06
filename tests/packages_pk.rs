@@ -18,6 +18,9 @@ fn list_falls_back_to_packagekit() {
         .success()
         .stdout(contains("\"kind\":\"PackageList\""))
         .stdout(contains("\"backend\":\"packagekit\""))
+        .stdout(contains(
+            "\"columns\":[\"name\",\"evr\",\"arch\",\"repo_id\",\"install_size\",\"summary\"]",
+        ))
         .stdout(contains("htop"));
 }
 
@@ -53,6 +56,9 @@ fn search_via_packagekit() {
         .success()
         .stdout(contains("\"kind\":\"PackageSearch\""))
         .stdout(contains("\"backend\":\"packagekit\""))
+        .stdout(contains(
+            "\"columns\":[\"name\",\"evr\",\"arch\",\"repo_id\",\"install_size\",\"summary\"]",
+        ))
         .stdout(contains("nginx"));
 }
 
@@ -74,7 +80,10 @@ fn check_update_via_packagekit() {
         .assert()
         .success()
         .stdout(contains("\"kind\":\"PackageUpdates\""))
-        .stdout(contains("\"backend\":\"packagekit\""));
+        .stdout(contains("\"backend\":\"packagekit\""))
+        .stdout(contains(
+            "\"columns\":[\"name\",\"evr\",\"arch\",\"repo_id\",\"install_size\",\"summary\"]",
+        ));
 }
 
 #[test]
@@ -86,6 +95,7 @@ fn repolist_filters_to_enabled_by_default() {
         .assert()
         .success()
         .stdout(contains("\"kind\":\"RepoList\""))
+        .stdout(contains("\"columns\":[\"id\",\"name\",\"enabled\"]"))
         .stdout(contains("fedora"))
         .stdout(contains("updates"))
         .stdout(contains("crb").not());

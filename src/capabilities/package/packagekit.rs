@@ -9,6 +9,7 @@
 //! `package_id`, `summary` per package), so size fields are emitted as `null`
 //! and every payload carries `"backend":"packagekit"` plus a hint so callers
 //! can see the schema is degraded relative to the dnf5daemon path.
+use super::domain;
 use crate::error::{FezError, Result};
 use crate::protocol::client::BridgeClient;
 use serde_json::{json, Value};
@@ -114,28 +115,28 @@ impl PkPackage {
         &self.data
     }
 
-    /// One positional row aligned to [`PK_COLUMNS`]; `install_size` is `null`.
+    /// One positional row aligned to the shared package columns; `install_size` is `null`.
     fn row(&self) -> Value {
-        json!([
-            self.name,
-            self.version,
-            self.arch,
+        domain::package_row(
+            &self.name,
+            &self.version,
+            &self.arch,
             self.repo(),
             Value::Null,
-            self.summary,
-        ])
+            &self.summary,
+        )
     }
 
     /// Record-shaped package info payload without the backend marker.
     fn object(&self) -> Value {
-        json!({
-            "name": self.name,
-            "evr": self.version,
-            "arch": self.arch,
-            "repo_id": self.repo(),
-            "install_size": Value::Null,
-            "summary": self.summary,
-        })
+        domain::package_object(
+            &self.name,
+            &self.version,
+            &self.arch,
+            self.repo(),
+            Value::Null,
+            &self.summary,
+        )
     }
 }
 
@@ -156,9 +157,9 @@ impl PkRepo {
         })
     }
 
-    /// One positional row aligned to [`PK_REPO_COLUMNS`].
+    /// One positional row aligned to the shared repo columns.
     fn row(&self) -> Value {
-        json!([self.id, self.name, self.enabled])
+        domain::repo_row(&self.id, &self.name, self.enabled)
     }
 }
 
@@ -201,15 +202,6 @@ fn check_stream(signals: &[(String, Vec<Value>)]) -> Result<()> {
     }
     Ok(())
 }
-
-/// Column order for PackageKit list/search payloads, identical to the
-/// dnf5daemon backend's `PKG_COLUMNS` so the two schemas line up, except
-/// `install_size` is always JSON `null` here (PackageKit reports no size).
-const PK_COLUMNS: &[&str] = &["name", "evr", "arch", "repo_id", "install_size", "summary"];
-
-/// Column order for the PackageKit `RepoList` payload, matching the dnf
-/// backend's `REPO_COLUMNS`.
-const PK_REPO_COLUMNS: &[&str] = &["id", "name", "enabled"];
 
 /// Open an (optionally privileged) channel to the PackageKit bus name.
 ///
@@ -314,7 +306,7 @@ pub fn list(
     };
     let page = &filtered[start..end];
     let rows: Vec<Value> = page.iter().map(|p| p.row()).collect();
-    let mut data = crate::envelope::table_data(PK_COLUMNS, rows);
+    let mut data = domain::package_table(rows);
     data["scope"] = json!(if available { "available" } else { "installed" });
     data["repos"] = json!(repos);
     data["name"] = json!(name);
@@ -401,7 +393,7 @@ pub fn search(client: &mut BridgeClient, pattern: &str) -> Result<PkView> {
     let pkgs = packages_from(&signals);
     let refs: Vec<&PkPackage> = pkgs.iter().collect();
     let rows: Vec<Value> = refs.iter().map(|p| p.row()).collect();
-    let mut data = crate::envelope::table_data(PK_COLUMNS, rows);
+    let mut data = domain::package_table(rows);
     data["pattern"] = json!(pattern);
     data["backend"] = json!("packagekit");
     let mut human = String::new();
@@ -430,7 +422,7 @@ pub fn check_update(client: &mut BridgeClient) -> Result<PkView> {
     let pkgs = packages_from(&signals);
     let refs: Vec<&PkPackage> = pkgs.iter().collect();
     let rows: Vec<Value> = refs.iter().map(|p| p.row()).collect();
-    let mut data = crate::envelope::table_data(PK_COLUMNS, rows);
+    let mut data = domain::package_table(rows);
     data["backend"] = json!("packagekit");
     let mut human = format!("{:<24} {:<20} {}\n", "NAME", "VERSION", "REPO");
     for p in &refs {
@@ -475,7 +467,7 @@ pub fn repolist(client: &mut BridgeClient, accepts: impl Fn(bool) -> bool) -> Re
         ));
         rows.push(repo.row());
     }
-    let mut data = crate::envelope::table_data(PK_REPO_COLUMNS, rows);
+    let mut data = domain::repo_table(rows);
     data["backend"] = json!("packagekit");
     Ok(PkView {
         kind: "RepoList",
@@ -723,6 +715,28 @@ mod tests {
         assert_eq!(p.repo(), "fedora");
         assert_eq!(p.label(), "htop-3.4.1-3.fc44.x86_64");
         assert_eq!(p.package_id(), "htop;3.4.1-3.fc44;x86_64;fedora");
+        assert_eq!(
+            p.row(),
+            json!([
+                "htop",
+                "3.4.1-3.fc44",
+                "x86_64",
+                "fedora",
+                Value::Null,
+                "Interactive process viewer"
+            ])
+        );
+        assert_eq!(
+            p.object(),
+            json!({
+                "name": "htop",
+                "evr": "3.4.1-3.fc44",
+                "arch": "x86_64",
+                "repo_id": "fedora",
+                "install_size": Value::Null,
+                "summary": "Interactive process viewer"
+            })
+        );
     }
 
     #[test]
