@@ -67,7 +67,7 @@ jobs:
         with:
           key: coverage
       - name: Install cargo-llvm-cov
-        uses: taiki-e/install-action@9bcaee1dcae34154180f412e2fa69355a7cda9f6  # v2.82.6
+        uses: taiki-e/install-action@288e746965032cfcc232e09af2daf5f23c14d780  # v2.86.1
         with:
           tool: cargo-llvm-cov
       - name: Generate coverage
@@ -135,7 +135,7 @@ jobs:
         with:
           key: security
       - name: Install cargo-deny and cargo-machete
-        uses: taiki-e/install-action@9bcaee1dcae34154180f412e2fa69355a7cda9f6  # v2.82.6
+        uses: taiki-e/install-action@288e746965032cfcc232e09af2daf5f23c14d780  # v2.86.1
         with:
           tool: cargo-deny,cargo-machete
       - name: Run supply-chain and dependency checks
